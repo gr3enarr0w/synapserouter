@@ -1,0 +1,1351 @@
+package subscriptions
+
+import (
+	"bufio"
+	"bytes"
+	"compress/flate"
+	"compress/gzip"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+)
+
+const (
+	codexSubscriptionBaseURL  = "https://chatgpt.com/backend-api/codex"
+	codexCompactResponsesPath = "/responses/compact"
+	codexClientVersion        = "0.101.0"
+	codexUserAgent            = "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464"
+
+	geminiSubscriptionBaseURL = "https://cloudcode-pa.googleapis.com"
+	geminiFetchModelsPath     = "/v1internal:fetchAvailableModels"
+	geminiGenerateContentPath = "/v1internal:generateContent"
+	geminiCLIApiClientHeader  = "google-gemini-cli/0.1.19 gccl/0.1.19"
+
+	providerModelCacheTTL = 10 * time.Minute
+)
+
+type providerModelCacheEntry struct {
+	expires time.Time
+	models  []ModelInfo
+}
+
+var providerModelCache struct {
+	mu   sync.RWMutex
+	data map[string]providerModelCacheEntry
+}
+
+type codexCompactRequest struct {
+	Model        string                   `json:"model"`
+	Input        []map[string]interface{} `json:"input,omitempty"`
+	Instructions string                   `json:"instructions"`
+	Tools        []map[string]interface{} `json:"tools,omitempty"`
+	ToolChoice   interface{}              `json:"tool_choice,omitempty"`
+	Stream       bool                     `json:"stream,omitempty"`
+}
+
+type codexCompactResponse struct {
+	ID         string          `json:"id"`
+	Model      string          `json:"model"`
+	OutputText string          `json:"output_text"`
+	Output     []codexOutput   `json:"output"`
+	Usage      providers.Usage `json:"usage"`
+}
+
+type codexOutput struct {
+	Type      string            `json:"type"`
+	ID        string            `json:"id"`
+	CallID    string            `json:"call_id"`
+	Name      string            `json:"name"`
+	Arguments string            `json:"arguments"`
+	Content   []codexOutputPart `json:"content"`
+}
+
+type codexOutputPart struct {
+	Type       string `json:"type"`
+	Text       string `json:"text"`
+	OutputText string `json:"output_text"`
+}
+
+type compositeReadCloser struct {
+	io.Reader
+	closers []func() error
+}
+
+func (c *compositeReadCloser) Close() error {
+	var firstErr error
+	for _, closer := range c.closers {
+		if closer == nil {
+			continue
+		}
+		if err := closer(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+type peekableBody struct {
+	*bufio.Reader
+	closer io.Closer
+}
+
+func (p *peekableBody) Close() error {
+	if p == nil || p.closer == nil {
+		return nil
+	}
+	return p.closer.Close()
+}
+
+func (p *anthropicProvider) liveModels(ctx context.Context) []ModelInfo {
+	return cachedProviderModels("anthropic", func() []ModelInfo {
+		requestURL := strings.TrimRight(p.baseURL, "/") + "/v1/models"
+		for _, credential := range p.credentialSequence(ctx) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+			if err != nil {
+				continue
+			}
+			p.applyAnthropicHeaders(req, credential, "", false)
+			resp, err := p.client.Do(req)
+			if err != nil {
+				continue
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil || resp.StatusCode != http.StatusOK {
+				continue
+			}
+			if ids := parseModelIDs(body, looksLikeClaudeModel); len(ids) > 0 {
+				return buildModelInfos(ids, "claude-code", 200000, "Claude model via subscription gateway", p.Name(), "code")
+			}
+		}
+		return buildModelInfos(p.models, "claude-code", 200000, "Claude model via subscription gateway", p.Name(), "code")
+	})
+}
+
+func (p *openAIProvider) liveModels(ctx context.Context) []ModelInfo {
+	return cachedProviderModels("openai", func() []ModelInfo {
+		for _, credential := range p.credentialSequence(ctx) {
+			if isCodexOAuthCredential(credential) {
+				for _, requestURL := range []string{
+					strings.TrimRight(codexBaseURL(p.baseURL), "/") + "/models",
+					strings.TrimRight(codexBaseURL(p.baseURL), "/") + "/responses/models",
+					"https://chatgpt.com/backend-api/models",
+				} {
+					req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+					if err != nil {
+						continue
+					}
+					applyCodexHeaders(req, credential, "", false)
+					resp, err := p.client.Do(req)
+					if err != nil {
+						continue
+					}
+					body, err := io.ReadAll(resp.Body)
+					resp.Body.Close()
+					if err != nil || resp.StatusCode != http.StatusOK {
+						continue
+					}
+					if ids := parseModelIDs(body, looksLikeCodexModel); len(ids) > 0 {
+						return buildModelInfos(codexCatalogAliases(ids), "codex", 128000, "OpenAI / Codex model via subscription gateway", p.Name(), "code")
+					}
+				}
+				continue
+			}
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(p.baseURL, "/")+"/models", nil)
+			if err != nil {
+				continue
+			}
+			p.applyCredential(req, credential)
+			resp, err := p.client.Do(req)
+			if err != nil {
+				continue
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil || resp.StatusCode != http.StatusOK {
+				continue
+			}
+			if ids := parseModelIDs(body, looksLikeCodexModel); len(ids) > 0 {
+				return buildModelInfos(codexCatalogAliases(ids), "codex", 128000, "OpenAI / Codex model via subscription gateway", p.Name(), "code")
+			}
+		}
+		return buildModelInfos(p.models, "codex", 128000, "OpenAI / Codex model via subscription gateway", p.Name(), "code")
+	})
+}
+
+func (p *geminiProvider) liveModels(ctx context.Context) []ModelInfo {
+	return cachedProviderModels("gemini", func() []ModelInfo {
+		for _, credential := range p.credentialSequence(ctx) {
+			if isGeminiOAuthCredential(credential) {
+				payload := map[string]string{}
+				if projectID := strings.TrimSpace(credential.ProjectID); projectID != "" {
+					payload["project"] = projectID
+				}
+				body, _ := json.Marshal(payload)
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, geminiSubscriptionBaseURL+geminiFetchModelsPath, bytes.NewReader(body))
+				if err != nil {
+					continue
+				}
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", bearerPrefix(credential.TokenType)+credential.AccessToken)
+				applyGeminiCLIHeaders(req, "", "")
+				resp, err := p.client.Do(req)
+				if err != nil {
+					continue
+				}
+				respBody, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil || resp.StatusCode != http.StatusOK {
+					continue
+				}
+				if ids := parseModelIDs(respBody, looksLikeGeminiModel); len(ids) > 0 {
+					return buildModelInfos(ids, "gemini", 1048576, "Gemini model via subscription gateway", p.Name(), "reasoning")
+				}
+				continue
+			}
+
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(p.baseURL, "/")+"/models", nil)
+			if err != nil {
+				continue
+			}
+			p.applyCredential(req, credential)
+			resp, err := p.client.Do(req)
+			if err != nil {
+				continue
+			}
+			respBody, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil || resp.StatusCode != http.StatusOK {
+				continue
+			}
+			if ids := parseModelIDs(respBody, looksLikeGeminiModel); len(ids) > 0 {
+				return buildModelInfos(ids, "gemini", 1048576, "Gemini model via subscription gateway", p.Name(), "reasoning")
+			}
+		}
+		return buildModelInfos(p.models, "gemini", 1048576, "Gemini model via subscription gateway", p.Name(), "reasoning")
+	})
+}
+
+func (p *anthropicProvider) applyAnthropicHeaders(req *http.Request, credential ProviderCredential, sessionID string, stream bool) {
+	if credential.isSessionCredential() {
+		if token := strings.TrimSpace(credential.SessionToken); token != "" {
+			req.Header.Set("Cookie", token)
+		}
+	} else if token := strings.TrimSpace(credential.APIKey); token != "" {
+		req.Header.Del("Authorization")
+		req.Header.Set("x-api-key", token)
+	} else if token := strings.TrimSpace(credential.AccessToken); token != "" {
+		req.Header.Del("x-api-key")
+		req.Header.Set("Authorization", bearerPrefix(credential.TokenType)+token)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if strings.TrimSpace(sessionID) != "" {
+		req.Header.Set("Session_id", sessionID)
+	}
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	req.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05")
+	req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
+	req.Header.Set("X-App", "cli")
+	req.Header.Set("X-Stainless-Retry-Count", "0")
+	req.Header.Set("X-Stainless-Runtime-Version", "v24.3.0")
+	req.Header.Set("X-Stainless-Package-Version", "0.74.0")
+	req.Header.Set("X-Stainless-Runtime", "node")
+	req.Header.Set("X-Stainless-Lang", "js")
+	req.Header.Set("X-Stainless-Arch", mapStainlessArch())
+	req.Header.Set("X-Stainless-Os", mapStainlessOS())
+	req.Header.Set("X-Stainless-Timeout", "600")
+	req.Header.Set("User-Agent", "claude-cli/2.1.63 (external, cli)")
+	req.Header.Set("Connection", "keep-alive")
+	if stream {
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("Accept-Encoding", "identity")
+	} else {
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Accept-Encoding", "identity")
+	}
+}
+
+func (p *openAIProvider) codexChatCompletion(ctx context.Context, credential ProviderCredential, req providers.ChatRequest, model, sessionID string) (providers.ChatResponse, error) {
+	// Validate tool support - Codex compact API does not reliably support tool calling
+	// Return explicit error instead of silently degrading to plain text
+	if len(req.Tools) > 0 || len(req.Functions) > 0 {
+		return providers.ChatResponse{}, fmt.Errorf("tool calling is not supported on the Codex compact responses path - use standard OpenAI chat completions endpoint for tool support")
+	}
+
+	// Validate streaming support - Codex compact API does not support streaming
+	if req.Stream {
+		return providers.ChatResponse{}, fmt.Errorf("streaming is not supported on the Codex compact responses path - use non-streaming requests")
+	}
+
+	model = normalizeCodexModel(model)
+	payload := buildCodexCompactRequest(req, model)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return providers.ChatResponse{}, fmt.Errorf("marshal codex request: %w", err)
+	}
+
+	requestURL := strings.TrimRight(codexBaseURL(p.baseURL), "/") + codexCompactResponsesPath
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
+	applyCodexHeaders(httpReq, credential, sessionID, false)
+
+	httpResp, err := p.client.Do(httpReq)
+	if err != nil {
+		return providers.ChatResponse{}, fmt.Errorf("codex request failed: %w", err)
+	}
+	defer httpResp.Body.Close()
+
+	respBody, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return providers.ChatResponse{}, fmt.Errorf("codex read failure: %w", err)
+	}
+	if httpResp.StatusCode != http.StatusOK {
+		return providers.ChatResponse{}, fmt.Errorf("openai returned %d: %s", httpResp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+
+	log.Printf("[Codex] Raw response: %s", string(respBody))
+	var upstream codexCompactResponse
+	if err := json.Unmarshal(respBody, &upstream); err != nil {
+		return providers.ChatResponse{}, fmt.Errorf("codex decode failure: %w", err)
+	}
+	return upstream.asChatCompletion(model), nil
+}
+
+func codexMessageInput(role, content string) map[string]interface{} {
+	partType := "input_text"
+	if role == "assistant" {
+		partType = "output_text"
+	}
+	
+	msg := map[string]interface{}{
+		"type": "message",
+		"role": role,
+		"content": []map[string]interface{}{
+			{
+				"type": partType,
+				"text": content,
+			},
+		},
+	}
+	if role == "system" {
+		msg["role"] = "developer"
+	}
+	return msg
+}
+
+func buildCodexCompactRequest(req providers.ChatRequest, model string) codexCompactRequest {
+	payload := codexCompactRequest{
+		Model:        model,
+		Instructions: "You are Codex. Answer the user's request concisely and accurately.",
+		// Stream is not supported on compact endpoint, must be false
+		Stream:       false,
+	}
+
+	// 1. Map tools (flatten function fields)
+	tools := req.Tools
+	if len(tools) == 0 && len(req.Functions) > 0 {
+		tools = make([]map[string]interface{}, 0, len(req.Functions))
+		for _, fn := range req.Functions {
+			tools = append(tools, map[string]interface{}{
+				"type":     "function",
+				"function": fn,
+			})
+		}
+	}
+
+	if len(tools) > 0 {
+		payload.Tools = make([]map[string]interface{}, 0, len(tools))
+		for _, t := range tools {
+			toolType := stringValue(t["type"])
+			if toolType == "function" {
+				fn, _ := t["function"].(map[string]interface{})
+				item := map[string]interface{}{
+					"type":        "function",
+					"name":        stringValue(fn["name"]),
+					"description": stringValue(fn["description"]),
+					"parameters":  fn["parameters"],
+				}
+				if strict, ok := fn["strict"].(bool); ok {
+					item["strict"] = strict
+				}
+				payload.Tools = append(payload.Tools, item)
+			} else {
+				payload.Tools = append(payload.Tools, t)
+			}
+		}
+
+		if req.ToolChoice != nil {
+			if tc, ok := req.ToolChoice.(map[string]interface{}); ok {
+				if stringValue(tc["type"]) == "function" {
+					if fn, ok := tc["function"].(map[string]interface{}); ok {
+						payload.ToolChoice = map[string]interface{}{
+							"type": "function",
+							"name": stringValue(fn["name"]),
+						}
+					}
+				}
+			} else {
+				payload.ToolChoice = req.ToolChoice
+			}
+		}
+	}
+
+	// 2. Build input from messages, handling all message types including tool calls
+	for _, m := range req.Messages {
+		role := strings.ToLower(strings.TrimSpace(m.Role))
+
+		switch role {
+		case "tool":
+			// Handle tool response messages as top-level function_call_output objects
+			payload.Input = append(payload.Input, map[string]interface{}{
+				"type":    "function_call_output",
+				"call_id": m.ToolCallID,
+				"output":  m.Content,
+			})
+
+		default:
+			// Handle regular messages
+			payload.Input = append(payload.Input, codexMessageInput(role, m.Content))
+
+			// Handle tool calls for assistant messages as separate top-level objects
+			if role == "assistant" && len(m.ToolCalls) > 0 {
+				for _, tc := range m.ToolCalls {
+					fn, _ := tc["function"].(map[string]interface{})
+					callID := firstNonEmptyString(stringValue(tc["id"]), stringValue(tc["call_id"]))
+					payload.Input = append(payload.Input, map[string]interface{}{
+						"type":      "function_call",
+						"call_id":   callID,
+						"name":      stringValue(fn["name"]),
+						"arguments": stringValue(fn["arguments"]),
+					})
+				}
+			}
+		}
+	}
+
+	return payload
+}
+
+func (r codexCompactResponse) asChatCompletion(fallbackModel string) providers.ChatResponse {
+	var content string
+	toolCalls := make([]map[string]interface{}, 0)
+
+	// 1. Process all tool calls from the entire output
+	for _, item := range r.Output {
+		itemType := strings.ToLower(strings.TrimSpace(item.Type))
+		switch itemType {
+		case "function_call", "tool_call", "call":
+			toolCalls = append(toolCalls, map[string]interface{}{
+				"id":   firstNonEmptyString(item.ID, item.CallID),
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":      item.Name,
+					"arguments": firstNonEmptyString(item.Arguments, "{}"),
+				},
+			})
+		case "function":
+			if item.Name != "" {
+				toolCalls = append(toolCalls, map[string]interface{}{
+					"id":   firstNonEmptyString(item.ID, item.CallID, "call-"+strconv.FormatInt(time.Now().UnixNano(), 10)),
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":      item.Name,
+						"arguments": firstNonEmptyString(item.Arguments, "{}"),
+					},
+				})
+			}
+		}
+	}
+
+	// 2. Extract content ONLY from turns that are messages
+	for i := len(r.Output) - 1; i >= 0; i-- {
+		item := r.Output[i]
+		if strings.ToLower(strings.TrimSpace(item.Type)) == "message" {
+			var turnContent strings.Builder
+			for j, part := range item.Content {
+				log.Printf("[Codex] Part %d Content %d: Type=%s, TextLen=%d, OutputTextLen=%d",
+					i, j, part.Type, len(part.Text), len(part.OutputText))
+				if strings.ToLower(strings.TrimSpace(part.Type)) == "output_text" || part.Type == "text" || part.Type == "" {
+					if part.Text != "" {
+						turnContent.WriteString(part.Text)
+					} else if part.OutputText != "" {
+						turnContent.WriteString(part.OutputText)
+					}
+				}
+			}
+			content = turnContent.String()
+			if strings.TrimSpace(content) != "" {
+				break
+			}
+		}
+	}
+
+	// 3. Fallback to OutputText ONLY if structured content is still empty
+	if strings.TrimSpace(content) == "" && strings.TrimSpace(r.OutputText) != "" {
+		content = r.OutputText
+	}
+
+	// 4. Log warning if we have usage but no content (suspicious)
+	if strings.TrimSpace(content) == "" && len(toolCalls) == 0 && r.Usage.CompletionTokens > 0 {
+		log.Printf("[Codex] WARNING: Response has %d completion tokens but empty content and no tool calls - response may be malformed", r.Usage.CompletionTokens)
+	}
+
+	finishReason := "stop"
+	if len(toolCalls) > 0 {
+		finishReason = "tool_calls"
+	}
+	return providers.ChatResponse{
+		ID:     firstNonEmptyString(r.ID, "codex-"+strconv.FormatInt(time.Now().UnixNano(), 10)),
+		Object: "chat.completion",
+		Model:  firstNonEmptyString(r.Model, fallbackModel),
+		Choices: []providers.Choice{{
+			Index: 0,
+			Message: providers.Message{
+				Role:      "assistant",
+				Content:   strings.TrimSpace(content),
+				ToolCalls: toolCalls,
+			},
+			FinishReason: finishReason,
+		}},
+		Usage: normalizeUsage(r.Usage),
+	}
+}
+
+func applyCodexHeaders(req *http.Request, credential ProviderCredential, sessionID string, stream bool) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+credential.authToken())
+	req.Header.Set("Version", codexClientVersion)
+
+	if strings.TrimSpace(sessionID) != "" {
+		req.Header.Set("Session_id", sessionID)
+	} else {
+		req.Header.Set("Session_id", "synroute-"+strconv.FormatInt(time.Now().UnixNano(), 10))
+	}
+
+	req.Header.Set("User-Agent", codexUserAgent)
+	if stream {
+		req.Header.Set("Accept", "text/event-stream")
+	} else {
+		req.Header.Set("Accept", "application/json")
+	}
+	req.Header.Set("Connection", "Keep-Alive")
+	if !credential.isSessionCredential() && strings.TrimSpace(credential.AccessToken) != "" {
+		req.Header.Set("Originator", "codex_cli_rs")
+	}
+}
+
+func codexBaseURL(baseURL string) string {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" || strings.EqualFold(baseURL, defaultOpenAIBaseURL) || strings.Contains(baseURL, "api.openai.com") {
+		return codexSubscriptionBaseURL
+	}
+	return strings.TrimRight(baseURL, "/")
+}
+
+func isCodexOAuthCredential(credential ProviderCredential) bool {
+	return strings.TrimSpace(credential.AccessToken) != "" && credential.isBearerCredential()
+}
+
+func isGeminiOAuthCredential(credential ProviderCredential) bool {
+	return strings.TrimSpace(credential.AccessToken) != "" && credential.isBearerCredential()
+}
+
+func (p *geminiProvider) geminiCLIChatCompletion(ctx context.Context, credential ProviderCredential, request providers.ChatRequest, model, sessionID string) (providers.ChatResponse, error) {
+	resolvedCredential, err := p.ensureGeminiCLIProject(ctx, credential)
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
+
+	encoded, err := buildGeminiCLIRequest(request, model, resolvedCredential.ProjectID)
+	if err != nil {
+		return providers.ChatResponse{}, fmt.Errorf("marshal gemini cli request: %w", err)
+	}
+
+	requestURL := geminiSubscriptionBaseURL + geminiGenerateContentPath
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(encoded))
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", bearerPrefix(resolvedCredential.TokenType)+resolvedCredential.AccessToken)
+	applyGeminiCLIHeaders(httpReq, model, sessionID)
+
+	httpResp, err := p.client.Do(httpReq)
+	if err != nil {
+		return providers.ChatResponse{}, fmt.Errorf("gemini request failed: %w", err)
+	}
+	defer httpResp.Body.Close()
+
+	upstreamResp, err := decodeGeminiChatResponse(httpResp)
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
+	return upstreamResp.asChatCompletion(model), nil
+}
+
+func (p *geminiProvider) ensureGeminiCLIProject(ctx context.Context, credential ProviderCredential) (ProviderCredential, error) {
+	if strings.TrimSpace(credential.ProjectID) != "" {
+		return credential, nil
+	}
+
+	projectID, err := discoverGeminiCLIProject(ctx, p.client, credential)
+	if err != nil {
+		return credential, fmt.Errorf("gemini project discovery failed: %w", err)
+	}
+	credential.ProjectID = projectID
+	_ = StoreCredential("gemini", credential)
+	return credential, nil
+}
+
+func applyGeminiCLIHeaders(req *http.Request, model, sessionID string) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		model = "gemini"
+	}
+	req.Header.Set("User-Agent", fmt.Sprintf("google-gemini-cli/0.1.19 (%s; %s; model=%s)", runtime.GOOS, runtime.GOARCH, model))
+	if strings.TrimSpace(sessionID) != "" {
+		req.Header.Set("X-Session-Id", sessionID)
+	}
+	req.Header.Set("X-Goog-Api-Client", geminiCLIApiClientHeader)
+	req.Header.Set("Accept", "application/json")
+}
+
+func decodeGeminiChatResponse(resp *http.Response) (geminiChatResponse, error) {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return geminiChatResponse{}, fmt.Errorf("gemini read failure: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return geminiChatResponse{}, fmt.Errorf("gemini returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var upstreamResp geminiChatResponse
+	if err := json.Unmarshal(body, &upstreamResp); err != nil {
+		return geminiChatResponse{}, fmt.Errorf("gemini decode failure: %w", err)
+	}
+	if len(upstreamResp.Candidates) == 0 {
+		var wrapped struct {
+			Response geminiChatResponse `json:"response"`
+		}
+		if err := json.Unmarshal(body, &wrapped); err == nil && len(wrapped.Response.Candidates) > 0 {
+			upstreamResp = wrapped.Response
+		}
+	}
+	if len(upstreamResp.Candidates) == 0 || len(upstreamResp.Candidates[0].Content.Parts) == 0 {
+		return geminiChatResponse{}, fmt.Errorf("gemini returned empty completion")
+	}
+	return upstreamResp, nil
+}
+
+func discoverGeminiCLIProject(ctx context.Context, client *http.Client, credential ProviderCredential) (string, error) {
+	metadata := map[string]string{
+		"ideType":    "IDE_UNSPECIFIED",
+		"platform":   "PLATFORM_UNSPECIFIED",
+		"pluginType": "GEMINI",
+	}
+
+	var loadResp map[string]interface{}
+	if err := callGeminiCLIEndpoint(ctx, client, credential, "loadCodeAssist", map[string]interface{}{
+		"metadata": metadata,
+	}, &loadResp); err != nil {
+		return "", fmt.Errorf("load code assist: %w", err)
+	}
+
+	tierID := "legacy-tier"
+	if tiers, ok := loadResp["allowedTiers"].([]interface{}); ok {
+		for _, rawTier := range tiers {
+			tier, ok := rawTier.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if isDefault, _ := tier["isDefault"].(bool); isDefault {
+				if id := strings.TrimSpace(stringValue(tier["id"])); id != "" {
+					tierID = id
+					break
+				}
+			}
+		}
+	}
+
+	projectID := geminiProjectIDFromResponse(loadResp["cloudaicompanionProject"])
+	if projectID == "" {
+		autoCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		autoReq := map[string]interface{}{
+			"tierId":   tierID,
+			"metadata": metadata,
+		}
+		for {
+			var onboardResp map[string]interface{}
+			if err := callGeminiCLIEndpoint(autoCtx, client, credential, "onboardUser", autoReq, &onboardResp); err != nil {
+				return "", fmt.Errorf("auto-discovery onboard user: %w", err)
+			}
+			if done, _ := onboardResp["done"].(bool); done {
+				if response, ok := onboardResp["response"].(map[string]interface{}); ok {
+					projectID = geminiProjectIDFromResponse(response["cloudaicompanionProject"])
+				}
+				break
+			}
+			select {
+			case <-autoCtx.Done():
+				return "", fmt.Errorf("timed out waiting for project onboarding")
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}
+	if projectID == "" {
+		return "", fmt.Errorf("project onboarding did not return a project id")
+	}
+
+	for {
+		var onboardResp map[string]interface{}
+		if err := callGeminiCLIEndpoint(ctx, client, credential, "onboardUser", map[string]interface{}{
+			"tierId":                  tierID,
+			"metadata":                metadata,
+			"cloudaicompanionProject": projectID,
+		}, &onboardResp); err != nil {
+			return "", fmt.Errorf("onboard user: %w", err)
+		}
+		if done, _ := onboardResp["done"].(bool); done {
+			if response, ok := onboardResp["response"].(map[string]interface{}); ok {
+				if backendProject := geminiProjectIDFromResponse(response["cloudaicompanionProject"]); backendProject != "" {
+					projectID = backendProject
+				}
+			}
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return projectID, nil
+}
+
+func callGeminiCLIEndpoint(ctx context.Context, client *http.Client, credential ProviderCredential, endpoint string, body interface{}, result interface{}) error {
+	rawBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal request body: %w", err)
+	}
+	url := fmt.Sprintf("%s%s:%s", geminiSubscriptionBaseURL, "/v1internal", endpoint)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(rawBody))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", bearerPrefix(credential.TokenType)+credential.AccessToken)
+	applyGeminiCLIHeaders(req, "", "")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read response body: %w", err)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("api request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	if result == nil {
+		return nil
+	}
+	if err := json.Unmarshal(data, result); err != nil {
+		return fmt.Errorf("decode response body: %w", err)
+	}
+	return nil
+}
+
+func geminiProjectIDFromResponse(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]interface{}:
+		return strings.TrimSpace(firstNonEmptyString(
+			stringValue(typed["id"]),
+			stringValue(typed["projectId"]),
+			stringValue(typed["project_id"]),
+		))
+	default:
+		return ""
+	}
+}
+
+func decodeResponseBody(body io.ReadCloser, contentEncoding string) (io.ReadCloser, error) {
+	if body == nil {
+		return nil, fmt.Errorf("response body is nil")
+	}
+	if strings.TrimSpace(contentEncoding) == "" {
+		peekable := &peekableBody{Reader: bufio.NewReader(body), closer: body}
+		magic, peekErr := peekable.Peek(2)
+		if peekErr == nil || (peekErr == io.EOF && len(magic) >= 2) {
+			if len(magic) >= 2 && magic[0] == 0x1f && magic[1] == 0x8b {
+				reader, err := gzip.NewReader(peekable)
+				if err != nil {
+					_ = peekable.Close()
+					return nil, fmt.Errorf("magic-byte gzip: failed to create reader: %w", err)
+				}
+				return &compositeReadCloser{
+					Reader: reader,
+					closers: []func() error{
+						reader.Close,
+						peekable.Close,
+					},
+				}, nil
+			}
+		}
+		return peekable, nil
+	}
+
+	for _, raw := range strings.Split(contentEncoding, ",") {
+		switch strings.TrimSpace(strings.ToLower(raw)) {
+		case "", "identity":
+			continue
+		case "gzip":
+			reader, err := gzip.NewReader(body)
+			if err != nil {
+				_ = body.Close()
+				return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+			}
+			return &compositeReadCloser{
+				Reader: reader,
+				closers: []func() error{
+					reader.Close,
+					body.Close,
+				},
+			}, nil
+		case "deflate":
+			reader := flate.NewReader(body)
+			return &compositeReadCloser{
+				Reader: reader,
+				closers: []func() error{
+					reader.Close,
+					body.Close,
+				},
+			}, nil
+		}
+	}
+	return body, nil
+}
+
+func (r geminiChatResponse) asChatCompletion(model string) providers.ChatResponse {
+	responseText := ""
+	toolCalls := make([]map[string]interface{}, 0)
+	for _, part := range r.Candidates[0].Content.Parts {
+		if len(part.FunctionCall) > 0 {
+			name := stringValue(part.FunctionCall["name"])
+			args := "{}"
+			if rawArgs, ok := part.FunctionCall["args"]; ok {
+				if encodedArgs, err := json.Marshal(rawArgs); err == nil {
+					args = string(encodedArgs)
+				}
+			}
+			toolCalls = append(toolCalls, map[string]interface{}{
+				"id":   fmt.Sprintf("gemini-call-%d", len(toolCalls)+1),
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":      name,
+					"arguments": args,
+				},
+			})
+			continue
+		}
+		responseText += part.Text
+	}
+	finishReason := "stop"
+	if len(toolCalls) > 0 {
+		finishReason = "tool_calls"
+	}
+	return providers.ChatResponse{
+		ID:     fmt.Sprintf("gemini-%d", time.Now().UnixNano()),
+		Object: "chat.completion",
+		Model:  model,
+		Choices: []providers.Choice{
+			{
+				Index: 0,
+				Message: providers.Message{
+					Role:      "assistant",
+					Content:   responseText,
+					ToolCalls: toolCalls,
+				},
+				FinishReason: finishReason,
+			},
+		},
+		Usage: providers.Usage{
+			PromptTokens:     r.UsageMetadata.PromptTokenCount,
+			CompletionTokens: r.UsageMetadata.CandidatesTokenCount,
+			TotalTokens:      r.UsageMetadata.TotalTokenCount,
+		},
+	}
+}
+
+func cachedProviderModels(providerName string, loader func() []ModelInfo) []ModelInfo {
+	now := time.Now()
+
+	providerModelCache.mu.RLock()
+	entry, ok := providerModelCache.data[providerName]
+	providerModelCache.mu.RUnlock()
+	if ok && now.Before(entry.expires) && len(entry.models) > 0 {
+		return cloneModelInfos(entry.models)
+	}
+
+	models := loader()
+	if len(models) == 0 {
+		return nil
+	}
+
+	providerModelCache.mu.Lock()
+	if providerModelCache.data == nil {
+		providerModelCache.data = make(map[string]providerModelCacheEntry)
+	}
+	providerModelCache.data[providerName] = providerModelCacheEntry{
+		expires: now.Add(providerModelCacheTTL),
+		models:  cloneModelInfos(models),
+	}
+	providerModelCache.mu.Unlock()
+	return cloneModelInfos(models)
+}
+
+func buildModelInfos(ids []string, ownedBy string, contextWindow int, description, providerName, category string) []ModelInfo {
+	seen := make(map[string]struct{}, len(ids))
+	models := make([]ModelInfo, 0, len(ids))
+	for _, id := range ids {
+		modelID := strings.TrimSpace(id)
+		if modelID == "" {
+			continue
+		}
+		if _, ok := seen[modelID]; ok {
+			continue
+		}
+		seen[modelID] = struct{}{}
+		models = append(models, ModelInfo{
+			ID:          modelID,
+			Object:      "model",
+			OwnedBy:     ownedBy,
+			Context:     contextWindow,
+			Description: description,
+			Provider:    providerName,
+			Category:    category,
+		})
+	}
+	return models
+}
+
+func parseModelIDs(body []byte, keep func(string) bool) []string {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil
+	}
+
+	ids := make([]string, 0)
+	appendID := func(raw string) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return
+		}
+		if keep != nil && !keep(raw) {
+			return
+		}
+		ids = append(ids, raw)
+	}
+	collectArray := func(items []interface{}) {
+		for _, item := range items {
+			switch typed := item.(type) {
+			case string:
+				appendID(typed)
+			case map[string]interface{}:
+				appendID(firstNonEmptyString(
+					stringValue(typed["id"]),
+					stringValue(typed["name"]),
+					stringValue(typed["model"]),
+					stringValue(typed["slug"]),
+				))
+			}
+		}
+	}
+
+	if data, ok := payload["data"].([]interface{}); ok {
+		collectArray(data)
+	}
+	if models, ok := payload["models"].([]interface{}); ok {
+		collectArray(models)
+	}
+	if modelsMap, ok := payload["models"].(map[string]interface{}); ok {
+		keys := make([]string, 0, len(modelsMap))
+		for key := range modelsMap {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			appendID(key)
+		}
+	}
+	if categories, ok := payload["categories"].([]interface{}); ok {
+		for _, category := range categories {
+			categoryMap, ok := category.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if models, ok := categoryMap["models"].([]interface{}); ok {
+				collectArray(models)
+			}
+		}
+	}
+
+	return dedupeStrings(ids)
+}
+
+func dedupeStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func normalizeUsage(usage providers.Usage) providers.Usage {
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	// If only total_tokens is provided (common in some Codex paths), use a heuristic split
+	if usage.TotalTokens > 0 && usage.PromptTokens == 0 && usage.CompletionTokens == 0 {
+		// More conservative heuristic: prompt tokens are usually less than completion for typical chat
+		usage.PromptTokens = int(float64(usage.TotalTokens) * 0.25)
+		usage.CompletionTokens = usage.TotalTokens - usage.PromptTokens
+	}
+	return usage
+}
+
+func preferredFallbackModel(models []string, fallback string) string {
+	for _, model := range models {
+		if strings.EqualFold(strings.TrimSpace(model), fallback) {
+			return fallback
+		}
+	}
+	if len(models) > 0 {
+		return strings.TrimSpace(models[0])
+	}
+	return fallback
+}
+
+func looksLikeClaudeModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(model, "claude")
+}
+
+func looksLikeCodexModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(model, "gpt") || strings.Contains(model, "codex") || strings.HasPrefix(model, "o1") || strings.HasPrefix(model, "o3") || strings.HasPrefix(model, "gpt-5")
+}
+
+func looksLikeGeminiModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(model, "gemini")
+}
+
+func codexRole(role string) string {
+	switch role {
+	case "assistant":
+		return "assistant"
+	case "system", "developer":
+		return "developer"
+	case "tool":
+		return "tool"
+	default:
+		return "user"
+	}
+}
+
+func codexReasoningEffort(effort string) string {
+	effort = strings.TrimSpace(effort)
+	if effort == "" {
+		return "medium"
+	}
+	return effort
+}
+
+func codexTools(req providers.ChatRequest) []map[string]interface{} {
+	if len(req.Tools) > 0 {
+		return req.Tools
+	}
+	if len(req.Functions) == 0 {
+		return nil
+	}
+	tools := make([]map[string]interface{}, 0, len(req.Functions))
+	for _, fn := range req.Functions {
+		tools = append(tools, map[string]interface{}{
+			"type":     "function",
+			"function": fn,
+		})
+	}
+	return tools
+}
+
+func buildGeminiCLIRequest(req providers.ChatRequest, model, projectID string) ([]byte, error) {
+	envelope := map[string]interface{}{
+		"model": model,
+		"request": map[string]interface{}{
+			"contents": []map[string]interface{}{},
+		},
+	}
+	if projectID = strings.TrimSpace(projectID); projectID != "" {
+		envelope["project"] = projectID
+	}
+	requestNode := envelope["request"].(map[string]interface{})
+
+	generationConfig := map[string]interface{}{}
+	if req.MaxTokens > 0 {
+		generationConfig["maxOutputTokens"] = req.MaxTokens
+	}
+	if req.Temperature > 0 {
+		generationConfig["temperature"] = req.Temperature
+	}
+	if len(req.Thinking) > 0 {
+		generationConfig["thinkingConfig"] = req.Thinking
+	} else if effort := strings.ToLower(strings.TrimSpace(req.ReasoningEffort)); effort != "" {
+		thinking := map[string]interface{}{}
+		if effort == "auto" {
+			thinking["thinkingBudget"] = -1
+			thinking["includeThoughts"] = true
+		} else {
+			thinking["thinkingLevel"] = effort
+			thinking["includeThoughts"] = effort != "none"
+		}
+		generationConfig["thinkingConfig"] = thinking
+	}
+	if len(generationConfig) > 0 {
+		requestNode["generationConfig"] = generationConfig
+	}
+
+	systemParts := make([]map[string]interface{}, 0)
+	contents := make([]map[string]interface{}, 0, len(req.Messages))
+	toolNamesByID := make(map[string]string)
+	for _, msg := range req.Messages {
+		if strings.EqualFold(strings.TrimSpace(msg.Role), "assistant") {
+			for _, toolCall := range msg.ToolCalls {
+				function, _ := toolCall["function"].(map[string]interface{})
+				callID := firstNonEmptyString(stringValue(toolCall["id"]), stringValue(toolCall["call_id"]))
+				if callID != "" {
+					toolNamesByID[callID] = stringValue(function["name"])
+				}
+			}
+		}
+	}
+
+	for _, msg := range req.Messages {
+		role := strings.ToLower(strings.TrimSpace(msg.Role))
+		switch role {
+		case "system", "developer":
+			if text := strings.TrimSpace(msg.Content); text != "" {
+				systemParts = append(systemParts, map[string]interface{}{"text": text})
+			}
+		case "assistant":
+			node := map[string]interface{}{
+				"role":  "model",
+				"parts": buildGeminiAssistantParts(msg),
+			}
+			if len(node["parts"].([]map[string]interface{})) > 0 {
+				contents = append(contents, node)
+			}
+		case "tool":
+			functionName := firstNonEmptyString(strings.TrimSpace(msg.Name), toolNamesByID[msg.ToolCallID], msg.ToolCallID)
+			response := map[string]interface{}{"result": decodeStructuredText(msg.Content)}
+			node := map[string]interface{}{
+				"role": "user",
+				"parts": []map[string]interface{}{{
+					"functionResponse": map[string]interface{}{
+						"name":     functionName,
+						"response": response,
+					},
+				}},
+			}
+			contents = append(contents, node)
+		default:
+			node := map[string]interface{}{
+				"role":  "user",
+				"parts": buildGeminiUserParts(msg),
+			}
+			if len(node["parts"].([]map[string]interface{})) > 0 {
+				contents = append(contents, node)
+			}
+		}
+	}
+
+	if len(systemParts) > 0 {
+		requestNode["systemInstruction"] = map[string]interface{}{
+			"role":  "user",
+			"parts": systemParts,
+		}
+	}
+	requestNode["contents"] = contents
+
+	if tools := buildGeminiCLITools(req); len(tools) > 0 {
+		requestNode["tools"] = tools
+	}
+
+	return json.Marshal(envelope)
+}
+
+func buildGeminiUserParts(msg providers.Message) []map[string]interface{} {
+	parts := make([]map[string]interface{}, 0, 1)
+	if text := strings.TrimSpace(msg.Content); text != "" {
+		parts = append(parts, map[string]interface{}{"text": text})
+	}
+	return parts
+}
+
+func buildGeminiAssistantParts(msg providers.Message) []map[string]interface{} {
+	parts := make([]map[string]interface{}, 0, 1+len(msg.ToolCalls))
+	if text := strings.TrimSpace(msg.Content); text != "" {
+		parts = append(parts, map[string]interface{}{"text": text})
+	}
+	for _, toolCall := range msg.ToolCalls {
+		function, _ := toolCall["function"].(map[string]interface{})
+		parts = append(parts, map[string]interface{}{
+			"functionCall": map[string]interface{}{
+				"name": stringValue(function["name"]),
+				"args": parseArgumentsMap(function["arguments"]),
+			},
+		})
+	}
+	return parts
+}
+
+func buildGeminiCLITools(req providers.ChatRequest) []map[string]interface{} {
+	rawTools := req.Tools
+	if len(rawTools) == 0 && len(req.Functions) > 0 {
+		rawTools = make([]map[string]interface{}, 0, len(req.Functions))
+		for _, fn := range req.Functions {
+			rawTools = append(rawTools, map[string]interface{}{
+				"type":     "function",
+				"function": fn,
+			})
+		}
+	}
+	if len(rawTools) == 0 {
+		return nil
+	}
+
+	declarations := make([]map[string]interface{}, 0, len(rawTools))
+	for _, tool := range rawTools {
+		if strings.TrimSpace(stringValue(tool["type"])) != "function" {
+			continue
+		}
+		function, _ := tool["function"].(map[string]interface{})
+		if len(function) == 0 {
+			continue
+		}
+		decl := map[string]interface{}{
+			"name":        stringValue(function["name"]),
+			"description": stringValue(function["description"]),
+		}
+		if parameters, ok := function["parameters"]; ok && parameters != nil {
+			decl["parametersJsonSchema"] = parameters
+		} else {
+			decl["parametersJsonSchema"] = map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			}
+		}
+		declarations = append(declarations, decl)
+	}
+	if len(declarations) == 0 {
+		return nil
+	}
+	return []map[string]interface{}{{
+		"functionDeclarations": declarations,
+	}}
+}
+
+func decodeStructuredText(raw string) interface{} {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var decoded interface{}
+	if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
+		return decoded
+	}
+	return raw
+}
+
+func normalizeCodexModel(model string) string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	switch model {
+	case "gpt-5-3":
+		return "gpt-5.3-codex"
+	case "gpt-5-3-instant":
+		return "gpt-5.3-codex-spark"
+	case "gpt-5-4-thinking":
+		return "gpt-5.4"
+	case "gpt-5-2":
+		return "gpt-5.2-codex"
+	case "gpt-5-2-thinking":
+		return "gpt-5.2"
+	case "gpt-5-1-thinking":
+		return "gpt-5.1-codex-max"
+	case "gpt-5-mini":
+		return "gpt-5.1-codex-mini"
+	default:
+		return model
+	}
+}
+
+func codexCatalogAliases(models []string) []string {
+	aliased := make([]string, 0, len(models))
+	for _, model := range models {
+		aliased = append(aliased, normalizeCodexModel(model))
+	}
+	return dedupeStrings(aliased)
+}
+
+func mapStainlessOS() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "MacOS"
+	case "linux":
+		return "Linux"
+	case "windows":
+		return "Windows"
+	default:
+		return runtime.GOOS
+	}
+}
+
+func mapStainlessArch() string {
+	switch runtime.GOARCH {
+	case "amd64":
+		return "x64"
+	case "arm64":
+		return "arm64"
+	case "386":
+		return "x86"
+	default:
+		return runtime.GOARCH
+	}
+}

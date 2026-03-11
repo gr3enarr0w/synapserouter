@@ -1,0 +1,1092 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"embed"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
+	_ "github.com/mattn/go-sqlite3"
+
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/compat"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/router"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/subscriptions"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/usage"
+)
+
+var (
+	proxyRouter  *router.Router
+	orchestrator *orchestration.Manager
+	usageTracker *usage.Tracker
+	vectorMemory *memory.VectorMemory
+	db           *sql.DB
+	providerList []providers.Provider
+	startupCheck map[string]interface{}
+	ampConfig    compat.AmpCodeConfig
+)
+
+//go:embed migrations/*.sql
+var embeddedMigrations embed.FS
+
+func main() {
+	// Load .env file
+	if err := loadDotEnv(); err != nil {
+		log.Println("No .env file found, using environment variables")
+	}
+
+	// Initialize database
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		home, _ := os.UserHomeDir()
+		dbPath = filepath.Join(home, ".mcp", "proxy", "usage.db")
+	}
+
+	// Expand ~ in path
+	if strings.HasPrefix(dbPath, "~/") {
+		home, _ := os.UserHomeDir()
+		dbPath = filepath.Join(home, dbPath[2:])
+	}
+
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		log.Fatal("Failed to create database directory:", err)
+	}
+
+	// Open database
+	var err error
+	db, err = sql.Open("sqlite3", dbPath)
+	if err != nil {
+		log.Fatal("Failed to open database:", err)
+	}
+
+	// Run migrations
+	if err := runMigrations(db); err != nil {
+		log.Fatal("Failed to run migrations:", err)
+	}
+	if err := ensureRuntimeSchema(db); err != nil {
+		log.Fatal("Failed to finalize runtime schema:", err)
+	}
+	if err := applyQuotaOverrides(db); err != nil {
+		log.Fatal("Failed to apply quota overrides:", err)
+	}
+
+	// Initialize usage tracker
+	usageTracker, err = usage.NewTracker(dbPath)
+	if err != nil {
+		log.Fatal("Failed to initialize usage tracker:", err)
+	}
+	defer usageTracker.Close()
+
+	// Initialize vector memory
+	vectorMemory = memory.NewVectorMemory(db)
+
+	// Initialize providers
+	providerList = initializeProviders()
+	startupCheck = runStartupCheck(providerList)
+
+	// Initialize router
+	proxyRouter = router.NewRouter(providerList, usageTracker, vectorMemory, db)
+	orchestrator = orchestration.NewManagerWithStore(proxyRouter, vectorMemory, db)
+	ampConfig, _ = compat.LoadAmpCodeConfig(db)
+
+	// Create HTTP router
+	r := mux.NewRouter()
+
+	// Health check
+	r.HandleFunc("/health", healthHandler).Methods("GET")
+	r.HandleFunc("/v1/startup-check", startupCheckHandler).Methods("GET")
+	r.HandleFunc("/anthropic/callback", subscriptionProviderCallbackHandler("anthropic")).Methods("GET")
+	r.HandleFunc("/codex/callback", subscriptionProviderCallbackHandler("openai")).Methods("GET")
+	r.HandleFunc("/google/callback", subscriptionProviderCallbackHandler("gemini")).Methods("GET")
+
+	// OpenAI-compatible endpoints
+	r.HandleFunc("/v1/models", modelsHandler).Methods("GET")
+	r.HandleFunc("/v1/chat/completions", chatHandler).Methods("POST")
+	r.HandleFunc("/v1/responses", responsesHandler).Methods("POST")
+	r.HandleFunc("/v1/responses/compact", responsesCompactHandler).Methods("POST")
+	r.HandleFunc("/v1/responses/{response_id}", responseGetHandler).Methods("GET")
+	r.HandleFunc("/v1/responses/{response_id}", responseDeleteHandler).Methods("DELETE")
+	r.HandleFunc("/api/provider/{provider}/v1/models", providerModelsHandler).Methods("GET")
+	r.HandleFunc("/api/provider/{provider}/v1/chat/completions", providerChatHandler).Methods("POST")
+	r.HandleFunc("/api/provider/{provider}/v1/responses", providerResponsesHandler).Methods("POST")
+
+	// Usage stats endpoint
+	r.HandleFunc("/v1/providers", providersHandler).Methods("GET")
+	r.Handle("/v1/usage", withAdminAuth(http.HandlerFunc(usageHandler))).Methods("GET")
+	r.Handle("/v1/memory/search", withAdminAuth(http.HandlerFunc(memorySearchHandler))).Methods("GET")
+	r.Handle("/v1/memory/session/{session_id}", withAdminAuth(http.HandlerFunc(memorySessionHandler))).Methods("GET")
+	r.Handle("/v1/audit/session/{session_id}", withAdminAuth(http.HandlerFunc(auditSessionHandler))).Methods("GET")
+	r.Handle("/v1/audit/request/{request_id}", withAdminAuth(http.HandlerFunc(auditRequestHandler))).Methods("GET")
+	r.Handle("/v1/debug/trace", withAdminAuth(http.HandlerFunc(traceHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/roles", withAdminAuth(http.HandlerFunc(orchestrationRolesHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/workflows", withAdminAuth(http.HandlerFunc(orchestrationWorkflowsHandler))).Methods("GET", "POST")
+	r.Handle("/v1/orchestration/workflows/{template_id}", withAdminAuth(http.HandlerFunc(orchestrationWorkflowHandler))).Methods("GET", "PUT", "DELETE")
+	r.Handle("/v1/orchestration/workflows/{template_id}/run", withAdminAuth(http.HandlerFunc(orchestrationWorkflowRunHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/executions/{workflow_id}/state", withAdminAuth(http.HandlerFunc(orchestrationExecutionStateHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/executions/{workflow_id}/metrics", withAdminAuth(http.HandlerFunc(orchestrationExecutionMetricsHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/executions/{workflow_id}/debug", withAdminAuth(http.HandlerFunc(orchestrationExecutionDebugHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/sessions/{session_id}/tasks", withAdminAuth(http.HandlerFunc(orchestrationSessionTasksHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/sessions/{session_id}/resume", withAdminAuth(http.HandlerFunc(orchestrationSessionResumeHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/sessions/{session_id}/fork", withAdminAuth(http.HandlerFunc(orchestrationSessionForkHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/tasks", withAdminAuth(http.HandlerFunc(orchestrationTasksHandler))).Methods("GET", "POST")
+	r.Handle("/v1/orchestration/tasks/{task_id}", withAdminAuth(http.HandlerFunc(orchestrationTaskHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/tasks/{task_id}/run", withAdminAuth(http.HandlerFunc(orchestrationTaskRunHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/tasks/{task_id}/pause", withAdminAuth(http.HandlerFunc(orchestrationTaskPauseHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/tasks/{task_id}/resume", withAdminAuth(http.HandlerFunc(orchestrationTaskResumeHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/tasks/{task_id}/cancel", withAdminAuth(http.HandlerFunc(orchestrationTaskCancelHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/tasks/{task_id}/assign", withAdminAuth(http.HandlerFunc(orchestrationTaskAssignHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/tasks/{task_id}/steal", withAdminAuth(http.HandlerFunc(orchestrationTaskStealHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/tasks/{task_id}/contest", withAdminAuth(http.HandlerFunc(orchestrationTaskContestHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/tasks/{task_id}/contest/resolve", withAdminAuth(http.HandlerFunc(orchestrationTaskContestResolveHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/tasks/{task_id}/refine", withAdminAuth(http.HandlerFunc(orchestrationTaskRefineHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/tasks/{task_id}/events", withAdminAuth(http.HandlerFunc(orchestrationTaskEventsHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/agents", withAdminAuth(http.HandlerFunc(orchestrationAgentsHandler))).Methods("GET", "POST")
+	r.Handle("/v1/orchestration/agents/health", withAdminAuth(http.HandlerFunc(orchestrationAgentHealthHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/agents/{agent_id}", withAdminAuth(http.HandlerFunc(orchestrationAgentHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/agents/{agent_id}/status", withAdminAuth(http.HandlerFunc(orchestrationAgentStatusHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/agents/{agent_id}/stop", withAdminAuth(http.HandlerFunc(orchestrationAgentStopHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/agents/{agent_id}/metrics", withAdminAuth(http.HandlerFunc(orchestrationAgentMetricsHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/agents/{agent_id}/logs", withAdminAuth(http.HandlerFunc(orchestrationAgentLogsHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/swarms", withAdminAuth(http.HandlerFunc(orchestrationSwarmsHandler))).Methods("GET", "POST")
+	r.Handle("/v1/orchestration/swarms/{swarm_id}", withAdminAuth(http.HandlerFunc(orchestrationSwarmHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/swarms/{swarm_id}/status", withAdminAuth(http.HandlerFunc(orchestrationSwarmStatusHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/swarms/{swarm_id}/start", withAdminAuth(http.HandlerFunc(orchestrationSwarmStartHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/swarms/{swarm_id}/stop", withAdminAuth(http.HandlerFunc(orchestrationSwarmStopHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/swarms/{swarm_id}/pause", withAdminAuth(http.HandlerFunc(orchestrationSwarmPauseHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/swarms/{swarm_id}/resume", withAdminAuth(http.HandlerFunc(orchestrationSwarmResumeHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/swarms/{swarm_id}/scale", withAdminAuth(http.HandlerFunc(orchestrationSwarmScaleHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/swarms/{swarm_id}/coordinate", withAdminAuth(http.HandlerFunc(orchestrationSwarmCoordinateHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/swarms/{swarm_id}/load", withAdminAuth(http.HandlerFunc(orchestrationSwarmLoadHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/swarms/{swarm_id}/imbalance", withAdminAuth(http.HandlerFunc(orchestrationSwarmImbalanceHandler))).Methods("GET")
+	r.Handle("/v1/orchestration/swarms/{swarm_id}/rebalance/preview", withAdminAuth(http.HandlerFunc(orchestrationSwarmRebalancePreviewHandler))).Methods("POST")
+	r.Handle("/v1/orchestration/swarms/{swarm_id}/stealable", withAdminAuth(http.HandlerFunc(orchestrationSwarmStealableTasksHandler))).Methods("GET")
+
+	// Amp compatibility management endpoints
+	r.Handle("/v0/management/anthropic-auth-url", withAdminAuth(http.HandlerFunc(subscriptionAnthropicAuthURLHandler))).Methods("GET")
+	r.Handle("/v0/management/codex-auth-url", withAdminAuth(http.HandlerFunc(subscriptionCodexAuthURLHandler))).Methods("GET")
+	r.Handle("/v0/management/gemini-cli-auth-url", withAdminAuth(http.HandlerFunc(subscriptionGeminiAuthURLHandler))).Methods("GET")
+	r.Handle("/v0/management/oauth-callback", withAdminAuth(http.HandlerFunc(subscriptionOAuthCallbackHandler))).Methods("POST")
+	r.Handle("/v0/management/get-auth-status", withAdminAuth(http.HandlerFunc(subscriptionAuthStatusHandler))).Methods("GET")
+	r.Handle("/v0/management/ampcode", withAdminAuth(http.HandlerFunc(ampConfigHandler))).Methods("GET")
+	r.Handle("/v0/management/ampcode/upstream-url", withAdminAuth(http.HandlerFunc(ampUpstreamURLHandler))).Methods("GET", "PUT", "DELETE")
+	r.Handle("/v0/management/ampcode/upstream-api-key", withAdminAuth(http.HandlerFunc(ampUpstreamAPIKeyHandler))).Methods("GET", "PUT", "DELETE")
+	r.Handle("/v0/management/ampcode/upstream-api-keys", withAdminAuth(http.HandlerFunc(ampUpstreamAPIKeysHandler))).Methods("GET", "PUT", "PATCH", "DELETE")
+	r.Handle("/v0/management/ampcode/model-mappings", withAdminAuth(http.HandlerFunc(ampModelMappingsHandler))).Methods("GET", "PUT", "PATCH", "DELETE")
+	r.Handle("/v0/management/ampcode/force-model-mappings", withAdminAuth(http.HandlerFunc(ampForceModelMappingsHandler))).Methods("GET", "PUT")
+	r.Handle("/v0/management/ampcode/restrict-management-to-localhost", withAdminAuth(http.HandlerFunc(ampRestrictManagementToLocalhostHandler))).Methods("GET", "PUT")
+
+	// Start server
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8090"
+	}
+
+	addr := fmt.Sprintf(":%s", port)
+	log.Printf("🚀 Synapse Router starting on %s", addr)
+	log.Printf("📊 Database: %s", dbPath)
+	log.Printf("🔄 Provider chain: Claude Code → Codex → Gemini → Qwen → Ollama Cloud → NanoGPT")
+	log.Printf("💾 Unified context across all providers via vector memory")
+	log.Printf("⚡ Usage tracking enabled (80%% auto-switch threshold)")
+	log.Printf("🧠 Orchestration roles loaded: %d", len(orchestration.DefaultRoles()))
+	logStartupCheck(startupCheck)
+
+	if err := http.ListenAndServe(addr, r); err != nil {
+		log.Fatal(err)
+	}
+	db.Close()
+}
+
+func initializeProviders() []providers.Provider {
+	var providerList []providers.Provider
+
+	subscriptionProviders, err := subscriptions.LoadRuntimeProviders(context.Background())
+	if err != nil {
+		log.Fatalf("Failed to initialize subscription providers: %v", err)
+	}
+	for _, provider := range subscriptionProviders {
+		providerList = append(providerList, provider)
+		log.Printf("✓ %s subscription provider initialized", provider.Name())
+	}
+
+	// 2. Ollama Cloud
+	ollamaAPIKey := os.Getenv("OLLAMA_API_KEY")
+	ollamaBaseURL := os.Getenv("OLLAMA_BASE_URL")
+	ollamaModel := os.Getenv("OLLAMA_MODEL")
+
+	if ollamaAPIKey != "" {
+		ollamaProvider := providers.NewOllamaCloudProvider(ollamaBaseURL, ollamaAPIKey, ollamaModel)
+		providerList = append(providerList, ollamaProvider)
+		log.Println("✓ Ollama Cloud provider initialized")
+	}
+
+	// 3. NanoGPT (always last - nuclear option with 2M context)
+	nanogptAPIKey := os.Getenv("NANOGPT_API_KEY")
+	nanogptBaseURL := os.Getenv("NANOGPT_BASE_URL")
+
+	if nanogptAPIKey != "" {
+		nanogptProvider := providers.NewNanoGPTProvider(nanogptBaseURL, nanogptAPIKey)
+		providerList = append(providerList, nanogptProvider)
+		log.Println("✓ NanoGPT provider initialized")
+	}
+
+	log.Printf("Initialized %d providers", len(providerList))
+	if len(providerList) == 0 {
+		log.Printf("No providers configured yet; start the built-in login flow with synroute-cli login <provider>")
+	}
+	return providerList
+}
+
+func runMigrations(db *sql.DB) error {
+	// Discover all migration files from embedded FS
+	files, err := embeddedMigrations.ReadDir("migrations")
+	if err != nil {
+		return fmt.Errorf("failed to read embedded migrations: %w", err)
+	}
+
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), ".sql") {
+			continue
+		}
+
+		migrationPath := "migrations/" + file.Name()
+		migrationSQL, err := embeddedMigrations.ReadFile(migrationPath)
+		if err != nil {
+			return fmt.Errorf("failed to read embedded migration file %s: %w", file.Name(), err)
+		}
+
+		// Execute migration
+		if _, err := db.Exec(string(migrationSQL)); err != nil {
+			return fmt.Errorf("failed to execute migration %s: %w", file.Name(), err)
+		}
+		log.Printf("✓ Database migration applied (embedded): %s", file.Name())
+	}
+
+	return nil
+}
+
+func loadDotEnv() error {
+	home, _ := os.UserHomeDir()
+	candidates := []string{
+		".env",
+		filepath.Join(home, ".mcp", "synapse", ".env"),
+	}
+
+	if executablePath, err := resolvedExecutablePath(); err == nil {
+		executableEnv := filepath.Join(filepath.Dir(executablePath), ".env")
+		if executableEnv != ".env" {
+			candidates = append(candidates, executableEnv)
+		}
+	}
+
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return godotenv.Load(candidate)
+		}
+	}
+
+	return os.ErrNotExist
+}
+
+func resolveRuntimeFilePath(relativePath string) string {
+	if _, err := os.Stat(relativePath); err == nil {
+		return relativePath
+	}
+
+	executablePath, err := resolvedExecutablePath()
+	if err != nil {
+		return relativePath
+	}
+
+	candidate := filepath.Join(filepath.Dir(executablePath), relativePath)
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate
+	}
+
+	return relativePath
+}
+
+func resolvedExecutablePath() (string, error) {
+	executablePath, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	resolvedPath, err := filepath.EvalSymlinks(executablePath)
+	if err != nil {
+		return executablePath, nil
+	}
+	return resolvedPath, nil
+}
+
+func ensureRuntimeSchema(db *sql.DB) error {
+	statements := []string{
+		`ALTER TABLE orchestration_tasks ADD COLUMN assigned_to TEXT`,
+	}
+
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			errText := strings.ToLower(err.Error())
+			if strings.Contains(errText, "duplicate column name") {
+				continue
+			}
+			if strings.Contains(errText, "no such table") {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func applyQuotaOverrides(db *sql.DB) error {
+	overrides := []struct {
+		provider       string
+		dailyEnv       string
+		monthlyEnv     string
+		defaultDaily   int64
+		defaultMonthly int64
+		tier           string
+	}{
+		{provider: "claude-code", dailyEnv: "CLAUDE_CODE_DAILY_LIMIT", defaultDaily: 500000, defaultMonthly: 15000000, tier: "pro"},
+		{provider: "codex", dailyEnv: "CODEX_DAILY_LIMIT", defaultDaily: 300000, defaultMonthly: 9000000, tier: "pro"},
+		{provider: "gemini", dailyEnv: "GEMINI_DAILY_LIMIT", defaultDaily: 500000, defaultMonthly: 15000000, tier: "pro"},
+		{provider: "qwen", dailyEnv: "QWEN_DAILY_LIMIT", defaultDaily: 500000, defaultMonthly: 15000000, tier: "pro"},
+		{provider: "ollama-cloud", dailyEnv: "OLLAMA_CLOUD_DAILY_LIMIT", defaultDaily: 1000000, defaultMonthly: 30000000, tier: "pro"},
+		{provider: "nanogpt", monthlyEnv: "NANOGPT_MONTHLY_QUOTA", defaultDaily: 2000000, defaultMonthly: 60000000, tier: "subscription"},
+	}
+
+	for _, override := range overrides {
+		dailyLimit := override.defaultDaily
+		monthlyLimit := override.defaultMonthly
+
+		if override.dailyEnv != "" {
+			if parsed, ok := lookupInt64Env(override.dailyEnv); ok {
+				dailyLimit = parsed
+			}
+		}
+		if override.monthlyEnv != "" {
+			if parsed, ok := lookupInt64Env(override.monthlyEnv); ok {
+				monthlyLimit = parsed
+			}
+		}
+
+		if _, err := db.Exec(`
+			INSERT INTO provider_quotas (provider, daily_limit, monthly_limit, reset_time, tier, enabled)
+			VALUES (?, ?, ?, datetime('now', '+1 day'), ?, 1)
+			ON CONFLICT(provider) DO UPDATE SET
+				daily_limit = excluded.daily_limit,
+				monthly_limit = excluded.monthly_limit,
+				tier = excluded.tier
+		`, override.provider, dailyLimit, monthlyLimit, override.tier); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func lookupInt64Env(key string) (int64, bool) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return 0, false
+	}
+
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		log.Printf("Ignoring invalid %s value %q", key, raw)
+		return 0, false
+	}
+
+	return value, true
+}
+
+func envFirst(keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func orchestratorRoleCount() int {
+	if orchestrator == nil {
+		return 0
+	}
+	return len(orchestrator.Roles())
+}
+
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	// Check circuit breaker states
+	states, _ := router.GetAllCircuitStates(db)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":           "ok",
+		"timestamp":        time.Now().Unix(),
+		"circuit_breakers": states,
+	})
+}
+
+func modelsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"object": "list",
+		"data":   availableModels(),
+	})
+}
+
+func chatHandler(w http.ResponseWriter, r *http.Request) {
+	var req providers.ChatRequest
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := json.NewDecoder(bytes.NewReader(rawBody)).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if resolved := compat.ResolveModel(ampConfig, req.Model, knownModelIDs()); resolved != "" {
+		req.Model = resolved
+	}
+	if shouldUseAmpFallback(req.Model) {
+		if forwardToAmpUpstream(w, r, rawBody) {
+			return
+		}
+	}
+
+	resp, err := routeChatRequest(r, req, requestSessionID(r), "")
+	if err != nil {
+		// Check if this is a validation error (400) vs service error (503)
+		if strings.Contains(err.Error(), "invalid request:") || strings.Contains(err.Error(), "unknown model") || strings.Contains(err.Error(), "not compatible") {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if forwardToAmpUpstream(w, r, rawBody) {
+			return
+		}
+		log.Printf("All providers failed: %v", err)
+		http.Error(w, fmt.Sprintf("Service unavailable: %v", err), http.StatusServiceUnavailable)
+		return
+	}
+
+	// Handle streaming response format
+	if req.Stream {
+		writeChatCompletionStream(w, resp)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func usageHandler(w http.ResponseWriter, r *http.Request) {
+	quotas, err := usageTracker.GetAllQuotas()
+	if err != nil {
+		http.Error(w, "Failed to get usage stats", http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to JSON-friendly format
+	result := make(map[string]interface{})
+	for name, quota := range quotas {
+		result[name] = map[string]interface{}{
+			"current_usage": quota.CurrentUsage,
+			"daily_limit":   quota.DailyLimit,
+			"usage_percent": fmt.Sprintf("%.1f%%", quota.UsagePercent*100),
+			"tier":          quota.Tier,
+			"reset_time":    quota.ResetTime,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+func orchestrationRolesHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"count": orchestratorRoleCount(),
+		"data":  orchestrator.Roles(),
+	})
+}
+
+func orchestrationTasksHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+		status := strings.TrimSpace(r.URL.Query().Get("status"))
+		tasks := orchestrator.ListTasks()
+		if sessionID != "" || status != "" {
+			filtered := make([]*orchestration.Task, 0, len(tasks))
+			for _, task := range tasks {
+				if sessionID != "" && task.SessionID != sessionID {
+					continue
+				}
+				if status != "" && !strings.EqualFold(string(task.Status), status) {
+					continue
+				}
+				filtered = append(filtered, task)
+			}
+			tasks = filtered
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"count": len(tasks),
+			"data":  tasks,
+		})
+	case http.MethodPost:
+		var req orchestration.TaskRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		task, err := orchestrator.CreateTask(r.Context(), req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(task)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func orchestrationSessionTasksHandler(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(mux.Vars(r)["session_id"])
+	tasks := orchestrator.ListTasksBySession(sessionID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"count":      len(tasks),
+		"session_id": sessionID,
+		"data":       tasks,
+	})
+}
+
+func orchestrationSessionResumeHandler(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(mux.Vars(r)["session_id"])
+	var req struct {
+		Goal    string `json:"goal,omitempty"`
+		Execute bool   `json:"execute,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	task, err := orchestrator.ResumeSessionTask(r.Context(), sessionID, req.Goal, req.Execute)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(task)
+}
+
+func orchestrationSessionForkHandler(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(mux.Vars(r)["session_id"])
+	var req orchestration.SessionForkRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	task, err := orchestrator.ForkSessionTask(r.Context(), sessionID, req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(task)
+}
+
+func orchestrationTaskHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := mux.Vars(r)["task_id"]
+	task, err := orchestrator.GetTask(taskID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(task)
+}
+
+func orchestrationTaskRunHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := mux.Vars(r)["task_id"]
+	if err := orchestrator.StartTask(taskID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func orchestrationTaskPauseHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := mux.Vars(r)["task_id"]
+	task, err := orchestrator.PauseTask(taskID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(task)
+}
+
+func orchestrationTaskResumeHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := mux.Vars(r)["task_id"]
+	task, err := orchestrator.ResumeTask(taskID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(task)
+}
+
+func orchestrationTaskCancelHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := mux.Vars(r)["task_id"]
+	task, err := orchestrator.CancelTask(taskID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(task)
+}
+
+func orchestrationTaskRefineHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := mux.Vars(r)["task_id"]
+	var req orchestration.RefineRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	task, err := orchestrator.RefineTask(r.Context(), taskID, req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(task)
+}
+
+func providersHandler(w http.ResponseWriter, r *http.Request) {
+	quotas, _ := usageTracker.GetAllQuotas()
+	states, _ := router.GetAllCircuitStates(db)
+
+	result := make([]map[string]interface{}, 0, len(providerList))
+	for _, provider := range providerList {
+		entry := map[string]interface{}{
+			"name":               provider.Name(),
+			"healthy":            provider.IsHealthy(r.Context()),
+			"max_context_tokens": provider.MaxContextTokens(),
+			"circuit_state":      states[provider.Name()],
+		}
+		if quota, ok := quotas[provider.Name()]; ok {
+			entry["current_usage"] = quota.CurrentUsage
+			entry["daily_limit"] = quota.DailyLimit
+			entry["usage_percent"] = fmt.Sprintf("%.1f%%", quota.UsagePercent*100)
+			entry["tier"] = quota.Tier
+		}
+		result = append(result, entry)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"count":     len(result),
+		"providers": result,
+	})
+}
+
+func startupCheckHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(startupCheck)
+}
+
+func memorySearchHandler(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	if sessionID == "" {
+		http.Error(w, "session_id is required", http.StatusBadRequest)
+		return
+	}
+
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	maxTokens, err := parsePositiveIntQuery(r, "max_tokens", 4000)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var messages []memory.Message
+	if query == "" {
+		messages, err = vectorMemory.RetrieveRecent(sessionID, 20, "")
+	} else {
+		messages, err = vectorMemory.RetrieveRelevant(query, sessionID, maxTokens)
+	}
+	if err != nil {
+		http.Error(w, "Failed to search memory", http.StatusInternalServerError)
+		return
+	}
+
+	totalTokens := memory.EstimateMessagesTokens(messages)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"session_id":   sessionID,
+		"query":        query,
+		"result_count": len(messages),
+		"total_tokens": totalTokens,
+		"max_tokens":   maxTokens,
+		"messages":     messages,
+	})
+}
+
+func memorySessionHandler(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(mux.Vars(r)["session_id"])
+	if sessionID == "" {
+		http.Error(w, "session_id is required", http.StatusBadRequest)
+		return
+	}
+
+	messages, err := vectorMemory.GetSessionHistory(sessionID)
+	if err != nil {
+		http.Error(w, "Failed to load session history", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"session_id":    sessionID,
+		"message_count": len(messages),
+		"total_tokens":  memory.EstimateMessagesTokens(messages),
+		"messages":      messages,
+	})
+}
+
+func parsePositiveIntQuery(r *http.Request, key string, fallback int) (int, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return fallback, nil
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+
+	return value, nil
+}
+
+func auditSessionHandler(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(mux.Vars(r)["session_id"])
+	if sessionID == "" {
+		http.Error(w, "session_id is required", http.StatusBadRequest)
+		return
+	}
+
+	limit, err := parsePositiveIntQuery(r, "limit", 25)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	rows, err := db.Query(`
+		SELECT request_id, selected_provider, final_provider, final_model,
+		       memory_query, memory_candidate_count, success, error_message, created_at
+		FROM request_audit
+		WHERE session_id = ?
+		ORDER BY created_at DESC
+		LIMIT ?
+	`, sessionID, limit)
+	if err != nil {
+		http.Error(w, "Failed to load audit session", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var entries []map[string]interface{}
+	for rows.Next() {
+		var requestID, selectedProvider, finalProvider, finalModel, memoryQuery string
+		var memoryCandidateCount, success int
+		var errorMessage string
+		var createdAt time.Time
+
+		if err := rows.Scan(&requestID, &selectedProvider, &finalProvider, &finalModel,
+			&memoryQuery, &memoryCandidateCount, &success, &errorMessage, &createdAt); err != nil {
+			continue
+		}
+
+		entries = append(entries, map[string]interface{}{
+			"request_id":             requestID,
+			"selected_provider":      selectedProvider,
+			"final_provider":         finalProvider,
+			"final_model":            finalModel,
+			"memory_query":           memoryQuery,
+			"memory_candidate_count": memoryCandidateCount,
+			"success":                success == 1,
+			"error_message":          errorMessage,
+			"created_at":             createdAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"session_id": sessionID,
+		"count":      len(entries),
+		"entries":    entries,
+	})
+}
+
+func auditRequestHandler(w http.ResponseWriter, r *http.Request) {
+	requestID := strings.TrimSpace(mux.Vars(r)["request_id"])
+	if requestID == "" {
+		http.Error(w, "request_id is required", http.StatusBadRequest)
+		return
+	}
+
+	var sessionID, selectedProvider, finalProvider, finalModel, memoryQuery string
+	var memoryCandidateCount, success int
+	var errorMessage string
+	var createdAt time.Time
+
+	err := db.QueryRow(`
+		SELECT session_id, selected_provider, final_provider, final_model,
+		       memory_query, memory_candidate_count, success, error_message, created_at
+		FROM request_audit
+		WHERE request_id = ?
+	`, requestID).Scan(&sessionID, &selectedProvider, &finalProvider, &finalModel,
+		&memoryQuery, &memoryCandidateCount, &success, &errorMessage, &createdAt)
+	if err == sql.ErrNoRows {
+		http.Error(w, "request audit not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Failed to load request audit", http.StatusInternalServerError)
+		return
+	}
+
+	rows, err := db.Query(`
+		SELECT provider, attempt_index, success, error_message, created_at
+		FROM provider_attempt_audit
+		WHERE request_id = ?
+		ORDER BY attempt_index ASC
+	`, requestID)
+	if err != nil {
+		http.Error(w, "Failed to load provider attempts", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var attempts []map[string]interface{}
+	for rows.Next() {
+		var provider, attemptError string
+		var attemptIndex, attemptSuccess int
+		var attemptCreatedAt time.Time
+		if err := rows.Scan(&provider, &attemptIndex, &attemptSuccess, &attemptError, &attemptCreatedAt); err != nil {
+			continue
+		}
+		attempts = append(attempts, map[string]interface{}{
+			"provider":      provider,
+			"attempt_index": attemptIndex,
+			"success":       attemptSuccess == 1,
+			"error_message": attemptError,
+			"created_at":    attemptCreatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"request_id":             requestID,
+		"session_id":             sessionID,
+		"selected_provider":      selectedProvider,
+		"final_provider":         finalProvider,
+		"final_model":            finalModel,
+		"memory_query":           memoryQuery,
+		"memory_candidate_count": memoryCandidateCount,
+		"success":                success == 1,
+		"error_message":          errorMessage,
+		"created_at":             createdAt,
+		"attempts":               attempts,
+	})
+}
+
+func traceHandler(w http.ResponseWriter, r *http.Request) {
+	var req providers.ChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	sessionID := r.Header.Get("X-Session-ID")
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(r.URL.Query().Get("session_id"))
+	}
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("trace-%d", time.Now().UnixNano())
+	}
+
+	trace, err := proxyRouter.TraceDecision(r.Context(), req, sessionID)
+	if err != nil {
+		http.Error(w, "Failed to build trace", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(trace)
+}
+
+func withAdminAuth(next http.Handler) http.Handler {
+	adminKey := strings.TrimSpace(os.Getenv("SYNROUTE_ADMIN_TOKEN"))
+	if adminKey == "" {
+		adminKey = strings.TrimSpace(os.Getenv("ADMIN_API_KEY"))
+	}
+	if adminKey == "" {
+		return next
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := extractBearerToken(r.Header.Get("Authorization"))
+		if token == "" {
+			token = strings.TrimSpace(r.Header.Get("X-Admin-API-Key"))
+		}
+		if token != adminKey {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func extractBearerToken(header string) string {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return ""
+	}
+
+	parts := strings.SplitN(header, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+
+	return strings.TrimSpace(parts[1])
+}
+
+func runStartupCheck(providerList []providers.Provider) map[string]interface{} {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	results := make([]map[string]interface{}, 0, len(providerList))
+	readyCount := 0
+	for _, provider := range providerList {
+		healthy := provider.IsHealthy(ctx)
+		if healthy {
+			readyCount++
+		}
+		results = append(results, map[string]interface{}{
+			"name":               provider.Name(),
+			"healthy":            healthy,
+			"max_context_tokens": provider.MaxContextTokens(),
+			"configured":         providerConfigured(provider.Name()),
+			"notes":              providerNotes(provider.Name(), healthy),
+		})
+	}
+
+	return map[string]interface{}{
+		"timestamp":      time.Now().Unix(),
+		"provider_count": len(providerList),
+		"healthy_count":  readyCount,
+		"all_healthy":    readyCount == len(providerList) && len(providerList) > 0,
+		"providers":      results,
+	}
+}
+
+func logStartupCheck(report map[string]interface{}) {
+	log.Printf("🧪 Startup check: %v healthy providers", report["healthy_count"])
+	if providers, ok := report["providers"].([]map[string]interface{}); ok {
+		for _, provider := range providers {
+			log.Printf("🧪 Provider %s configured=%v healthy=%v notes=%s",
+				provider["name"], provider["configured"], provider["healthy"], provider["notes"])
+		}
+	}
+}
+
+func providerConfigured(name string) bool {
+	switch name {
+	case "claude-code":
+		if subscriptions.HasStoredCredentialsForProvider("anthropic") {
+			return true
+		}
+		return envFirst("SYNROUTE_ANTHROPIC_API_KEY", "SYNROUTE_ANTHROPIC_API_KEYS", "SYNROUTE_ANTHROPIC_SESSION_TOKEN", "SYNROUTE_ANTHROPIC_SESSION_TOKENS", "SUBSCRIPTION_GATEWAY_ANTHROPIC_API_KEY", "SUBSCRIPTION_GATEWAY_ANTHROPIC_API_KEYS", "SUBSCRIPTION_GATEWAY_ANTHROPIC_SESSION_TOKEN", "SUBSCRIPTION_GATEWAY_ANTHROPIC_SESSION_TOKENS", "SYNAPSE_GATEWAY_ANTHROPIC_API_KEY", "SYNAPSE_GATEWAY_ANTHROPIC_API_KEYS", "SYNAPSE_GATEWAY_ANTHROPIC_SESSION_TOKEN", "SYNAPSE_GATEWAY_ANTHROPIC_SESSION_TOKENS", "CLIPROXY_ANTHROPIC_API_KEY", "CLIPROXY_ANTHROPIC_API_KEYS", "CLIPROXY_ANTHROPIC_SESSION_TOKEN", "CLIPROXY_ANTHROPIC_SESSION_TOKENS") != ""
+	case "codex":
+		if subscriptions.HasStoredCredentialsForProvider("openai") {
+			return true
+		}
+		return envFirst("SYNROUTE_OPENAI_API_KEY", "SYNROUTE_OPENAI_API_KEYS", "SYNROUTE_OPENAI_SESSION_TOKEN", "SYNROUTE_OPENAI_SESSION_TOKENS", "SUBSCRIPTION_GATEWAY_OPENAI_API_KEY", "SUBSCRIPTION_GATEWAY_OPENAI_API_KEYS", "SUBSCRIPTION_GATEWAY_OPENAI_SESSION_TOKEN", "SUBSCRIPTION_GATEWAY_OPENAI_SESSION_TOKENS", "SYNAPSE_GATEWAY_OPENAI_API_KEY", "SYNAPSE_GATEWAY_OPENAI_API_KEYS", "SYNAPSE_GATEWAY_OPENAI_SESSION_TOKEN", "SYNAPSE_GATEWAY_OPENAI_SESSION_TOKENS", "CLIPROXY_OPENAI_API_KEY", "CLIPROXY_OPENAI_API_KEYS", "CLIPROXY_OPENAI_SESSION_TOKEN", "CLIPROXY_OPENAI_SESSION_TOKENS") != ""
+	case "gemini":
+		if subscriptions.HasStoredCredentialsForProvider("gemini") {
+			return true
+		}
+		return envFirst("SYNROUTE_GEMINI_API_KEY", "SYNROUTE_GEMINI_API_KEYS", "SYNROUTE_GEMINI_SESSION_TOKEN", "SYNROUTE_GEMINI_SESSION_TOKENS", "SUBSCRIPTION_GATEWAY_GEMINI_API_KEY", "SUBSCRIPTION_GATEWAY_GEMINI_API_KEYS", "SUBSCRIPTION_GATEWAY_GEMINI_SESSION_TOKEN", "SUBSCRIPTION_GATEWAY_GEMINI_SESSION_TOKENS", "SYNAPSE_GATEWAY_GEMINI_API_KEY", "SYNAPSE_GATEWAY_GEMINI_API_KEYS", "SYNAPSE_GATEWAY_GEMINI_SESSION_TOKEN", "SYNAPSE_GATEWAY_GEMINI_SESSION_TOKENS", "CLIPROXY_GEMINI_API_KEY", "CLIPROXY_GEMINI_API_KEYS", "CLIPROXY_GEMINI_SESSION_TOKEN", "CLIPROXY_GEMINI_SESSION_TOKENS") != ""
+	case "qwen":
+		return envFirst("SYNROUTE_QWEN_API_KEY", "SYNROUTE_QWEN_API_KEYS", "SYNROUTE_QWEN_SESSION_TOKEN", "SYNROUTE_QWEN_SESSION_TOKENS") != ""
+	case "ollama-cloud":
+		return strings.TrimSpace(os.Getenv("OLLAMA_API_KEY")) != ""
+	case "nanogpt":
+		return strings.TrimSpace(os.Getenv("NANOGPT_API_KEY")) != ""
+	default:
+		return true
+	}
+}
+
+func providerNotes(name string, healthy bool) string {
+	switch name {
+	case "claude-code":
+		if healthy {
+			return "Anthropic-backed Claude Code subscription path available"
+		}
+		return "Check SYNROUTE_ANTHROPIC_* credentials or run synroute-cli login anthropic"
+	case "codex":
+		if healthy {
+			return "OpenAI-backed Codex subscription path available"
+		}
+		return "Check SYNROUTE_OPENAI_* credentials or run synroute-cli login openai"
+	case "gemini":
+		if healthy {
+			return "Gemini subscription path available"
+		}
+		return "Check SYNROUTE_GEMINI_* credentials or run synroute-cli login gemini"
+	case "qwen":
+		if healthy {
+			return "Qwen OpenAI-compatible subscription path available"
+		}
+		return "Check SYNROUTE_QWEN_* credentials"
+	case "ollama-cloud":
+		if healthy {
+			return "Ollama Cloud API reachable"
+		}
+		return "Check OLLAMA_API_KEY and OLLAMA_BASE_URL"
+	case "nanogpt":
+		if healthy {
+			return "NanoGPT API reachable"
+		}
+		return "Check NANOGPT_API_KEY and NANOGPT_BASE_URL"
+	default:
+		return ""
+	}
+}
