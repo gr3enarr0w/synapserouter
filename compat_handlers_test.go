@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/compat"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
@@ -21,6 +24,8 @@ func (fn compatRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, erro
 }
 
 func TestAmpUpstreamURLHandlerUpdatesConfig(t *testing.T) {
+	originalAmpConfig := ampConfig
+	t.Cleanup(func() { ampConfig = originalAmpConfig })
 	ampConfig = compat.AmpCodeConfig{}
 
 	req := httptest.NewRequest(http.MethodPut, "/v0/management/ampcode/upstream-url", strings.NewReader(`{"value":"https://example.com"}`))
@@ -53,11 +58,13 @@ func TestProviderModelsHandlerFiltersProvider(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if len(payload.Data) != 1 {
-		t.Fatalf("expected 1 model, got %d", len(payload.Data))
+	if len(payload.Data) == 0 {
+		t.Fatal("expected at least 1 gemini model, got 0")
 	}
-	if payload.Data[0]["owned_by"] != "gemini" {
-		t.Fatalf("unexpected provider: %v", payload.Data[0]["owned_by"])
+	for _, model := range payload.Data {
+		if model["owned_by"] != "gemini" {
+			t.Fatalf("unexpected provider in filtered results: %v", model["owned_by"])
+		}
 	}
 }
 
@@ -320,16 +327,13 @@ func TestWriteResponsesStreamCarriesResponseMetadataFields(t *testing.T) {
 }
 
 func TestResponseGetHandlerReturnsStoredResponse(t *testing.T) {
-	responsesStoreMu.Lock()
-	responsesStore = map[string]map[string]interface{}{
-		"resp-get": {
-			"id":          "resp-get",
-			"object":      "response",
-			"model":       "gpt-5-codex",
-			"output_text": "stored output",
-		},
-	}
-	responsesStoreMu.Unlock()
+	db = newCompatTestDB(t)
+	storeResponsePayload("resp-get", map[string]interface{}{
+		"id":          "resp-get",
+		"object":      "response",
+		"model":       "gpt-5-codex",
+		"output_text": "stored output",
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp-get", nil)
 	req = muxSetVars(req, map[string]string{"response_id": "resp-get"})
@@ -346,11 +350,10 @@ func TestResponseGetHandlerReturnsStoredResponse(t *testing.T) {
 }
 
 func TestResponseDeleteHandlerRemovesStoredResponse(t *testing.T) {
-	responsesStoreMu.Lock()
-	responsesStore = map[string]map[string]interface{}{
-		"resp-delete": {"id": "resp-delete"},
-	}
-	responsesStoreMu.Unlock()
+	db = newCompatTestDB(t)
+	storeResponsePayload("resp-delete", map[string]interface{}{
+		"id": "resp-delete",
+	})
 
 	req := httptest.NewRequest(http.MethodDelete, "/v1/responses/resp-delete", nil)
 	req = muxSetVars(req, map[string]string{"response_id": "resp-delete"})
@@ -386,14 +389,11 @@ func TestConvertResponsesRequestPrependsInstructions(t *testing.T) {
 }
 
 func TestResponseSessionIDReturnsStoredSession(t *testing.T) {
-	responsesStoreMu.Lock()
-	responsesStore = map[string]map[string]interface{}{
-		"resp-prev": {
-			"id":         "resp-prev",
-			"session_id": "session-prev",
-		},
-	}
-	responsesStoreMu.Unlock()
+	db = newCompatTestDB(t)
+	storeResponsePayload("resp-prev", map[string]interface{}{
+		"id":         "resp-prev",
+		"session_id": "session-prev",
+	})
 
 	if got := responseSessionID("resp-prev"); got != "session-prev" {
 		t.Fatalf("expected session-prev, got %q", got)
@@ -503,4 +503,27 @@ func TestProviderChatHandlerFallsBackToAmpUpstreamForUnknownModel(t *testing.T) 
 	if !strings.Contains(rr.Body.String(), `"from amp"`) {
 		t.Fatalf("expected amp fallback response, got %s", rr.Body.String())
 	}
+}
+
+func newCompatTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	testDB, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = testDB.Exec(`
+		CREATE TABLE IF NOT EXISTS responses (
+			id TEXT PRIMARY KEY,
+			session_id TEXT,
+			model TEXT,
+			payload TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_responses_session ON responses(session_id);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = testDB.Close() })
+	return testDB
 }

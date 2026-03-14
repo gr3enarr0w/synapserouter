@@ -19,7 +19,7 @@ type testProvider struct{}
 
 func (p *testProvider) Name() string { return "nanogpt" }
 
-func (p *testProvider) ChatCompletion(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
+func (p *testProvider) ChatCompletion(ctx context.Context, req providers.ChatRequest, sessionID string) (providers.ChatResponse, error) {
 	return providers.ChatResponse{
 		ID:      "resp-1",
 		Object:  "chat.completion",
@@ -41,6 +41,7 @@ func (p *testProvider) ChatCompletion(ctx context.Context, req providers.ChatReq
 
 func (p *testProvider) IsHealthy(ctx context.Context) bool { return true }
 func (p *testProvider) MaxContextTokens() int              { return 2000000 }
+func (p *testProvider) SupportsModel(model string) bool    { return true }
 
 func TestChatCompletionWithDebugIncludesMemoryCandidates(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "router.db")
@@ -63,10 +64,18 @@ func TestChatCompletionWithDebugIncludesMemoryCandidates(t *testing.T) {
 	vm := memory.NewVectorMemory(db)
 	r := NewRouter([]providers.Provider{&testProvider{}}, tracker, vm, db)
 
+	// Seed prior context so memory retrieval finds candidates
+	if err := vm.Store("I need help with go fallback routing", "user", "session-1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := vm.Store("Sure, I can help with Go routing patterns", "assistant", "session-1", nil); err != nil {
+		t.Fatal(err)
+	}
+
 	req := providers.ChatRequest{
 		Model: "gpt-test",
 		Messages: []providers.Message{
-			{Role: "user", Content: "Need help with go fallback routing"},
+			{Role: "user", Content: "Tell me more about go fallback routing"},
 		},
 	}
 

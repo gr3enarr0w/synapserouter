@@ -198,7 +198,7 @@ func TestStreamFlagFalse(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(reqBody)
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	_ = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 
 	// This would normally call chatHandler, but for unit test we check the logic

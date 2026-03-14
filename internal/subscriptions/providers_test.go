@@ -49,7 +49,7 @@ func TestAnthropicProviderTranslatesToolUseToToolCalls(t *testing.T) {
 
 	resp, err := p.ChatCompletion(context.Background(), providers.ChatRequest{
 		Messages: []providers.Message{{Role: "user", Content: "test it"}},
-	}, "claude-3-5-sonnet")
+	}, "claude-3-5-sonnet", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestGeminiProviderTranslatesFunctionCallToToolCalls(t *testing.T) {
 
 	resp, err := p.ChatCompletion(context.Background(), providers.ChatRequest{
 		Messages: []providers.Message{{Role: "user", Content: "look it up"}},
-	}, "gemini-2.5-pro")
+	}, "gemini-2.5-pro", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestAnthropicProviderTranslatesToolMessagesInRequest(t *testing.T) {
 			{Role: "assistant", Content: "Use a tool", ToolCalls: []map[string]interface{}{{"id": "call-1", "function": map[string]interface{}{"name": "lookup", "arguments": `{"topic":"routing"}`}}}},
 			{Role: "tool", ToolCallID: "call-1", Content: "routing data"},
 		},
-	}, "claude-3-5-sonnet")
+	}, "claude-3-5-sonnet", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestGeminiProviderTranslatesToolMessagesInRequest(t *testing.T) {
 			{Role: "assistant", Content: "Use a tool", ToolCalls: []map[string]interface{}{{"id": "call-1", "function": map[string]interface{}{"name": "lookup", "arguments": `{"topic":"routing"}`}}}},
 			{Role: "tool", Name: "lookup", ToolCallID: "call-1", Content: "routing data"},
 		},
-	}, "gemini-2.5-pro")
+	}, "gemini-2.5-pro", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestOpenAIProviderRetriesAcrossCredentials(t *testing.T) {
 
 	resp, err := p.ChatCompletion(context.Background(), providers.ChatRequest{
 		Messages: []providers.Message{{Role: "user", Content: "hello"}},
-	}, "gpt-5-codex")
+	}, "gpt-5-codex", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestAnthropicProviderRetriesAcrossCredentials(t *testing.T) {
 
 	resp, err := p.ChatCompletion(context.Background(), providers.ChatRequest{
 		Messages: []providers.Message{{Role: "user", Content: "retry"}},
-	}, "claude-3-5-sonnet")
+	}, "claude-3-5-sonnet", "")
 	if err != nil {
 		t.Fatal(err)
 	}

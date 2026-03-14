@@ -8,10 +8,7 @@ import (
 // TestResponsesAPIChaining tests the fix for BUG-RESPONSES-CHAIN-001
 // Verifies that previous_response_id properly reconstructs conversation context
 func TestResponsesAPIChaining(t *testing.T) {
-	// Clear the responses store
-	responsesStoreMu.Lock()
-	responsesStore = make(map[string]map[string]interface{})
-	responsesStoreMu.Unlock()
+	db = newCompatTestDB(t)
 
 	// Simulate first response (seed turn)
 	firstResponseID := "resp-001"
@@ -108,10 +105,7 @@ func TestResponsesAPIChaining(t *testing.T) {
 
 // TestResponsesAPIChainingWithStructuredInput tests chaining with structured message arrays
 func TestResponsesAPIChainingWithStructuredInput(t *testing.T) {
-	// Clear the responses store
-	responsesStoreMu.Lock()
-	responsesStore = make(map[string]map[string]interface{})
-	responsesStoreMu.Unlock()
+	db = newCompatTestDB(t)
 
 	// Simulate response with structured input (array of messages)
 	responseID := "resp-structured-001"
@@ -156,10 +150,7 @@ func TestResponsesAPIChainingWithStructuredInput(t *testing.T) {
 
 // TestResponsesAPICycleDetection tests that cycles in the chain are detected
 func TestResponsesAPICycleDetection(t *testing.T) {
-	// Clear the responses store
-	responsesStoreMu.Lock()
-	responsesStore = make(map[string]map[string]interface{})
-	responsesStoreMu.Unlock()
+	db = newCompatTestDB(t)
 
 	// Create a cycle: resp-a -> resp-b -> resp-c -> resp-a
 	payloadA := map[string]interface{}{
@@ -203,10 +194,7 @@ func TestResponsesAPICycleDetection(t *testing.T) {
 
 // TestReponseSessionID tests the helper function
 func TestResponseSessionID(t *testing.T) {
-	// Clear the responses store
-	responsesStoreMu.Lock()
-	responsesStore = make(map[string]map[string]interface{})
-	responsesStoreMu.Unlock()
+	db = newCompatTestDB(t)
 
 	// Store a response with a session ID
 	testID := "resp-session-test"

@@ -206,7 +206,7 @@ func (m *mockChatProvider) Name() string {
 	return m.name
 }
 
-func (m *mockChatProvider) ChatCompletion(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
+func (m *mockChatProvider) ChatCompletion(ctx context.Context, req providers.ChatRequest, sessionID string) (providers.ChatResponse, error) {
 	m.lastRequest = &req
 	m.callCount++
 
@@ -225,4 +225,8 @@ func (m *mockChatProvider) IsHealthy(ctx context.Context) bool {
 
 func (m *mockChatProvider) MaxContextTokens() int {
 	return 128000
+}
+
+func (m *mockChatProvider) SupportsModel(model string) bool {
+	return true
 }

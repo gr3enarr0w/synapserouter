@@ -267,13 +267,17 @@ func TestTraceHandler(t *testing.T) {
 		&traceTestProvider{name: "nanogpt"},
 	}, usageTracker, vectorMemory, testDB)
 
+	// Seed prior context so trace finds memory candidates
 	if err := vectorMemory.Store("go fallback trace query", "user", "session-trace", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := vectorMemory.Store("Here is how Go fallback routing works", "assistant", "session-trace", nil); err != nil {
 		t.Fatal(err)
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/debug/trace?session_id=session-trace", strings.NewReader(`{
 		"model":"gpt-test",
-		"messages":[{"role":"user","content":"go fallback trace query"}]
+		"messages":[{"role":"user","content":"tell me more about go fallback trace"}]
 	}`))
 	rr := httptest.NewRecorder()
 
@@ -378,13 +382,15 @@ type traceTestProvider struct {
 
 func (p *traceTestProvider) Name() string { return p.name }
 
-func (p *traceTestProvider) ChatCompletion(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
+func (p *traceTestProvider) ChatCompletion(ctx context.Context, req providers.ChatRequest, sessionID string) (providers.ChatResponse, error) {
 	return providers.ChatResponse{}, errors.New("not used in trace test")
 }
 
 func (p *traceTestProvider) IsHealthy(ctx context.Context) bool { return true }
 
 func (p *traceTestProvider) MaxContextTokens() int { return 2000000 }
+
+func (p *traceTestProvider) SupportsModel(model string) bool { return true }
 
 func newFallbackTestDB(t *testing.T) *sql.DB {
 	t.Helper()

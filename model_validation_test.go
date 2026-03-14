@@ -10,6 +10,10 @@ import (
 
 // TestModelValidation tests the model validation fixes for BUG-MODEL-VALIDATION-001 and BUG-MODEL-VALIDATION-002
 func TestModelValidation(t *testing.T) {
+	// Ensure clean AMP config so unknown models are properly rejected
+	originalAmpConfig := ampConfig
+	ampConfig.UpstreamURL = ""
+	t.Cleanup(func() { ampConfig = originalAmpConfig })
 	tests := []struct {
 		name           string
 		model          string
