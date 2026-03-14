@@ -8,8 +8,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -565,9 +563,9 @@ func (p *VertexProvider) accessToken() (string, error) {
 	var token string
 	var err error
 	if p.saKeyFile != "" {
-		token, err = serviceAccountToken(p.saKeyFile)
+		token, err = nativeServiceAccountToken(p.saKeyFile)
 	} else {
-		token, err = gcloudAccessToken()
+		token, err = nativeADCToken()
 	}
 	if err != nil {
 		return "", err
@@ -575,49 +573,6 @@ func (p *VertexProvider) accessToken() (string, error) {
 
 	p.tokenCache = token
 	p.tokenExp = time.Now().Add(50 * time.Minute) // tokens last ~60min
-	return token, nil
-}
-
-func gcloudAccessToken() (string, error) {
-	cmd := exec.Command("gcloud", "auth", "print-access-token")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("gcloud auth print-access-token failed: %w", err)
-	}
-	token := strings.TrimSpace(string(out))
-	if token == "" {
-		return "", fmt.Errorf("gcloud returned empty access token")
-	}
-	return token, nil
-}
-
-func serviceAccountToken(keyFile string) (string, error) {
-	// Use Python with google-auth since Go doesn't have the JWT signing easily
-	// without adding a dependency. The SA token is cached for 50 min so this
-	// runs infrequently.
-	script := fmt.Sprintf(`
-import json, time, jwt, requests, sys
-sa = json.load(open(%q))
-now = int(time.time())
-payload = {"iss": sa["client_email"], "scope": "https://www.googleapis.com/auth/cloud-platform", "aud": sa["token_uri"], "iat": now, "exp": now + 3600}
-signed = jwt.encode(payload, sa["private_key"], algorithm="RS256")
-r = requests.post(sa["token_uri"], data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": signed})
-if r.status_code != 200:
-    print("ERROR:" + r.text, file=sys.stderr)
-    sys.exit(1)
-print(r.json()["access_token"])
-`, keyFile)
-
-	cmd := exec.Command("python3", "-c", script)
-	cmd.Env = append(os.Environ())
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("service account token failed: %w", err)
-	}
-	token := strings.TrimSpace(string(out))
-	if token == "" {
-		return "", fmt.Errorf("service account returned empty token")
-	}
 	return token, nil
 }
 

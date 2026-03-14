@@ -1,10 +1,6 @@
 # SynapseRouter Agent Notes
 
-## Active identity
-
-- `synroute` is the active runtime identity
-- this repository is the standalone extracted home for `synroute`
-- do not describe `synroute` as an MCP server
+See `CLAUDE.md` for full project context, skill triggers, and subagent delegation rules.
 
 ## Documentation guardrails
 
@@ -12,6 +8,7 @@
 - say `implemented slice` for partial ports
 - say `targeted parity bucket complete` only for the exact verified subset
 - do not claim full parity without an explicit audit
+- do not describe `synroute` as an MCP server
 
 ## Current active docs
 

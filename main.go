@@ -44,6 +44,32 @@ var (
 var embeddedMigrations embed.FS
 
 func main() {
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "serve":
+			startServer()
+		case "test":
+			cmdTest(os.Args[2:])
+		case "profile":
+			cmdProfile(os.Args[2:])
+		case "doctor":
+			cmdDoctor(os.Args[2:])
+		case "models":
+			cmdModels(os.Args[2:])
+		case "version":
+			cmdVersion()
+		case "help", "--help", "-h":
+			printUsage()
+		default:
+			fmt.Fprintf(os.Stderr, "Unknown command: %s\nRun 'synroute help' for usage.\n", os.Args[1])
+			os.Exit(1)
+		}
+		return
+	}
+	startServer()
+}
+
+func startServer() {
 	// Load .env file
 	if err := loadDotEnv(); err != nil {
 		log.Println("No .env file found, using environment variables")
@@ -176,6 +202,13 @@ func main() {
 	r.Handle("/v1/orchestration/swarms/{swarm_id}/rebalance/preview", withAdminAuth(http.HandlerFunc(orchestrationSwarmRebalancePreviewHandler))).Methods("POST")
 	r.Handle("/v1/orchestration/swarms/{swarm_id}/stealable", withAdminAuth(http.HandlerFunc(orchestrationSwarmStealableTasksHandler))).Methods("GET")
 
+	// Diagnostic and management endpoints
+	r.Handle("/v1/test/providers", withAdminAuth(http.HandlerFunc(smokeTestHandler))).Methods("POST")
+	r.Handle("/v1/circuit-breakers/reset", withAdminAuth(http.HandlerFunc(circuitBreakerResetHandler))).Methods("POST")
+	r.HandleFunc("/v1/profile", profileHandler).Methods("GET")
+	r.Handle("/v1/profile/switch", withAdminAuth(http.HandlerFunc(profileSwitchHandler))).Methods("POST")
+	r.Handle("/v1/doctor", withAdminAuth(http.HandlerFunc(doctorHandler))).Methods("GET")
+
 	// Amp compatibility management endpoints
 	r.Handle("/v0/management/anthropic-auth-url", withAdminAuth(http.HandlerFunc(subscriptionAnthropicAuthURLHandler))).Methods("GET")
 	r.Handle("/v0/management/codex-auth-url", withAdminAuth(http.HandlerFunc(subscriptionCodexAuthURLHandler))).Methods("GET")
@@ -266,7 +299,7 @@ func initializePersonalProviders() []providers.Provider {
 func initializeWorkProviders() []providers.Provider {
 	var providerList []providers.Provider
 
-	// Vertex Claude — uses gcloud auth, project from env
+	// Vertex Claude — uses native GCP auth, project from env
 	claudeProject := envFirst("VERTEX_CLAUDE_PROJECT", "ANTHROPIC_VERTEX_PROJECT_ID", "VERTEX_PROJECT_ID")
 	claudeRegion := envFirst("VERTEX_CLAUDE_REGION", "VERTEX_REGION")
 	if claudeRegion == "" {
@@ -281,7 +314,7 @@ func initializeWorkProviders() []providers.Provider {
 			Prefix:    "claude",
 		})
 		providerList = append(providerList, vClaude)
-		log.Printf("✓ vertex-claude initialized (project=%s, region=%s, auth=gcloud)", claudeProject, claudeRegion)
+		log.Printf("✓ vertex-claude initialized (project=%s, region=%s, auth=adc)", claudeProject, claudeRegion)
 	}
 
 	// Vertex Gemini — uses service account, project from env
@@ -301,7 +334,7 @@ func initializeWorkProviders() []providers.Provider {
 			Prefix:    "gemini",
 		})
 		providerList = append(providerList, vGemini)
-		authMethod := "gcloud"
+		authMethod := "adc"
 		if geminiSAKey != "" {
 			authMethod = "service-account"
 		}
@@ -1124,7 +1157,7 @@ func providerNotes(name string, healthy bool) string {
 		if healthy {
 			return "Vertex AI Claude (work profile)"
 		}
-		return "Check gcloud auth and VERTEX_CLAUDE_PROJECT"
+		return "Check GCP credentials (ADC) and VERTEX_CLAUDE_PROJECT"
 	case "vertex-gemini":
 		if healthy {
 			return "Vertex AI Gemini (work profile)"

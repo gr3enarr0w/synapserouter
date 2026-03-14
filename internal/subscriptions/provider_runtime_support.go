@@ -29,8 +29,12 @@ const (
 
 	geminiSubscriptionBaseURL = "https://cloudcode-pa.googleapis.com"
 	geminiFetchModelsPath     = "/v1internal:fetchAvailableModels"
-	geminiGenerateContentPath = "/v1internal:generateContent"
-	geminiCLIApiClientHeader  = "google-gemini-cli/0.1.19 gccl/0.1.19"
+	geminiGenerateContentPath      = "/v1internal:generateContent"
+	geminiStreamGenerateContentURL = "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
+	geminiCLIVersion          = "0.33.1"
+
+	geminiGenerateContentMaxRetries = 3
+	geminiRetryDelayMs              = 1000
 
 	providerModelCacheTTL = 10 * time.Minute
 )
@@ -200,7 +204,7 @@ func (p *geminiProvider) liveModels(ctx context.Context) []ModelInfo {
 				}
 				req.Header.Set("Content-Type", "application/json")
 				req.Header.Set("Authorization", bearerPrefix(credential.TokenType)+credential.AccessToken)
-				applyGeminiCLIHeaders(req, "", "")
+				applyGeminiCLIHeaders(req, "")
 				resp, err := p.client.Do(req)
 				if err != nil {
 					continue
@@ -676,31 +680,144 @@ func (p *geminiProvider) geminiCLIChatCompletion(ctx context.Context, credential
 		return providers.ChatResponse{}, err
 	}
 
-	encoded, err := buildGeminiCLIRequest(request, model, resolvedCredential.ProjectID)
+	encoded, err := buildGeminiCLIRequest(request, model, resolvedCredential.ProjectID, sessionID)
 	if err != nil {
 		return providers.ChatResponse{}, fmt.Errorf("marshal gemini cli request: %w", err)
 	}
 
-	requestURL := geminiSubscriptionBaseURL + geminiGenerateContentPath
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(encoded))
-	if err != nil {
-		return providers.ChatResponse{}, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", bearerPrefix(resolvedCredential.TokenType)+resolvedCredential.AccessToken)
-	applyGeminiCLIHeaders(httpReq, model, sessionID)
+	// Use streamGenerateContent with SSE to match real Gemini CLI behavior.
+	// The streaming endpoint has separate capacity from generateContent.
+	requestURL := geminiStreamGenerateContentURL
+	auth := bearerPrefix(resolvedCredential.TokenType) + resolvedCredential.AccessToken
 
-	httpResp, err := p.client.Do(httpReq)
-	if err != nil {
-		return providers.ChatResponse{}, fmt.Errorf("gemini request failed: %w", err)
-	}
-	defer httpResp.Body.Close()
+	// Retry on 429/5xx matching the real Gemini CLI behavior (3 retries, 1s delay)
+	var lastErr error
+	for attempt := 0; attempt <= geminiGenerateContentMaxRetries; attempt++ {
+		if attempt > 0 {
+			log.Printf("[Gemini] Retry %d/%d after %dms", attempt, geminiGenerateContentMaxRetries, geminiRetryDelayMs)
+			select {
+			case <-ctx.Done():
+				return providers.ChatResponse{}, ctx.Err()
+			case <-time.After(time.Duration(geminiRetryDelayMs) * time.Millisecond):
+			}
+		}
 
-	upstreamResp, err := decodeGeminiChatResponse(httpResp)
-	if err != nil {
-		return providers.ChatResponse{}, err
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(encoded))
+		if err != nil {
+			return providers.ChatResponse{}, err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", auth)
+		applyGeminiCLIHeaders(httpReq, model)
+
+		httpResp, err := p.client.Do(httpReq)
+		if err != nil {
+			lastErr = fmt.Errorf("gemini request failed: %w", err)
+			continue
+		}
+
+		if httpResp.StatusCode == 429 || httpResp.StatusCode >= 500 {
+			body, _ := io.ReadAll(httpResp.Body)
+			httpResp.Body.Close()
+			lastErr = fmt.Errorf("gemini returned %d: %s", httpResp.StatusCode, strings.TrimSpace(string(body)))
+			log.Printf("[Gemini] Got %d on attempt %d: %s", httpResp.StatusCode, attempt+1, truncateLogBody(body, 200))
+			continue
+		}
+
+		upstreamResp, err := decodeGeminiSSEResponse(httpResp)
+		httpResp.Body.Close()
+		if err != nil {
+			return providers.ChatResponse{}, err
+		}
+		return upstreamResp.asChatCompletion(model), nil
 	}
-	return upstreamResp.asChatCompletion(model), nil
+	return providers.ChatResponse{}, lastErr
+}
+
+// decodeGeminiSSEResponse reads an SSE stream from streamGenerateContent and
+// assembles the chunks into a single geminiChatResponse (last chunk wins for
+// metadata; text parts are concatenated).
+func decodeGeminiSSEResponse(resp *http.Response) (geminiChatResponse, error) {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return geminiChatResponse{}, fmt.Errorf("gemini SSE read failure: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return geminiChatResponse{}, fmt.Errorf("gemini returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	log.Printf("[Gemini] Raw CLI SSE response (%d bytes)", len(body))
+
+	// Parse SSE: each "data: {...}" line is a JSON chunk
+	var chunks [][]byte
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "data: ") {
+			chunks = append(chunks, []byte(strings.TrimPrefix(line, "data: ")))
+		}
+	}
+
+	if len(chunks) == 0 {
+		// Fallback: try parsing the whole body as a single JSON response
+		// (in case server doesn't send SSE format)
+		return decodeGeminiChatResponseFromBytes(body)
+	}
+
+	// Assemble: concatenate text parts, use last chunk's metadata
+	var assembled geminiChatResponse
+	var textParts []string
+	for _, chunk := range chunks {
+		parsed, err := decodeGeminiChatResponseFromBytes(chunk)
+		if err != nil || len(parsed.Candidates) == 0 {
+			continue
+		}
+		assembled.UsageMetadata = parsed.UsageMetadata
+		for _, c := range parsed.Candidates {
+			for _, p := range c.Content.Parts {
+				if p.Text != "" {
+					textParts = append(textParts, p.Text)
+				}
+			}
+		}
+	}
+
+	if len(textParts) == 0 && len(chunks) > 0 {
+		// Last resort: try to decode any format from the last chunk
+		return decodeGeminiChatResponseFromBytes(chunks[len(chunks)-1])
+	}
+
+	// Build a properly typed candidate with concatenated text
+	var candidate struct {
+		Content struct {
+			Parts []struct {
+				Text         string                 `json:"text,omitempty"`
+				FunctionCall map[string]interface{} `json:"functionCall,omitempty"`
+			} `json:"parts"`
+		} `json:"content"`
+	}
+	candidate.Content.Parts = append(candidate.Content.Parts, struct {
+		Text         string                 `json:"text,omitempty"`
+		FunctionCall map[string]interface{} `json:"functionCall,omitempty"`
+	}{Text: strings.Join(textParts, "")})
+	assembled.Candidates = append(assembled.Candidates, candidate)
+
+	return assembled, nil
+}
+
+func decodeGeminiChatResponseFromBytes(body []byte) (geminiChatResponse, error) {
+	var resp geminiChatResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return geminiChatResponse{}, fmt.Errorf("gemini decode failure: %w", err)
+	}
+	if len(resp.Candidates) == 0 {
+		var wrapped struct {
+			Response geminiChatResponse `json:"response"`
+		}
+		if err := json.Unmarshal(body, &wrapped); err == nil && len(wrapped.Response.Candidates) > 0 {
+			return wrapped.Response, nil
+		}
+	}
+	return resp, nil
 }
 
 func (p *geminiProvider) ensureGeminiCLIProject(ctx context.Context, credential ProviderCredential) (ProviderCredential, error) {
@@ -717,16 +834,12 @@ func (p *geminiProvider) ensureGeminiCLIProject(ctx context.Context, credential 
 	return credential, nil
 }
 
-func applyGeminiCLIHeaders(req *http.Request, model, sessionID string) {
+func applyGeminiCLIHeaders(req *http.Request, model string) {
 	model = strings.TrimSpace(model)
 	if model == "" {
 		model = "gemini"
 	}
-	req.Header.Set("User-Agent", fmt.Sprintf("google-gemini-cli/0.1.19 (%s; %s; model=%s)", runtime.GOOS, runtime.GOARCH, model))
-	if strings.TrimSpace(sessionID) != "" {
-		req.Header.Set("X-Session-Id", sessionID)
-	}
-	req.Header.Set("X-Goog-Api-Client", geminiCLIApiClientHeader)
+	req.Header.Set("User-Agent", fmt.Sprintf("GeminiCLI/%s/%s (%s; %s; CLI)", geminiCLIVersion, model, runtime.GOOS, runtime.GOARCH))
 	req.Header.Set("Accept", "application/json")
 }
 
@@ -884,7 +997,7 @@ func callGeminiCLIEndpoint(ctx context.Context, client *http.Client, credential 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", bearerPrefix(credential.TokenType)+credential.AccessToken)
-	applyGeminiCLIHeaders(req, "", "")
+	applyGeminiCLIHeaders(req, "")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -1250,17 +1363,21 @@ func codexTools(req providers.ChatRequest) []map[string]interface{} {
 	return tools
 }
 
-func buildGeminiCLIRequest(req providers.ChatRequest, model, projectID string) ([]byte, error) {
+func buildGeminiCLIRequest(req providers.ChatRequest, model, projectID, sessionID string) ([]byte, error) {
 	envelope := map[string]interface{}{
 		"model": model,
 		"request": map[string]interface{}{
 			"contents": []map[string]interface{}{},
 		},
+		"user_prompt_id": fmt.Sprintf("synroute-%d", time.Now().UnixNano()),
 	}
 	if projectID = strings.TrimSpace(projectID); projectID != "" {
 		envelope["project"] = projectID
 	}
 	requestNode := envelope["request"].(map[string]interface{})
+	if sessionID = strings.TrimSpace(sessionID); sessionID != "" {
+		requestNode["session_id"] = sessionID
+	}
 
 	generationConfig := map[string]interface{}{}
 	maxTokens := req.MaxTokens

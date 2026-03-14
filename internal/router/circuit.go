@@ -2,6 +2,7 @@ package router
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"time"
 )
@@ -152,6 +153,70 @@ func (cb *CircuitBreaker) Open(duration time.Duration) error {
 	}
 
 	return err
+}
+
+// Reset closes the circuit, zeroing failure count and clearing open_until.
+func (cb *CircuitBreaker) Reset() error {
+	_, err := cb.db.Exec(`
+		UPDATE circuit_breaker_state
+		SET state = ?, failure_count = 0, open_until = NULL
+		WHERE provider = ?
+	`, string(StateClosed), cb.provider)
+
+	if err == nil {
+		log.Printf("[Circuit] %s circuit breaker: RESET", cb.provider)
+	}
+
+	return err
+}
+
+// ResetCircuitBreaker resets a single provider's circuit breaker by name.
+func (r *Router) ResetCircuitBreaker(provider string) error {
+	cb, ok := r.circuitBreakers[provider]
+	if !ok {
+		return fmt.Errorf("no circuit breaker for provider %q", provider)
+	}
+	return cb.Reset()
+}
+
+// ResetAllCircuitBreakers resets all circuit breakers.
+func (r *Router) ResetAllCircuitBreakers() ([]string, error) {
+	var reset []string
+	for name, cb := range r.circuitBreakers {
+		if err := cb.Reset(); err != nil {
+			return reset, fmt.Errorf("failed to reset %s: %w", name, err)
+		}
+		reset = append(reset, name)
+	}
+	return reset, nil
+}
+
+// ResetAllCircuitStates resets all circuit breaker states in the DB directly.
+func ResetAllCircuitStates(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT provider FROM circuit_breaker_state`)
+	if err != nil {
+		return nil, err
+	}
+
+	var providers []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			continue
+		}
+		providers = append(providers, p)
+	}
+	rows.Close()
+
+	_, err = db.Exec(`
+		UPDATE circuit_breaker_state
+		SET state = ?, failure_count = 0, open_until = NULL
+	`, string(StateClosed))
+	if err != nil {
+		return nil, err
+	}
+
+	return providers, nil
 }
 
 // GetAllStates returns states for all providers

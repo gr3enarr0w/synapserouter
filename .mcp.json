@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "research-mcp": {
+      "command": "python",
+      "args": ["/Users/ceverson/Development/research-mcp/server.py"],
+      "env": {
+        "GOOGLE_SERVICE_ACCOUNT_JSON": "/Users/ceverson/Development/jsm_modeling/service_account.json",
+        "GEMINI_PROJECT": "antse-tooling"
+      }
+    },
+    "document-mcp": {
+      "command": "python",
+      "args": ["/Users/ceverson/Development/document-mcp/server.py"],
+      "env": {
+        "GOOGLE_SERVICE_ACCOUNT_JSON": "/Users/ceverson/Development/jsm_modeling/service_account.json",
+        "GEMINI_PROJECT": "antse-tooling"
+      }
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"]
+    },
+    "spec-workflow": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/spec-workflow-mcp@latest"]
+    }
+  }
+}
