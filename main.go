@@ -212,32 +212,31 @@ func main() {
 }
 
 func initializeProviders() []providers.Provider {
+	profile := strings.ToLower(strings.TrimSpace(os.Getenv("ACTIVE_PROFILE")))
+	log.Printf("🔧 Active profile: %s", map[bool]string{true: profile, false: "personal (default)"}[profile != ""])
+
 	var providerList []providers.Provider
 
-	subscriptionProviders, err := subscriptions.LoadRuntimeProviders(context.Background())
-	if err != nil {
-		log.Fatalf("Failed to initialize subscription providers: %v", err)
-	}
-	for _, provider := range subscriptionProviders {
-		providerList = append(providerList, provider)
-		log.Printf("✓ %s subscription provider initialized", provider.Name())
+	switch profile {
+	case "work":
+		providerList = initializeWorkProviders()
+	default:
+		providerList = initializePersonalProviders()
 	}
 
-	// 2. Ollama Cloud
+	// Ollama Cloud (available in all profiles)
 	ollamaAPIKey := os.Getenv("OLLAMA_API_KEY")
 	ollamaBaseURL := os.Getenv("OLLAMA_BASE_URL")
 	ollamaModel := os.Getenv("OLLAMA_MODEL")
-
 	if ollamaAPIKey != "" {
 		ollamaProvider := providers.NewOllamaCloudProvider(ollamaBaseURL, ollamaAPIKey, ollamaModel)
 		providerList = append(providerList, ollamaProvider)
 		log.Println("✓ Ollama Cloud provider initialized")
 	}
 
-	// 3. NanoGPT (always last - nuclear option with 2M context)
+	// NanoGPT (always last - catch-all fallback)
 	nanogptAPIKey := os.Getenv("NANOGPT_API_KEY")
 	nanogptBaseURL := os.Getenv("NANOGPT_BASE_URL")
-
 	if nanogptAPIKey != "" {
 		nanogptProvider := providers.NewNanoGPTProvider(nanogptBaseURL, nanogptAPIKey)
 		providerList = append(providerList, nanogptProvider)
@@ -248,6 +247,67 @@ func initializeProviders() []providers.Provider {
 	if len(providerList) == 0 {
 		log.Printf("No providers configured yet; start the built-in login flow with synroute-cli login <provider>")
 	}
+	return providerList
+}
+
+func initializePersonalProviders() []providers.Provider {
+	var providerList []providers.Provider
+	subscriptionProviders, err := subscriptions.LoadRuntimeProviders(context.Background())
+	if err != nil {
+		log.Fatalf("Failed to initialize subscription providers: %v", err)
+	}
+	for _, provider := range subscriptionProviders {
+		providerList = append(providerList, provider)
+		log.Printf("✓ %s subscription provider initialized", provider.Name())
+	}
+	return providerList
+}
+
+func initializeWorkProviders() []providers.Provider {
+	var providerList []providers.Provider
+
+	// Vertex Claude — uses gcloud auth, project from env
+	claudeProject := envFirst("VERTEX_CLAUDE_PROJECT", "ANTHROPIC_VERTEX_PROJECT_ID", "VERTEX_PROJECT_ID")
+	claudeRegion := envFirst("VERTEX_CLAUDE_REGION", "VERTEX_REGION")
+	if claudeRegion == "" {
+		claudeRegion = "us-east5"
+	}
+	if claudeProject != "" {
+		vClaude := providers.NewVertexProvider(providers.VertexConfig{
+			Name:      "vertex-claude",
+			Project:   claudeProject,
+			Location:  claudeRegion,
+			Publisher: "anthropic",
+			Prefix:    "claude",
+		})
+		providerList = append(providerList, vClaude)
+		log.Printf("✓ vertex-claude initialized (project=%s, region=%s, auth=gcloud)", claudeProject, claudeRegion)
+	}
+
+	// Vertex Gemini — uses service account, project from env
+	geminiProject := envFirst("VERTEX_GEMINI_PROJECT", "GEMINI_PROJECT")
+	geminiLocation := envFirst("VERTEX_GEMINI_LOCATION", "GEMINI_LOCATION")
+	if geminiLocation == "" {
+		geminiLocation = "global"
+	}
+	geminiSAKey := envFirst("VERTEX_GEMINI_SA_KEY", "GOOGLE_SERVICE_ACCOUNT_JSON")
+	if geminiProject != "" {
+		vGemini := providers.NewVertexProvider(providers.VertexConfig{
+			Name:      "vertex-gemini",
+			Project:   geminiProject,
+			Location:  geminiLocation,
+			Publisher: "google",
+			SAKeyFile: geminiSAKey,
+			Prefix:    "gemini",
+		})
+		providerList = append(providerList, vGemini)
+		authMethod := "gcloud"
+		if geminiSAKey != "" {
+			authMethod = "service-account"
+		}
+		log.Printf("✓ vertex-gemini initialized (project=%s, location=%s, auth=%s)", geminiProject, geminiLocation, authMethod)
+	}
+
 	return providerList
 }
 
@@ -1028,6 +1088,10 @@ func logStartupCheck(report map[string]interface{}) {
 
 func providerConfigured(name string) bool {
 	switch name {
+	case "vertex-claude":
+		return envFirst("VERTEX_CLAUDE_PROJECT", "ANTHROPIC_VERTEX_PROJECT_ID", "VERTEX_PROJECT_ID") != ""
+	case "vertex-gemini":
+		return envFirst("VERTEX_GEMINI_PROJECT", "GEMINI_PROJECT") != ""
 	case "claude-code":
 		if subscriptions.HasStoredCredentialsForProvider("anthropic") {
 			return true
@@ -1056,6 +1120,16 @@ func providerConfigured(name string) bool {
 
 func providerNotes(name string, healthy bool) string {
 	switch name {
+	case "vertex-claude":
+		if healthy {
+			return "Vertex AI Claude (work profile)"
+		}
+		return "Check gcloud auth and VERTEX_CLAUDE_PROJECT"
+	case "vertex-gemini":
+		if healthy {
+			return "Vertex AI Gemini (work profile)"
+		}
+		return "Check service account and VERTEX_GEMINI_PROJECT"
 	case "claude-code":
 		if healthy {
 			return "Anthropic-backed Claude Code subscription path available"

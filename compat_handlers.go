@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -596,7 +597,10 @@ func routeChatRequest(r *http.Request, req providers.ChatRequest, sessionID, pre
 		preferredProvider = preferredProviderForModel(req.Model)
 	}
 	if preferredProvider != "" {
-		return proxyRouter.ChatCompletionForProvider(ctx, req, sessionID, preferredProvider, includeMemoryDebug)
+		if providerExists(preferredProvider) {
+			return proxyRouter.ChatCompletionForProvider(ctx, req, sessionID, preferredProvider, includeMemoryDebug)
+		}
+		// Provider not loaded (e.g. work profile) — fall through to generic routing
 	}
 	return proxyRouter.ChatCompletionWithDebug(ctx, req, sessionID, includeMemoryDebug)
 }
@@ -981,18 +985,60 @@ func clientAPIKeyFromRequest(r *http.Request) string {
 	return strings.TrimSpace(r.Header.Get("X-API-Key"))
 }
 
-func availableModels() []map[string]interface{} {
-	models, err := subscriptions.AvailableModels(context.Background())
-	if err == nil && len(models) > 0 {
-		out := make([]map[string]interface{}, 0, len(models))
-		for _, model := range models {
-			out = append(out, map[string]interface{}{
-				"id":       model.ID,
-				"object":   model.Object,
-				"owned_by": model.OwnedBy,
-				"context":  model.Context,
-			})
+func providerExists(name string) bool {
+	for _, p := range providerList {
+		if strings.EqualFold(p.Name(), name) {
+			return true
 		}
+	}
+	return false
+}
+
+var cachedActiveProfile string
+
+func activeProfile() string {
+	if cachedActiveProfile == "" {
+		cachedActiveProfile = strings.ToLower(strings.TrimSpace(os.Getenv("ACTIVE_PROFILE")))
+	}
+	return cachedActiveProfile
+}
+
+func availableModels() []map[string]interface{} {
+	profile := activeProfile()
+	seen := make(map[string]struct{})
+	out := make([]map[string]interface{}, 0)
+
+	// For personal profile (or default), start with subscription-based model catalog
+	if profile != "work" {
+		models, err := subscriptions.AvailableModels(context.Background())
+		if err == nil {
+			for _, model := range models {
+				if _, dup := seen[model.ID]; !dup {
+					seen[model.ID] = struct{}{}
+					out = append(out, map[string]interface{}{
+						"id":       model.ID,
+						"object":   model.Object,
+						"owned_by": model.OwnedBy,
+						"context":  model.Context,
+					})
+				}
+			}
+		}
+	}
+
+	// Merge in models from all registered providers (Vertex, NanoGPT, etc.)
+	for _, p := range providerList {
+		if lm, ok := p.(interface{ ListModels() []map[string]interface{} }); ok {
+			for _, m := range lm.ListModels() {
+				id := stringValue(m["id"])
+				if _, dup := seen[id]; !dup && id != "" {
+					seen[id] = struct{}{}
+					out = append(out, m)
+				}
+			}
+		}
+	}
+	if len(out) > 0 {
 		return out
 	}
 
@@ -1035,6 +1081,10 @@ func validateModelForProvider(model, provider string) error {
 	// Check if model exists in our registry
 	modelProvider := preferredProviderForModel(model)
 	if modelProvider == "" {
+		// Allow unknown models to fall through to AMP upstream if configured
+		if ampConfig.UpstreamURL != "" {
+			return nil
+		}
 		return fmt.Errorf("unknown model: %s", model)
 	}
 
@@ -1062,32 +1112,58 @@ func preferredProviderForModel(model string) string {
 	if model == "" || model == "auto" {
 		return ""
 	}
+
+	// First check registered models from the live provider list
 	for _, item := range availableModels() {
 		if strings.EqualFold(stringValue(item["id"]), model) {
-			switch strings.ToLower(strings.TrimSpace(stringValue(item["owned_by"]))) {
-			case "claude-code":
-				return "claude-code"
-			case "codex":
-				return "codex"
-			case "gemini":
-				return "gemini"
-			case "qwen":
-				return "qwen"
+			ownedBy := strings.ToLower(strings.TrimSpace(stringValue(item["owned_by"])))
+			if ownedBy != "" {
+				return ownedBy
 			}
 		}
 	}
+
+	// Determine model family from prefix
+	var canonicalProvider string
 	switch {
 	case strings.HasPrefix(model, "claude"), strings.HasPrefix(model, "opus"), strings.HasPrefix(model, "sonnet"), strings.HasPrefix(model, "haiku"):
-		return "claude-code"
+		canonicalProvider = "claude-code"
 	case strings.HasPrefix(model, "gpt"), strings.Contains(model, "codex"), strings.HasPrefix(model, "o1"), strings.HasPrefix(model, "o3"):
-		return "codex"
+		canonicalProvider = "codex"
 	case strings.HasPrefix(model, "gemini"):
-		return "gemini"
+		canonicalProvider = "gemini"
 	case strings.HasPrefix(model, "qwen"):
-		return "qwen"
+		canonicalProvider = "qwen"
 	default:
 		return ""
 	}
+
+	// Check if the canonical provider is actually registered
+	if providerExists(canonicalProvider) {
+		return canonicalProvider
+	}
+
+	// Canonical provider not loaded — find a registered provider whose name matches
+	// the model family (e.g. work profile has vertex-claude instead of claude-code)
+	for _, p := range providerList {
+		pname := strings.ToLower(p.Name())
+		familyMatch := false
+		switch canonicalProvider {
+		case "claude-code":
+			familyMatch = strings.Contains(pname, "claude") || strings.Contains(pname, "anthropic")
+		case "codex":
+			familyMatch = strings.Contains(pname, "codex") || strings.Contains(pname, "openai")
+		case "gemini":
+			familyMatch = strings.Contains(pname, "gemini") || strings.Contains(pname, "google")
+		case "qwen":
+			familyMatch = strings.Contains(pname, "qwen")
+		}
+		if familyMatch && p.SupportsModel(model) {
+			return p.Name()
+		}
+	}
+
+	return canonicalProvider
 }
 
 func ampConfigHandler(w http.ResponseWriter, r *http.Request) {
