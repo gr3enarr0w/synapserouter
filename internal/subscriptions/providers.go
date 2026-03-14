@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -696,7 +697,13 @@ func (p *geminiProvider) ChatCompletion(ctx context.Context, req providers.ChatR
 		Stream:   req.Stream,
 	}
 	if req.MaxTokens > 0 {
-		payload.GenerationConfig.MaxOutputTokens = req.MaxTokens
+		maxTokens := req.MaxTokens
+		// Gemini 2.5 models use thinking tokens from the output budget.
+		// Ensure enough headroom so thinking doesn't consume all output tokens.
+		if maxTokens < 1024 {
+			maxTokens = 1024
+		}
+		payload.GenerationConfig.MaxOutputTokens = maxTokens
 	}
 	if req.Temperature > 0 {
 		payload.GenerationConfig.Temperature = req.Temperature
@@ -752,8 +759,8 @@ func (p *geminiProvider) ChatCompletion(ctx context.Context, req providers.ChatR
 			continue
 		}
 		resp.Body.Close()
-		if len(upstreamResp.Candidates) == 0 || len(upstreamResp.Candidates[0].Content.Parts) == 0 {
-			lastErr = fmt.Errorf("gemini returned empty completion")
+		if len(upstreamResp.Candidates) == 0 {
+			lastErr = fmt.Errorf("gemini returned empty completion (no candidates)")
 			continue
 		}
 		responseText := ""

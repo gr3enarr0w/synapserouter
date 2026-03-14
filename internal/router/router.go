@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
@@ -20,7 +22,16 @@ type Router struct {
 	vectorMemory    *memory.VectorMemory
 	db              *sql.DB
 	circuitBreakers map[string]*CircuitBreaker
+	healthMu        sync.RWMutex
+	healthCache     map[string]*cachedHealth
 }
+
+type cachedHealth struct {
+	healthy   bool
+	checkedAt time.Time
+}
+
+const healthCacheTTL = 2 * time.Minute
 
 type providerAttempt struct {
 	Provider string
@@ -66,7 +77,36 @@ func NewRouter(
 		vectorMemory:    vm,
 		db:              db,
 		circuitBreakers: breakers,
+		healthCache:     make(map[string]*cachedHealth),
 	}
+}
+
+// isHealthyCached returns cached health status to avoid burning provider API quota
+// on health checks. A successful request resets the cache; a circuit breaker open
+// overrides the cache. Only falls through to a real IsHealthy call if the cache is
+// stale (older than healthCacheTTL).
+func (r *Router) isHealthyCached(ctx context.Context, p providers.Provider) bool {
+	name := p.Name()
+
+	// Circuit breaker open = unhealthy, no API call needed
+	if r.circuitBreakers[name].IsOpen() {
+		return false
+	}
+
+	// Check cache (read lock)
+	r.healthMu.RLock()
+	if cached, ok := r.healthCache[name]; ok && time.Since(cached.checkedAt) < healthCacheTTL {
+		r.healthMu.RUnlock()
+		return cached.healthy
+	}
+	r.healthMu.RUnlock()
+
+	// Cache miss or stale — do real check, then write
+	healthy := p.IsHealthy(ctx)
+	r.healthMu.Lock()
+	r.healthCache[name] = &cachedHealth{healthy: healthy, checkedAt: time.Now()}
+	r.healthMu.Unlock()
+	return healthy
 }
 
 func (r *Router) ChatCompletion(ctx context.Context, req providers.ChatRequest, sessionID string) (providers.ChatResponse, error) {
@@ -429,7 +469,7 @@ func (r *Router) selectPreferredProvider(ctx context.Context, preferredProvider,
 			if r.circuitBreakers[p.Name()].IsOpen() {
 				return nil, fmt.Errorf("preferred provider %s is unavailable (circuit open)", preferredProvider)
 			}
-			if p.IsHealthy(ctx) {
+			if r.isHealthyCached(ctx, p) {
 				return p, nil
 			}
 			return nil, fmt.Errorf("preferred provider %s is unavailable (unhealthy)", preferredProvider)
@@ -447,8 +487,8 @@ func (r *Router) findFirstHealthyCandidate(ctx context.Context, candidates []pro
 			continue
 		}
 
-		// Check health
-		if p.IsHealthy(ctx) {
+		// Check health (cached to avoid burning API quota)
+		if r.isHealthyCached(ctx, p) {
 			return p, nil
 		}
 	}
@@ -486,7 +526,7 @@ func (r *Router) tryProvidersWithFallback(
 		if r.circuitBreakers[p.Name()].IsOpen() {
 			continue
 		}
-		if !p.IsHealthy(ctx) {
+		if !r.isHealthyCached(ctx, p) {
 			continue
 		}
 		candidates = append(candidates, p.Name())
@@ -551,17 +591,21 @@ func (r *Router) tryProvider(
 		// Record failure
 		r.circuitBreakers[provider.Name()].RecordFailure()
 
-		// Check if rate limit error
+		// Check if rate limit error — use shorter cooldown for providers with fast resets
 		if isRateLimitError(err) {
-			log.Printf("[Router] %s rate limited, opening circuit for 5min", provider.Name())
-			r.circuitBreakers[provider.Name()].Open(5 * time.Minute)
+			cooldown := rateLimitCooldown(provider.Name(), err)
+			log.Printf("[Router] %s rate limited, opening circuit for %s", provider.Name(), cooldown)
+			r.circuitBreakers[provider.Name()].Open(cooldown)
 		}
 
 		return providers.ChatResponse{}, err
 	}
 
-	// Record success
+	// Record success and update health cache
 	r.circuitBreakers[provider.Name()].RecordSuccess()
+	r.healthMu.Lock()
+	r.healthCache[provider.Name()] = &cachedHealth{healthy: true, checkedAt: time.Now()}
+	r.healthMu.Unlock()
 
 	// Track usage
 	if resp.Usage.TotalTokens > 0 {
@@ -585,6 +629,34 @@ func estimateTokens(messages []providers.Message) int {
 		total += len(msg.Content) / 4 // Rough estimate: 1 token ≈ 4 chars
 	}
 	return total
+}
+
+func rateLimitCooldown(providerName string, err error) time.Duration {
+	errStr := err.Error()
+	// Try to extract "reset after Ns" from Gemini-style errors
+	if idx := strings.Index(errStr, "reset after "); idx >= 0 {
+		numStr := ""
+		for _, c := range errStr[idx+len("reset after "):] {
+			if c >= '0' && c <= '9' {
+				numStr += string(c)
+			} else {
+				break
+			}
+		}
+		if seconds, parseErr := strconv.Atoi(numStr); parseErr == nil && seconds > 0 {
+			// Add a small buffer to the provider's stated reset time
+			return time.Duration(seconds+5) * time.Second
+		}
+	}
+	// Gemini and subscription providers reset quickly; use shorter cooldown
+	switch providerName {
+	case "gemini":
+		return 30 * time.Second
+	case "claude-code":
+		return 60 * time.Second
+	default:
+		return 2 * time.Minute
+	}
 }
 
 func isRateLimitError(err error) bool {

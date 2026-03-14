@@ -23,7 +23,7 @@ import (
 
 const (
 	codexSubscriptionBaseURL  = "https://chatgpt.com/backend-api/codex"
-	codexCompactResponsesPath = "/responses/compact"
+	codexCompactResponsesPath = "/responses"
 	codexClientVersion        = "0.101.0"
 	codexUserAgent            = "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464"
 
@@ -52,6 +52,7 @@ type codexCompactRequest struct {
 	Tools        []map[string]interface{} `json:"tools,omitempty"`
 	ToolChoice   interface{}              `json:"tool_choice,omitempty"`
 	Stream       bool                     `json:"stream,omitempty"`
+	Store        *bool                    `json:"store,omitempty"`
 }
 
 type codexCompactResponse struct {
@@ -283,9 +284,11 @@ func (p *openAIProvider) codexChatCompletion(ctx context.Context, credential Pro
 		return providers.ChatResponse{}, fmt.Errorf("tool calling is not supported on the Codex compact responses path - use standard OpenAI chat completions endpoint for tool support")
 	}
 
-	// Validate streaming support - Codex compact API does not support streaming
+	// Note: caller-requested streaming is handled separately by the handler layer.
+	// The internal Codex subscription path always uses SSE streaming internally
+	// and collects the response into a single ChatResponse.
 	if req.Stream {
-		return providers.ChatResponse{}, fmt.Errorf("streaming is not supported on the Codex compact responses path - use non-streaming requests")
+		return providers.ChatResponse{}, fmt.Errorf("streaming passthrough is not supported on the Codex subscription path - use non-streaming requests")
 	}
 
 	model = normalizeCodexModel(model)
@@ -300,7 +303,7 @@ func (p *openAIProvider) codexChatCompletion(ctx context.Context, credential Pro
 	if err != nil {
 		return providers.ChatResponse{}, err
 	}
-	applyCodexHeaders(httpReq, credential, sessionID, false)
+	applyCodexHeaders(httpReq, credential, sessionID, true)
 
 	httpResp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -308,20 +311,123 @@ func (p *openAIProvider) codexChatCompletion(ctx context.Context, credential Pro
 	}
 	defer httpResp.Body.Close()
 
-	respBody, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		return providers.ChatResponse{}, fmt.Errorf("codex read failure: %w", err)
-	}
 	if httpResp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(httpResp.Body)
 		return providers.ChatResponse{}, fmt.Errorf("openai returned %d: %s", httpResp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
-	log.Printf("[Codex] Raw response: %s", string(respBody))
-	var upstream codexCompactResponse
-	if err := json.Unmarshal(respBody, &upstream); err != nil {
-		return providers.ChatResponse{}, fmt.Errorf("codex decode failure: %w", err)
+	return collectCodexSSEResponse(httpResp.Body, model)
+}
+
+func collectCodexSSEResponse(body io.Reader, model string) (providers.ChatResponse, error) {
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024)
+
+	var responseID string
+	var contentBuilder strings.Builder
+	toolCalls := make([]map[string]interface{}, 0)
+	var totalUsage providers.Usage
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+
+		eventType := stringValue(event["type"])
+		switch eventType {
+		case "response.created":
+			if resp, ok := event["response"].(map[string]interface{}); ok {
+				responseID = stringValue(resp["id"])
+			}
+
+		case "response.output_text.delta":
+			// Do NOT use stringValue here — it trims spaces, which corrupts token boundaries
+			if delta, ok := event["delta"].(string); ok {
+				contentBuilder.WriteString(delta)
+			}
+
+		case "response.output_text.done":
+			// Final text for this output item — use if we haven't accumulated via deltas
+			if contentBuilder.Len() == 0 {
+				if text, ok := event["text"].(string); ok {
+					contentBuilder.WriteString(text)
+				}
+			}
+
+		case "response.function_call_arguments.done":
+			toolCalls = append(toolCalls, map[string]interface{}{
+				"id":   firstNonEmptyString(stringValue(event["call_id"]), stringValue(event["item_id"])),
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":      stringValue(event["name"]),
+					"arguments": firstNonEmptyString(stringValue(event["arguments"]), "{}"),
+				},
+			})
+
+		case "response.completed":
+			if resp, ok := event["response"].(map[string]interface{}); ok {
+				if responseID == "" {
+					responseID = stringValue(resp["id"])
+				}
+				// Extract output_text if available at top level
+				if outputText := stringValue(resp["output_text"]); outputText != "" && contentBuilder.Len() == 0 {
+					contentBuilder.WriteString(outputText)
+				}
+				// Extract usage
+				if usageRaw, ok := resp["usage"].(map[string]interface{}); ok {
+					if v, ok := usageRaw["input_tokens"].(float64); ok {
+						totalUsage.PromptTokens = int(v)
+					}
+					if v, ok := usageRaw["output_tokens"].(float64); ok {
+						totalUsage.CompletionTokens = int(v)
+					}
+					if v, ok := usageRaw["total_tokens"].(float64); ok {
+						totalUsage.TotalTokens = int(v)
+					}
+				}
+			}
+		}
 	}
-	return upstream.asChatCompletion(model), nil
+
+	content := contentBuilder.String()
+	if totalUsage.TotalTokens == 0 {
+		totalUsage.TotalTokens = totalUsage.PromptTokens + totalUsage.CompletionTokens
+	}
+
+	if strings.TrimSpace(content) == "" && len(toolCalls) == 0 {
+		log.Printf("[Codex] WARNING: SSE stream completed but no content or tool calls extracted")
+	}
+
+	finishReason := "stop"
+	if len(toolCalls) > 0 {
+		finishReason = "tool_calls"
+	}
+
+	return providers.ChatResponse{
+		ID:     firstNonEmptyString(responseID, "codex-"+strconv.FormatInt(time.Now().UnixNano(), 10)),
+		Object: "chat.completion",
+		Model:  model,
+		Choices: []providers.Choice{{
+			Index: 0,
+			Message: providers.Message{
+				Role:      "assistant",
+				Content:   strings.TrimSpace(content),
+				ToolCalls: toolCalls,
+			},
+			FinishReason: finishReason,
+		}},
+		Usage: normalizeUsage(totalUsage),
+	}, nil
 }
 
 func codexMessageInput(role, content string) map[string]interface{} {
@@ -347,11 +453,12 @@ func codexMessageInput(role, content string) map[string]interface{} {
 }
 
 func buildCodexCompactRequest(req providers.ChatRequest, model string) codexCompactRequest {
+	storeFalse := false
 	payload := codexCompactRequest{
 		Model:        model,
 		Instructions: "You are Codex. Answer the user's request concisely and accurately.",
-		// Stream is not supported on compact endpoint, must be false
-		Stream:       false,
+		Stream:       true,
+		Store:        &storeFalse,
 	}
 
 	// 1. Map tools (flatten function fields)
@@ -632,10 +739,13 @@ func decodeGeminiChatResponse(resp *http.Response) (geminiChatResponse, error) {
 		return geminiChatResponse{}, fmt.Errorf("gemini returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
+	log.Printf("[Gemini] Raw CLI response (%d bytes): %s", len(body), truncateLogBody(body, 2000))
+
 	var upstreamResp geminiChatResponse
 	if err := json.Unmarshal(body, &upstreamResp); err != nil {
 		return geminiChatResponse{}, fmt.Errorf("gemini decode failure: %w", err)
 	}
+	// Try wrapped response formats used by the Gemini CLI endpoint
 	if len(upstreamResp.Candidates) == 0 {
 		var wrapped struct {
 			Response geminiChatResponse `json:"response"`
@@ -644,10 +754,36 @@ func decodeGeminiChatResponse(resp *http.Response) (geminiChatResponse, error) {
 			upstreamResp = wrapped.Response
 		}
 	}
-	if len(upstreamResp.Candidates) == 0 || len(upstreamResp.Candidates[0].Content.Parts) == 0 {
-		return geminiChatResponse{}, fmt.Errorf("gemini returned empty completion")
+	// Try array-of-candidates format (some CLI endpoints return top-level array)
+	if len(upstreamResp.Candidates) == 0 {
+		var arrayResp []geminiChatResponse
+		if err := json.Unmarshal(body, &arrayResp); err == nil && len(arrayResp) > 0 && len(arrayResp[0].Candidates) > 0 {
+			upstreamResp = arrayResp[0]
+		}
 	}
+	// Try nested generateContentResponse wrapper
+	if len(upstreamResp.Candidates) == 0 {
+		var nested struct {
+			GenerateContentResponse geminiChatResponse `json:"generateContentResponse"`
+		}
+		if err := json.Unmarshal(body, &nested); err == nil && len(nested.GenerateContentResponse.Candidates) > 0 {
+			upstreamResp = nested.GenerateContentResponse
+		}
+	}
+	if len(upstreamResp.Candidates) == 0 {
+		return geminiChatResponse{}, fmt.Errorf("gemini returned empty completion (no candidates)")
+	}
+	// Allow candidates with empty parts — can happen when thinking consumes the entire
+	// output budget (finishReason=MAX_TOKENS with thoughtsTokenCount > 0).
+	// Return a valid response with empty text rather than erroring.
 	return upstreamResp, nil
+}
+
+func truncateLogBody(body []byte, maxLen int) string {
+	if len(body) <= maxLen {
+		return string(body)
+	}
+	return string(body[:maxLen]) + "...[truncated]"
 }
 
 func discoverGeminiCLIProject(ctx context.Context, client *http.Client, credential ProviderCredential) (string, error) {
@@ -847,6 +983,14 @@ func decodeResponseBody(body io.ReadCloser, contentEncoding string) (io.ReadClos
 func (r geminiChatResponse) asChatCompletion(model string) providers.ChatResponse {
 	responseText := ""
 	toolCalls := make([]map[string]interface{}, 0)
+	if len(r.Candidates) == 0 {
+		return providers.ChatResponse{
+			ID:      fmt.Sprintf("gemini-%d", time.Now().UnixNano()),
+			Object:  "chat.completion",
+			Model:   model,
+			Choices: []providers.Choice{{Index: 0, Message: providers.Message{Role: "assistant", Content: ""}, FinishReason: "stop"}},
+		}
+	}
 	for _, part := range r.Candidates[0].Content.Parts {
 		if len(part.FunctionCall) > 0 {
 			name := stringValue(part.FunctionCall["name"])
@@ -1119,8 +1263,14 @@ func buildGeminiCLIRequest(req providers.ChatRequest, model, projectID string) (
 	requestNode := envelope["request"].(map[string]interface{})
 
 	generationConfig := map[string]interface{}{}
-	if req.MaxTokens > 0 {
-		generationConfig["maxOutputTokens"] = req.MaxTokens
+	maxTokens := req.MaxTokens
+	if maxTokens > 0 {
+		// Gemini 2.5 models use thinking tokens from the output budget.
+		// Ensure enough headroom so thinking doesn't consume all output tokens.
+		if maxTokens < 1024 {
+			maxTokens = 1024
+		}
+		generationConfig["maxOutputTokens"] = maxTokens
 	}
 	if req.Temperature > 0 {
 		generationConfig["temperature"] = req.Temperature
