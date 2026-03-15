@@ -324,12 +324,14 @@ func handleResponsesRequest(w http.ResponseWriter, r *http.Request, preferredPro
 			return
 		}
 	}
+	wantStream := req.Stream
+	chatReq.Stream = false
 	resp, err := routeChatRequest(r, chatReq, sessionID, preferredProvider)
 	if err != nil {
 		if forwardToAmpUpstream(w, r, rawBody) {
 			return
 		}
-		if req.Stream {
+		if wantStream {
 			writeResponsesStreamError(w, err)
 			return
 		}
@@ -410,7 +412,7 @@ func handleResponsesRequest(w http.ResponseWriter, r *http.Request, preferredPro
 		}
 	}
 
-	if req.Stream {
+	if wantStream {
 		writeResponsesStream(w, resp, outputText, req)
 		return
 	}
@@ -603,6 +605,8 @@ func providerChatHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	wantStream := req.Stream
+	req.Stream = false
 	resp, err := routeChatRequest(r, req, requestSessionID(r), providerName)
 	if err != nil {
 		if strings.Contains(err.Error(), "invalid request:") || strings.Contains(err.Error(), "unknown model") || strings.Contains(err.Error(), "not compatible") {
@@ -616,8 +620,7 @@ func providerChatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Handle streaming response format
-	if req.Stream {
+	if wantStream {
 		writeChatCompletionStream(w, resp)
 		return
 	}

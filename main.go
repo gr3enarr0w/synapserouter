@@ -248,6 +248,9 @@ func startServer() {
 	log.Printf("⚡ Usage tracking enabled (80%% auto-switch threshold)")
 	log.Printf("🧠 Orchestration roles loaded: %d", len(orchestration.DefaultRoles()))
 	log.Printf("🎯 Skill dispatch registry: %d skills", len(orchestration.DefaultSkills()))
+	if strings.TrimSpace(os.Getenv("SYNROUTE_ADMIN_TOKEN")) == "" && strings.TrimSpace(os.Getenv("ADMIN_API_KEY")) == "" {
+		log.Println("🔓 No SYNROUTE_ADMIN_TOKEN set — admin endpoints restricted to localhost")
+	}
 	logStartupCheck(startupCheck)
 
 	if err := http.ListenAndServe(addr, r); err != nil {
@@ -580,6 +583,9 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Get complete response from provider — we convert to SSE ourselves if streaming
+	wantStream := req.Stream
+	req.Stream = false
 	resp, err := routeChatRequest(r, req, requestSessionID(r), "")
 	if err != nil {
 		if strings.Contains(err.Error(), "invalid request:") || strings.Contains(err.Error(), "unknown model") || strings.Contains(err.Error(), "not compatible") {
@@ -594,8 +600,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Handle streaming response format
-	if req.Stream {
+	if wantStream {
 		writeChatCompletionStream(w, resp)
 		return
 	}
@@ -1084,10 +1089,6 @@ func withAdminAuth(next http.Handler) http.Handler {
 	if adminKey == "" {
 		adminKey = strings.TrimSpace(os.Getenv("ADMIN_API_KEY"))
 	}
-	if adminKey == "" {
-		log.Println("[Auth] WARNING: No SYNROUTE_ADMIN_TOKEN set — admin endpoints require localhost access")
-	}
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// If no admin token configured, only allow localhost access
 		if adminKey == "" {
