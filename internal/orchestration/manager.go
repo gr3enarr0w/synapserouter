@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
 )
@@ -20,11 +21,13 @@ type ChatExecutor interface {
 }
 
 type Manager struct {
-	executor ChatExecutor
-	memory   *memory.VectorMemory
-	roles    []Role
-	db       *sql.DB
-	dag      *DAGScheduler
+	executor  ChatExecutor
+	memory    *memory.VectorMemory
+	mcpClient *mcp.MCPClient
+	roles     []Role
+	skills    []Skill
+	db        *sql.DB
+	dag       *DAGScheduler
 
 	mu                      sync.RWMutex
 	counter                 int
@@ -46,6 +49,7 @@ func NewManagerWithStore(executor ChatExecutor, vm *memory.VectorMemory, db *sql
 		executor:     executor,
 		memory:       vm,
 		roles:        DefaultRoles(),
+		skills:       DefaultSkills(),
 		db:           db,
 		dag:          NewDAGScheduler(),
 		tasks:        make(map[string]*Task),
@@ -56,6 +60,81 @@ func NewManagerWithStore(executor ChatExecutor, vm *memory.VectorMemory, db *sql
 	}
 	m.bootstrapDefaults()
 	return m
+}
+
+// SetMCPClient attaches an MCP client for automatic tool invocation during skill execution.
+func (m *Manager) SetMCPClient(client *mcp.MCPClient) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mcpClient = client
+}
+
+// Skills returns a copy of the registered skill list.
+func (m *Manager) Skills() []Skill {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Skill, len(m.skills))
+	copy(out, m.skills)
+	return out
+}
+
+// MatchSkillsForGoal returns matched skills for a goal (for dry-run / preview).
+func (m *Manager) MatchSkillsForGoal(goal string) *DispatchResult {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return DispatchWithDetails(goal, m.skills)
+}
+
+// invokeMCPTools auto-invokes MCP tools bound to a skill chain and returns
+// a context string with the results. If no MCP client is set or no tools
+// are bound, returns empty string.
+func (m *Manager) invokeMCPTools(ctx context.Context, chain []Skill, goal string) string {
+	m.mu.RLock()
+	client := m.mcpClient
+	m.mu.RUnlock()
+
+	if client == nil {
+		return ""
+	}
+
+	tools := MCPToolsForChain(chain)
+	if len(tools) == 0 {
+		return ""
+	}
+
+	var results []string
+	for _, toolName := range tools {
+		result, err := client.CallTool(ctx, mcp.ToolCall{
+			ToolName:  toolName,
+			Arguments: map[string]interface{}{"query": goal},
+		})
+		if err != nil {
+			log.Printf("[dispatch] MCP tool %s failed: %v", toolName, err)
+			continue
+		}
+		if result.Success {
+			outputStr := fmt.Sprintf("[MCP:%s] %v", toolName, result.Output)
+			results = append(results, outputStr)
+		}
+	}
+
+	return strings.Join(results, "\n\n")
+}
+
+// invokeMCPToolsForTask detects skill-dispatched steps and invokes their MCP tools.
+func (m *Manager) invokeMCPToolsForTask(task *Task) string {
+	// Reconstruct matched skills from step prompts to find MCP tools
+	m.mu.RLock()
+	skills := m.skills
+	m.mu.RUnlock()
+
+	matched := MatchSkills(task.Goal, skills)
+	if len(matched) == 0 {
+		return ""
+	}
+
+	chain := BuildSkillChain(matched)
+	return m.invokeMCPTools(context.Background(), chain, task.Goal)
 }
 
 func (m *Manager) bootstrapDefaults() {
@@ -1507,7 +1586,13 @@ func (m *Manager) runTask(taskID string) {
 		Tasks:      plannedTasks,
 	})
 
+	// Auto-invoke MCP tools if the task was skill-dispatched
 	var previousOutputs []string
+	if mcpContext := m.invokeMCPToolsForTask(task); mcpContext != "" {
+		previousOutputs = append(previousOutputs, mcpContext)
+		log.Printf("[dispatch] MCP context injected for task %s (%d bytes)", task.ID, len(mcpContext))
+	}
+
 	for idx := range task.Steps {
 		for m.isTaskPaused(task.ID) {
 			m.publish(task.ID, AutopilotEvent{

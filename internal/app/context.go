@@ -101,11 +101,17 @@ func (ac *AppContext) Close() {
 func initializeProviders(profile string) []providers.Provider {
 	var providerList []providers.Provider
 
+	// NanoGPT subscription (first — free, zero-cost models)
+	nanogptAPIKey := os.Getenv("NANOGPT_API_KEY")
+	if nanogptAPIKey != "" {
+		providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "subscription"))
+	}
+
 	switch profile {
 	case "work":
-		providerList = initializeWorkProviders()
+		providerList = append(providerList, initializeWorkProviders()...)
 	default:
-		providerList = initializePersonalProviders()
+		providerList = append(providerList, initializePersonalProviders()...)
 	}
 
 	// Ollama Cloud (available in all profiles)
@@ -116,11 +122,9 @@ func initializeProviders(profile string) []providers.Provider {
 		providerList = append(providerList, providers.NewOllamaCloudProvider(ollamaBaseURL, ollamaAPIKey, ollamaModel))
 	}
 
-	// NanoGPT (always last)
-	nanogptAPIKey := os.Getenv("NANOGPT_API_KEY")
-	nanogptBaseURL := os.Getenv("NANOGPT_BASE_URL")
+	// NanoGPT paid (last — costs money, only used as fallback)
 	if nanogptAPIKey != "" {
-		providerList = append(providerList, providers.NewNanoGPTProvider(nanogptBaseURL, nanogptAPIKey))
+		providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "paid"))
 	}
 
 	return providerList

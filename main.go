@@ -151,6 +151,10 @@ func startServer() {
 	r.HandleFunc("/api/provider/{provider}/v1/chat/completions", providerChatHandler).Methods("POST")
 	r.HandleFunc("/api/provider/{provider}/v1/responses", providerResponsesHandler).Methods("POST")
 
+	// Anthropic-compatible endpoints
+	r.HandleFunc("/v1/messages", messagesHandler).Methods("POST")
+	r.HandleFunc("/api/provider/{provider}/v1/messages", providerMessagesHandler).Methods("POST")
+
 	// Usage stats endpoint
 	r.HandleFunc("/v1/providers", providersHandler).Methods("GET")
 	r.Handle("/v1/usage", withAdminAuth(http.HandlerFunc(usageHandler))).Methods("GET")
@@ -159,6 +163,10 @@ func startServer() {
 	r.Handle("/v1/audit/session/{session_id}", withAdminAuth(http.HandlerFunc(auditSessionHandler))).Methods("GET")
 	r.Handle("/v1/audit/request/{request_id}", withAdminAuth(http.HandlerFunc(auditRequestHandler))).Methods("GET")
 	r.Handle("/v1/debug/trace", withAdminAuth(http.HandlerFunc(traceHandler))).Methods("POST")
+	// Skill dispatch endpoints
+	r.Handle("/v1/skills", withAdminAuth(http.HandlerFunc(skillsListHandler))).Methods("GET")
+	r.Handle("/v1/skills/match", withAdminAuth(http.HandlerFunc(skillsMatchHandler))).Methods("GET")
+
 	r.Handle("/v1/orchestration/roles", withAdminAuth(http.HandlerFunc(orchestrationRolesHandler))).Methods("GET")
 	r.Handle("/v1/orchestration/workflows", withAdminAuth(http.HandlerFunc(orchestrationWorkflowsHandler))).Methods("GET", "POST")
 	r.Handle("/v1/orchestration/workflows/{template_id}", withAdminAuth(http.HandlerFunc(orchestrationWorkflowHandler))).Methods("GET", "PUT", "DELETE")
@@ -232,10 +240,11 @@ func startServer() {
 	addr := fmt.Sprintf(":%s", port)
 	log.Printf("🚀 Synapse Router starting on %s", addr)
 	log.Printf("📊 Database: %s", dbPath)
-	log.Printf("🔄 Provider chain: Claude Code → Codex → Gemini → Qwen → Ollama Cloud → NanoGPT")
+	log.Printf("🔄 Provider chain: NanoGPT-Sub → Gemini → Codex → Claude Code → Ollama Cloud → NanoGPT-Paid")
 	log.Printf("💾 Unified context across all providers via vector memory")
 	log.Printf("⚡ Usage tracking enabled (80%% auto-switch threshold)")
 	log.Printf("🧠 Orchestration roles loaded: %d", len(orchestration.DefaultRoles()))
+	log.Printf("🎯 Skill dispatch registry: %d skills", len(orchestration.DefaultSkills()))
 	logStartupCheck(startupCheck)
 
 	if err := http.ListenAndServe(addr, r); err != nil {
@@ -250,11 +259,18 @@ func initializeProviders() []providers.Provider {
 
 	var providerList []providers.Provider
 
+	// NanoGPT subscription (first — free, zero-cost models)
+	nanogptAPIKey := os.Getenv("NANOGPT_API_KEY")
+	if nanogptAPIKey != "" {
+		providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "subscription"))
+		log.Println("✓ nanogpt-sub provider initialized")
+	}
+
 	switch profile {
 	case "work":
-		providerList = initializeWorkProviders()
+		providerList = append(providerList, initializeWorkProviders()...)
 	default:
-		providerList = initializePersonalProviders()
+		providerList = append(providerList, initializePersonalProviders()...)
 	}
 
 	// Ollama Cloud (available in all profiles)
@@ -267,13 +283,10 @@ func initializeProviders() []providers.Provider {
 		log.Println("✓ Ollama Cloud provider initialized")
 	}
 
-	// NanoGPT (always last - catch-all fallback)
-	nanogptAPIKey := os.Getenv("NANOGPT_API_KEY")
-	nanogptBaseURL := os.Getenv("NANOGPT_BASE_URL")
+	// NanoGPT paid (last — costs money, only used as fallback)
 	if nanogptAPIKey != "" {
-		nanogptProvider := providers.NewNanoGPTProvider(nanogptBaseURL, nanogptAPIKey)
-		providerList = append(providerList, nanogptProvider)
-		log.Println("✓ NanoGPT provider initialized")
+		providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "paid"))
+		log.Println("✓ nanogpt-paid provider initialized")
 	}
 
 	log.Printf("Initialized %d providers", len(providerList))
@@ -459,7 +472,8 @@ func applyQuotaOverrides(db *sql.DB) error {
 		{provider: "gemini", dailyEnv: "GEMINI_DAILY_LIMIT", defaultDaily: 500000, defaultMonthly: 15000000, tier: "pro"},
 		{provider: "qwen", dailyEnv: "QWEN_DAILY_LIMIT", defaultDaily: 500000, defaultMonthly: 15000000, tier: "pro"},
 		{provider: "ollama-cloud", dailyEnv: "OLLAMA_CLOUD_DAILY_LIMIT", defaultDaily: 1000000, defaultMonthly: 30000000, tier: "pro"},
-		{provider: "nanogpt", monthlyEnv: "NANOGPT_MONTHLY_QUOTA", defaultDaily: 2000000, defaultMonthly: 60000000, tier: "subscription"},
+		{provider: "nanogpt-sub", monthlyEnv: "NANOGPT_SUB_MONTHLY_QUOTA", defaultDaily: 2000000, defaultMonthly: 60000000, tier: "subscription"},
+		{provider: "nanogpt-paid", monthlyEnv: "NANOGPT_PAID_MONTHLY_QUOTA", defaultDaily: 100000, defaultMonthly: 3000000, tier: "api"},
 	}
 
 	for _, override := range overrides {

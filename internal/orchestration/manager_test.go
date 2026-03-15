@@ -3,14 +3,19 @@ package orchestration
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
 )
@@ -91,16 +96,617 @@ func (e *toolLoopExecutor) ChatCompletion(ctx context.Context, req providers.Cha
 }
 
 func TestBuildPlanIncludesCoreExecutionRoles(t *testing.T) {
+	// Skill dispatch is the primary path when no explicit roles are given.
+	// "Implement and test a Go orchestration workflow" matches go-patterns,
+	// code-implement, go-testing — ordered by phase (analyze → implement → verify).
 	steps := BuildPlan("Implement and test a Go orchestration workflow", nil, 0)
-	if len(steps) < 4 {
-		t.Fatalf("expected at least 4 steps, got %d", len(steps))
+	if len(steps) < 3 {
+		t.Fatalf("expected at least 3 steps from skill dispatch, got %d", len(steps))
 	}
-	if steps[0].Role != "researcher" {
-		t.Fatalf("expected first role researcher, got %s", steps[0].Role)
+
+	// First step should be analyze-phase (go-patterns → coder role)
+	if steps[0].Role != "coder" {
+		t.Fatalf("expected first role coder (from go-patterns skill), got %s", steps[0].Role)
 	}
-	if steps[len(steps)-1].Role != "reviewer" {
-		t.Fatalf("expected last role reviewer, got %s", steps[len(steps)-1].Role)
+	if !strings.Contains(steps[0].Prompt, "go-patterns") {
+		t.Fatalf("expected first step to be go-patterns skill, got prompt: %s", steps[0].Prompt)
 	}
+
+	// When explicit roles are provided, it falls back to role-based planning
+	roleSteps := BuildPlan("something generic", []string{"researcher", "coder", "reviewer"}, 0)
+	if roleSteps[0].Role != "researcher" {
+		t.Fatalf("with explicit roles, expected first role researcher, got %s", roleSteps[0].Role)
+	}
+	if roleSteps[len(roleSteps)-1].Role != "reviewer" {
+		t.Fatalf("with explicit roles, expected last role reviewer, got %s", roleSteps[len(roleSteps)-1].Role)
+	}
+}
+
+// TestCreateTask_SkillDispatchIntegration verifies that CreateTask uses skill
+// dispatch when no explicit roles are given, producing skill-aware steps.
+func TestCreateTask_SkillDispatchIntegration(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	mgr := NewManagerWithStore(stubExecutor{}, vm, db)
+
+	tests := []struct {
+		name       string
+		goal       string
+		wantSkill  string // at least one step prompt must contain this skill name
+		wantPhases int    // minimum distinct phases
+	}{
+		{
+			name:       "Go implementation task",
+			goal:       "implement Go error handling for the router",
+			wantSkill:  "go-patterns",
+			wantPhases: 2,
+		},
+		{
+			name:       "security fix",
+			goal:       "fix the OAuth credential leak",
+			wantSkill:  "security-review",
+			wantPhases: 2,
+		},
+		{
+			name:       "Docker task",
+			goal:       "create a Dockerfile for the service",
+			wantSkill:  "docker-expert",
+			wantPhases: 1,
+		},
+		{
+			name:       "full pipeline",
+			goal:       "refactor the Go API handler, add tests, and review the code",
+			wantSkill:  "go-patterns",
+			wantPhases: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			task, err := mgr.CreateTask(context.Background(), TaskRequest{
+				Goal: tt.goal,
+			})
+			if err != nil {
+				t.Fatalf("CreateTask failed: %v", err)
+			}
+
+			if task.Status != TaskStatusQueued {
+				t.Errorf("expected queued status, got %s", task.Status)
+			}
+			if len(task.Steps) == 0 {
+				t.Fatal("expected steps from skill dispatch")
+			}
+
+			// Verify wanted skill is present in prompts
+			found := false
+			for _, step := range task.Steps {
+				if strings.Contains(step.Prompt, tt.wantSkill) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				prompts := make([]string, len(task.Steps))
+				for i, s := range task.Steps {
+					prompts[i] = s.Prompt[:min(80, len(prompts[i]))]
+				}
+				t.Errorf("expected skill %q in step prompts, got: %v", tt.wantSkill, prompts)
+			}
+
+			// Verify step prompts contain the goal
+			for i, step := range task.Steps {
+				if !strings.Contains(step.Prompt, tt.goal) {
+					t.Errorf("step %d prompt missing goal text", i)
+				}
+			}
+		})
+	}
+}
+
+// TestCreateTask_FallbackToRoles verifies unmatched goals still produce role-based plans.
+func TestCreateTask_FallbackToRoles(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	mgr := NewManagerWithStore(stubExecutor{}, vm, db)
+
+	task, err := mgr.CreateTask(context.Background(), TaskRequest{
+		Goal: "hello world",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	// Should fall back to role-based planning (researcher, architect, coder, tester, reviewer)
+	if len(task.Steps) < 4 {
+		t.Errorf("expected at least 4 role-based steps, got %d", len(task.Steps))
+	}
+
+	// First step should be researcher (from inferRoles)
+	if task.Steps[0].Role != "researcher" {
+		t.Errorf("fallback first role should be researcher, got %s", task.Steps[0].Role)
+	}
+}
+
+// TestCreateTask_ExplicitRolesOverrideSkills verifies explicit roles bypass skill dispatch.
+func TestCreateTask_ExplicitRolesOverrideSkills(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	mgr := NewManagerWithStore(stubExecutor{}, vm, db)
+
+	task, err := mgr.CreateTask(context.Background(), TaskRequest{
+		Goal:  "implement Go handler with tests",
+		Roles: []string{"coder", "reviewer"},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	if len(task.Steps) != 2 {
+		t.Fatalf("expected 2 steps from explicit roles, got %d", len(task.Steps))
+	}
+	if task.Steps[0].Role != "coder" {
+		t.Errorf("expected first role coder, got %s", task.Steps[0].Role)
+	}
+	if task.Steps[1].Role != "reviewer" {
+		t.Errorf("expected second role reviewer, got %s", task.Steps[1].Role)
+	}
+	// Prompts should NOT contain skill names (role-based, not skill-based)
+	for _, step := range task.Steps {
+		if strings.Contains(step.Prompt, "[go-patterns]") {
+			t.Error("explicit roles should not produce skill-based prompts")
+		}
+	}
+}
+
+// TestCreateTaskAndExecute_SkillDispatch runs a skill-dispatched task through
+// the full execution pipeline with stub executor.
+func TestCreateTaskAndExecute_SkillDispatch(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	mgr := NewManagerWithStore(stubExecutor{}, vm, db)
+
+	task, err := mgr.CreateTask(context.Background(), TaskRequest{
+		Goal:    "fix the Go auth token handler",
+		Execute: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	// Wait for async execution
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		got, _ := mgr.GetTask(task.ID)
+		if got != nil && (got.Status == TaskStatusCompleted || got.Status == TaskStatusFailed) {
+			task = got
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if task.Status != TaskStatusCompleted {
+		t.Fatalf("expected completed, got %s (error: %s)", task.Status, task.Error)
+	}
+
+	// All steps should be completed
+	for i, step := range task.Steps {
+		if step.Status != StepStatusCompleted {
+			t.Errorf("step %d (%s) status: expected completed, got %s", i, step.Role, step.Status)
+		}
+		if step.Output == "" {
+			t.Errorf("step %d (%s) has empty output", i, step.Role)
+		}
+	}
+
+	// Final output should contain all step outputs
+	if task.FinalOutput == "" {
+		t.Error("expected non-empty final output")
+	}
+
+	// Verify skill-based steps were used (not generic role prompts)
+	hasSkillPrompt := false
+	for _, step := range task.Steps {
+		if strings.Contains(step.Prompt, "[") && strings.Contains(step.Prompt, "]") {
+			hasSkillPrompt = true
+			break
+		}
+	}
+	if !hasSkillPrompt {
+		t.Error("expected skill-based prompts with [skill-name] markers")
+	}
+}
+
+// TestManagerSkillsMethod verifies the Skills() accessor returns the registry.
+func TestManagerSkillsMethod(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	mgr := NewManagerWithStore(stubExecutor{}, vm, db)
+
+	skills := mgr.Skills()
+	if len(skills) == 0 {
+		t.Fatal("expected non-empty skill registry")
+	}
+	if len(skills) != len(DefaultSkills()) {
+		t.Errorf("expected %d skills, got %d", len(DefaultSkills()), len(skills))
+	}
+}
+
+// TestManagerMatchSkillsForGoal verifies the dry-run match endpoint.
+func TestManagerMatchSkillsForGoal(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	mgr := NewManagerWithStore(stubExecutor{}, vm, db)
+
+	result := mgr.MatchSkillsForGoal("fix the Go auth handler and verify tests")
+	if result.FallbackToRole {
+		t.Fatal("should not fall back for this goal")
+	}
+	if len(result.MatchedSkills) < 3 {
+		t.Errorf("expected at least 3 matched skills, got %d: %v",
+			len(result.MatchedSkills), skillNames(result.MatchedSkills))
+	}
+	if len(result.Steps) == 0 {
+		t.Error("expected steps in result")
+	}
+
+	// Test fallback case
+	fallback := mgr.MatchSkillsForGoal("just chatting")
+	if !fallback.FallbackToRole {
+		t.Error("expected fallback for unmatched goal")
+	}
+}
+
+// === MCP Auto-Invocation Tests ===
+// These prove that MCP tools are automatically called by the skill dispatch
+// system during task execution — no user action needed.
+
+// newMockMCPServer creates an httptest server that fakes the MCP protocol.
+// It returns the server, and an atomic counter of how many tool calls it received.
+func newMockMCPServer(t *testing.T, serverName string, toolNames []string) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var callCount atomic.Int32
+
+	mux := http.NewServeMux()
+
+	// GET /health — always healthy
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// GET /tools/list — return registered tools
+	mux.HandleFunc("/tools/list", func(w http.ResponseWriter, r *http.Request) {
+		tools := make([]map[string]interface{}, len(toolNames))
+		for i, name := range toolNames {
+			tools[i] = map[string]interface{}{
+				"name":        name,
+				"description": "mock tool " + name,
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"tools": tools})
+	})
+
+	// POST /tools/call — record the call and return mock result
+	mux.HandleFunc("/tools/call", func(w http.ResponseWriter, r *http.Request) {
+		callCount.Add(1)
+
+		var req struct {
+			Tool      string                 `json:"tool"`
+			Arguments map[string]interface{} `json:"arguments"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"output":  fmt.Sprintf("mock-result-from-%s: query=%v", req.Tool, req.Arguments["query"]),
+		})
+	})
+
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server, &callCount
+}
+
+// setupMockMCPClient creates an MCP client connected to mock servers matching
+// the tool names used in DefaultSkills (context7 and research-mcp).
+func setupMockMCPClient(t *testing.T) (*mcp.MCPClient, *atomic.Int32, *atomic.Int32) {
+	t.Helper()
+
+	// Mock context7 server (serves query-docs)
+	ctx7Server, ctx7Calls := newMockMCPServer(t, "context7", []string{"query-docs"})
+
+	// Mock research-mcp server (serves research_search)
+	researchServer, researchCalls := newMockMCPServer(t, "research-mcp", []string{"research_search"})
+
+	client := mcp.NewMCPClient()
+
+	if err := client.AddServer("context7", ctx7Server.URL, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.AddServer("research-mcp", researchServer.URL, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := client.Connect(ctx, "context7"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Connect(ctx, "research-mcp"); err != nil {
+		t.Fatal(err)
+	}
+
+	return client, ctx7Calls, researchCalls
+}
+
+// TestMCPAutoInvoke_GoTask verifies that a Go-related task auto-invokes
+// context7.query-docs without any user action.
+func TestMCPAutoInvoke_GoTask(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	mgr := NewManagerWithStore(stubExecutor{}, vm, db)
+
+	client, ctx7Calls, researchCalls := setupMockMCPClient(t)
+	mgr.SetMCPClient(client)
+
+	task, err := mgr.CreateTask(context.Background(), TaskRequest{
+		Goal:    "implement a Go HTTP handler with proper error handling",
+		Execute: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	// Wait for execution
+	waitForTaskDone(t, mgr, task.ID, 5*time.Second)
+
+	// context7.query-docs should have been called (go-patterns skill binds it)
+	if ctx7Calls.Load() == 0 {
+		t.Error("context7.query-docs was NOT auto-invoked — expected automatic call from go-patterns skill")
+	}
+
+	// research-mcp should NOT have been called (no research/security trigger)
+	if researchCalls.Load() > 0 {
+		t.Error("research-mcp.research_search should not fire for a plain Go task")
+	}
+
+	// Verify task completed and MCP context was injected
+	got, _ := mgr.GetTask(task.ID)
+	if got.Status != TaskStatusCompleted {
+		t.Fatalf("task should be completed, got %s (error: %s)", got.Status, got.Error)
+	}
+
+	// The first step output should contain the goal (stub executor echoes it)
+	// and MCP context should have been fed as previousOutputs[0]
+	if got.FinalOutput == "" {
+		t.Error("expected non-empty final output")
+	}
+}
+
+// TestMCPAutoInvoke_SecurityTask verifies that a security-related task
+// auto-invokes research-mcp.research_search.
+func TestMCPAutoInvoke_SecurityTask(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	mgr := NewManagerWithStore(stubExecutor{}, vm, db)
+
+	client, _, researchCalls := setupMockMCPClient(t)
+	mgr.SetMCPClient(client)
+
+	task, err := mgr.CreateTask(context.Background(), TaskRequest{
+		Goal:    "fix the OAuth credential handling vulnerability",
+		Execute: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	waitForTaskDone(t, mgr, task.ID, 5*time.Second)
+
+	// research-mcp should have been called (security-review binds it)
+	if researchCalls.Load() == 0 {
+		t.Error("research-mcp.research_search was NOT auto-invoked — expected automatic call from security-review skill")
+	}
+}
+
+// TestMCPAutoInvoke_ResearchTask verifies that research tasks invoke BOTH
+// research-mcp and context7 automatically.
+func TestMCPAutoInvoke_ResearchTask(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	mgr := NewManagerWithStore(stubExecutor{}, vm, db)
+
+	client, ctx7Calls, researchCalls := setupMockMCPClient(t)
+	mgr.SetMCPClient(client)
+
+	task, err := mgr.CreateTask(context.Background(), TaskRequest{
+		Goal:    "research how gRPC streaming works in Go",
+		Execute: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	waitForTaskDone(t, mgr, task.ID, 5*time.Second)
+
+	// Both should fire — research skill binds both
+	if ctx7Calls.Load() == 0 {
+		t.Error("context7.query-docs was NOT auto-invoked for research task")
+	}
+	if researchCalls.Load() == 0 {
+		t.Error("research-mcp.research_search was NOT auto-invoked for research task")
+	}
+}
+
+// TestMCPAutoInvoke_NoMatchDoesNotCallMCP verifies that tasks with no
+// matching skills don't invoke any MCP tools.
+func TestMCPAutoInvoke_NoMatchDoesNotCallMCP(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	mgr := NewManagerWithStore(stubExecutor{}, vm, db)
+
+	client, ctx7Calls, researchCalls := setupMockMCPClient(t)
+	mgr.SetMCPClient(client)
+
+	task, err := mgr.CreateTask(context.Background(), TaskRequest{
+		Goal:    "hello world",
+		Execute: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	waitForTaskDone(t, mgr, task.ID, 5*time.Second)
+
+	if ctx7Calls.Load() > 0 {
+		t.Error("context7 should NOT be called for unmatched goal")
+	}
+	if researchCalls.Load() > 0 {
+		t.Error("research-mcp should NOT be called for unmatched goal")
+	}
+}
+
+// TestMCPAutoInvoke_NilClientDoesNotPanic verifies that tasks execute fine
+// without an MCP client (graceful no-op).
+func TestMCPAutoInvoke_NilClientDoesNotPanic(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	mgr := NewManagerWithStore(stubExecutor{}, vm, db)
+	// Deliberately NOT setting an MCP client
+
+	task, err := mgr.CreateTask(context.Background(), TaskRequest{
+		Goal:    "implement Go handler with auth tokens",
+		Execute: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	waitForTaskDone(t, mgr, task.ID, 5*time.Second)
+
+	got, _ := mgr.GetTask(task.ID)
+	if got.Status != TaskStatusCompleted {
+		t.Errorf("task should complete even without MCP client, got %s", got.Status)
+	}
+}
+
+// TestMCPAutoInvoke_MCPFailureDoesNotBlockTask verifies that if an MCP tool
+// returns an error, the task still completes (MCP is best-effort).
+func TestMCPAutoInvoke_MCPFailureDoesNotBlockTask(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	mgr := NewManagerWithStore(stubExecutor{}, vm, db)
+
+	// Create a failing MCP server
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.URL.Path == "/tools/list" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"tools": []map[string]interface{}{
+					{"name": "query-docs", "description": "docs"},
+				},
+			})
+			return
+		}
+		// /tools/call always fails
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"success":false,"error":"server on fire"}`))
+	}))
+	t.Cleanup(failServer.Close)
+
+	client := mcp.NewMCPClient()
+	client.AddServer("context7", failServer.URL, "")
+	client.Connect(context.Background(), "context7")
+	mgr.SetMCPClient(client)
+
+	task, err := mgr.CreateTask(context.Background(), TaskRequest{
+		Goal:    "implement a Go handler",
+		Execute: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	waitForTaskDone(t, mgr, task.ID, 5*time.Second)
+
+	got, _ := mgr.GetTask(task.ID)
+	if got.Status != TaskStatusCompleted {
+		t.Errorf("task should complete despite MCP failure, got %s (error: %s)", got.Status, got.Error)
+	}
+}
+
+// TestMCPAutoInvoke_ContextInjectedIntoSteps verifies that MCP tool results
+// appear in the final output (they get injected as previousOutputs[0]).
+func TestMCPAutoInvoke_ContextInjectedIntoSteps(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	mgr := NewManagerWithStore(stubExecutor{}, vm, db)
+
+	client, _, _ := setupMockMCPClient(t)
+	mgr.SetMCPClient(client)
+
+	task, err := mgr.CreateTask(context.Background(), TaskRequest{
+		Goal:    "implement a Go handler",
+		Execute: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	waitForTaskDone(t, mgr, task.ID, 5*time.Second)
+
+	got, _ := mgr.GetTask(task.ID)
+	// The stub executor echoes the prompt content. Since MCP context is injected
+	// as the first previousOutput, the second step's messages will contain it.
+	// The final output joins all step outputs.
+	if !strings.Contains(got.FinalOutput, "mock-result-from-query-docs") {
+		t.Errorf("expected MCP mock result in final output, got:\n%s", got.FinalOutput)
+	}
+}
+
+// TestMCPAutoInvoke_DeduplicatesToolCalls verifies that when multiple skills
+// bind the same MCP tool, it's only called once.
+func TestMCPAutoInvoke_DeduplicatesToolCalls(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	mgr := NewManagerWithStore(stubExecutor{}, vm, db)
+
+	client, ctx7Calls, _ := setupMockMCPClient(t)
+	mgr.SetMCPClient(client)
+
+	// "implement Go tests" matches go-patterns + code-implement + go-testing
+	// Both go-patterns and go-testing bind context7.query-docs
+	task, err := mgr.CreateTask(context.Background(), TaskRequest{
+		Goal:    "implement Go tests for the router",
+		Execute: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	waitForTaskDone(t, mgr, task.ID, 5*time.Second)
+
+	// context7.query-docs should be called exactly once despite multiple skills binding it
+	if ctx7Calls.Load() != 1 {
+		t.Errorf("context7.query-docs should be called exactly 1 time (deduplicated), got %d", ctx7Calls.Load())
+	}
+}
+
+func waitForTaskDone(t *testing.T, mgr *Manager, taskID string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		got, _ := mgr.GetTask(taskID)
+		if got != nil && (got.Status == TaskStatusCompleted || got.Status == TaskStatusFailed) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("task %s did not finish within %v", taskID, timeout)
 }
 
 func TestResolveAgentTemplateSupportsExpandedAgentCatalog(t *testing.T) {

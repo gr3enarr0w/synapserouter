@@ -127,6 +127,27 @@ func profileSwitchHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func skillsListHandler(w http.ResponseWriter, r *http.Request) {
+	skills := orchestrator.Skills()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"skills": skills,
+		"count":  len(skills),
+	})
+}
+
+func skillsMatchHandler(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		http.Error(w, "q parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	result := orchestrator.MatchSkillsForGoal(query)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
 func doctorHandler(w http.ResponseWriter, r *http.Request) {
 	ac := &app.AppContext{
 		DB:           db,

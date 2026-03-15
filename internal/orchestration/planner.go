@@ -18,6 +18,17 @@ func DefaultRoles() []Role {
 }
 
 func BuildPlan(goal string, explicitRoles []string, maxSteps int) []TaskStep {
+	// If no explicit roles, try skill-based dispatch first
+	if len(explicitRoles) == 0 {
+		if steps := Dispatch(goal, DefaultSkills()); len(steps) > 0 {
+			if maxSteps > 0 && len(steps) > maxSteps {
+				steps = steps[:maxSteps]
+			}
+			return steps
+		}
+	}
+
+	// Fallback to role-based planning
 	roles := explicitRoles
 	if len(roles) == 0 {
 		roles = inferRoles(goal)

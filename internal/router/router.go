@@ -122,6 +122,13 @@ func (r *Router) ChatCompletionForProvider(
 ) (providers.ChatResponse, error) {
 	requestID := fmt.Sprintf("req-%d", time.Now().UnixNano())
 
+	// Intent refinement: rewrite vague prompts using conversation context
+	if !req.SkipMemory {
+		if refined, _ := r.RefineIntent(ctx, &req, sessionID); refined {
+			log.Printf("[Router] Refined vague prompt for session %s", sessionID)
+		}
+	}
+
 	// Retrieve memory BEFORE storing new messages (to avoid retrieving what we just stored)
 	memoryQuery := lastUserMessage(req.Messages)
 	var retrievedMessages []memory.Message
@@ -321,6 +328,13 @@ func (r *Router) ChatCompletionWithDebug(
 	includeMemoryDebug bool,
 ) (providers.ChatResponse, error) {
 	requestID := fmt.Sprintf("req-%d", time.Now().UnixNano())
+
+	// Intent refinement: rewrite vague prompts using conversation context
+	if !req.SkipMemory {
+		if refined, _ := r.RefineIntent(ctx, &req, sessionID); refined {
+			log.Printf("[Router] Refined vague prompt for session %s", sessionID)
+		}
+	}
 
 	// 1. Retrieve memory BEFORE storing new messages
 	memoryQuery := lastUserMessage(req.Messages)
@@ -586,6 +600,17 @@ func (r *Router) tryProvider(
 ) (providers.ChatResponse, error) {
 	log.Printf("[Router] Trying %s...", provider.Name())
 
+	// Pre-check: skip if request would exceed provider's context limit
+	maxCtx := provider.MaxContextTokens()
+	if maxCtx > 0 {
+		estimated := estimateTokens(req.Messages)
+		if estimated > maxCtx {
+			return providers.ChatResponse{}, fmt.Errorf(
+				"request too large for %s: ~%d tokens exceeds %d token context limit",
+				provider.Name(), estimated, maxCtx)
+		}
+	}
+
 	resp, err := provider.ChatCompletion(ctx, req, sessionID)
 	if err != nil {
 		// Record failure
@@ -654,6 +679,10 @@ func rateLimitCooldown(providerName string, err error) time.Duration {
 		return 30 * time.Second
 	case "claude-code":
 		return 60 * time.Second
+	case "nanogpt-sub":
+		return 30 * time.Second
+	case "nanogpt-paid":
+		return 2 * time.Minute
 	default:
 		return 2 * time.Minute
 	}
