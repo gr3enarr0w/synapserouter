@@ -162,13 +162,14 @@ func scaffoldPython(dir string, ex Exercise, code string) error {
 
 	// HumanEval/MBPP check(candidate) pattern: wrap with import + invocation
 	if strings.Contains(testContent, "check(candidate)") {
-		// Extract function name from generated code
 		funcName := extractPythonFuncName(code)
 		if funcName == "" {
 			funcName = toSnake(ex.Slug)
 		}
 
-		// Build wrapper that imports the function and calls check()
+		// Fix inline def: "def check(candidate):assert ..." → proper multiline
+		fixedTest := fixInlineCheckDef(testContent)
+
 		wrapper := fmt.Sprintf(`import sys
 sys.path.insert(0, '.')
 from %s import %s
@@ -177,11 +178,35 @@ from %s import %s
 
 check(%s)
 print("PASS")
-`, toSnake(ex.Slug), funcName, testContent, funcName)
+`, toSnake(ex.Slug), funcName, fixedTest, funcName)
 		testContent = wrapper
 	}
 
 	return os.WriteFile(filepath.Join(dir, testFile), []byte(testContent), 0644)
+}
+
+// fixInlineCheckDef handles MBPP tests where the check function is on one line:
+// "def check(candidate):assert candidate(...)==True" → proper multiline with indentation.
+func fixInlineCheckDef(testContent string) string {
+	lines := strings.Split(testContent, "\n")
+	var fixed []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Fix "def check(candidate):assert ..." → split into def + indented assert
+		if strings.HasPrefix(trimmed, "def check(candidate):") && strings.Contains(trimmed, "assert") {
+			body := strings.TrimPrefix(trimmed, "def check(candidate):")
+			fixed = append(fixed, "def check(candidate):")
+			fixed = append(fixed, "    "+strings.TrimSpace(body))
+			continue
+		}
+		// Fix tab-indented assertions to use 4 spaces
+		if strings.HasPrefix(line, "\t") {
+			fixed = append(fixed, "    "+strings.TrimLeft(line, "\t"))
+			continue
+		}
+		fixed = append(fixed, line)
+	}
+	return strings.Join(fixed, "\n")
 }
 
 func extractPythonFuncName(code string) string {
@@ -220,8 +245,11 @@ func scaffoldJavaScript(dir string, ex Exercise, code string) error {
 		}
 	}
 
-	// Implementation file — ensure it uses matching export style
-	implFile := toCamel(ex.Slug) + ".js"
+	// Detect import path from test file to match implementation filename
+	// Tests import from './slug-name' (kebab-case), not './slugName' (camelCase)
+	implName := detectJSImportPath(ex.TestFile, ex.Slug)
+	implFile := implName + ".js"
+
 	implCode := code
 	// If tests use ESM imports but code uses module.exports, convert
 	if usesESM && strings.Contains(code, "module.exports") && !strings.Contains(code, "export ") {
@@ -235,8 +263,39 @@ func scaffoldJavaScript(dir string, ex Exercise, code string) error {
 	testContent := ex.TestFile
 	testContent = strings.ReplaceAll(testContent, "xtest(", "test(")
 	testContent = strings.ReplaceAll(testContent, "xit(", "it(")
-	testFile := toCamel(ex.Slug) + ".spec.js"
+	// Name spec file to match the import path used in the test
+	testFile := implName + ".spec.js"
 	return os.WriteFile(filepath.Join(dir, testFile), []byte(testContent), 0644)
+}
+
+// detectJSImportPath extracts the module path that the test file imports from.
+// e.g. "import { convert } from './all-your-base'" → "all-your-base"
+func detectJSImportPath(testFile, slug string) string {
+	for _, line := range strings.Split(testFile, "\n") {
+		line = strings.TrimSpace(line)
+		// Match: import ... from './module-name'
+		if strings.Contains(line, "from './") {
+			parts := strings.Split(line, "from './")
+			if len(parts) >= 2 {
+				name := strings.TrimRight(parts[1], "';")
+				if name != "" {
+					return name
+				}
+			}
+		}
+		// Match: import ... from "./module-name"
+		if strings.Contains(line, `from "./`) {
+			parts := strings.Split(line, `from "./`)
+			if len(parts) >= 2 {
+				name := strings.TrimRight(parts[1], `";`)
+				if name != "" {
+					return name
+				}
+			}
+		}
+	}
+	// Fallback to slug (kebab-case, which exercism uses)
+	return slug
 }
 
 func scaffoldJava(dir string, ex Exercise, code string) error {
