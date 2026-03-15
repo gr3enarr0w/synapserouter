@@ -10,7 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/agent"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/app"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcpserver"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/worktree"
 )
 
 // Build-time variables set via ldflags
@@ -27,14 +31,17 @@ func cmdVersion() {
 }
 
 func printUsage() {
-	fmt.Println(`synroute — LLM proxy router
+	fmt.Println(`synroute — LLM proxy router and coding agent
 
 Usage:
   synroute [command]
 
 Commands:
   serve       Start the HTTP server (default if no command given)
+  chat        Interactive agent REPL or one-shot message
+  mcp-serve   Start standalone MCP tool server
   test        Smoke test providers
+  eval        Multi-language eval framework
   profile     Show or switch active profile
   doctor      Run comprehensive diagnostics
   models      List available models
@@ -316,4 +323,128 @@ func stringVal(m map[string]interface{}, key string) string {
 		return fmt.Sprintf("%v", v)
 	}
 	return ""
+}
+
+func cmdChat(args []string) {
+	fs := flag.NewFlagSet("chat", flag.ExitOnError)
+	model := fs.String("model", "auto", "Model to use")
+	message := fs.String("message", "", "One-shot message (non-interactive)")
+	system := fs.String("system", "", "Custom system prompt")
+	useWorktree := fs.Bool("worktree", false, "Run in isolated git worktree")
+	fs.Parse(args)
+
+	ac, err := app.InitLight(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing: %v\n", err)
+		os.Exit(1)
+	}
+	defer ac.Close()
+
+	if len(ac.Providers) == 0 {
+		fmt.Fprintln(os.Stderr, "No providers configured for this profile")
+		os.Exit(1)
+	}
+
+	ac.InitFull()
+
+	registry := tools.DefaultRegistry()
+	cwd, _ := os.Getwd()
+
+	config := agent.DefaultConfig()
+	config.Model = *model
+	config.WorkDir = cwd
+	if *system != "" {
+		config.SystemPrompt = *system
+	}
+
+	ctx := context.Background()
+
+	// Set up worktree isolation if requested
+	var wtMgr *worktree.Manager
+	var wt *worktree.Worktree
+	if *useWorktree {
+		wtMgr, err = worktree.NewManager(worktree.DefaultConfig())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating worktree manager: %v\n", err)
+			os.Exit(1)
+		}
+
+		wt, err = wtMgr.Create(cwd, "chat")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating worktree: %v\n", err)
+			os.Exit(1)
+		}
+
+		config.WorkDir = wt.Path
+		fmt.Fprintf(os.Stderr, "Working in isolated worktree: %s\n", wt.Path)
+
+		// Start cleanup goroutine
+		stopCleaner := worktree.StartCleaner(ctx, wtMgr, worktree.DefaultConfig().CleanupInterval)
+		defer stopCleaner()
+	}
+
+	if *message != "" {
+		response, err := agent.RunOneShot(ctx, ac.ProxyRouter, registry, config, *message)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(response)
+		if wt != nil {
+			fmt.Fprintf(os.Stderr, "Worktree still active at: %s\n", wt.Path)
+		}
+		return
+	}
+
+	renderer := agent.NewRenderer(os.Stdout)
+	ag := agent.New(ac.ProxyRouter, registry, renderer, config)
+	repl := agent.NewREPL(ag, renderer)
+	if err := repl.Run(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// On exit, offer to clean up worktree
+	if wt != nil && wtMgr != nil {
+		fmt.Fprintf(os.Stderr, "\nWorktree at: %s\n", wt.Path)
+		fmt.Fprintf(os.Stderr, "Branch: %s\n", wt.Branch)
+		fmt.Fprintf(os.Stderr, "To keep changes, merge the branch. To discard, run: synroute worktree delete %s\n", wt.ID)
+	}
+}
+
+func cmdMCPServe(args []string) {
+	fs := flag.NewFlagSet("mcp-serve", flag.ExitOnError)
+	addr := fs.String("addr", "127.0.0.1:8091", "Listen address (default localhost only)")
+	token := fs.String("token", "", "Bearer token for auth (auto-generated if empty)")
+	noAuth := fs.Bool("no-auth", false, "Disable authentication (not recommended)")
+	fs.Parse(args)
+
+	registry := tools.DefaultRegistry()
+	cwd, _ := os.Getwd()
+
+	srv := mcpserver.NewServer(registry, cwd)
+
+	if !*noAuth {
+		authToken := *token
+		if authToken == "" {
+			authToken = os.Getenv("SYNROUTE_MCP_TOKEN")
+		}
+		if authToken == "" {
+			authToken = mcpserver.GenerateToken()
+		}
+		srv.SetToken(authToken)
+		fmt.Fprintf(os.Stderr, "Auth token: %s\n", authToken)
+	}
+
+	fmt.Fprintf(os.Stderr, "MCP server listening on %s\n", *addr)
+	fmt.Fprintf(os.Stderr, "Tools: %d registered\n", len(registry.List()))
+	fmt.Fprintf(os.Stderr, "Endpoints:\n")
+	fmt.Fprintf(os.Stderr, "  POST %s/mcp/initialize\n", *addr)
+	fmt.Fprintf(os.Stderr, "  POST %s/mcp/tools/list\n", *addr)
+	fmt.Fprintf(os.Stderr, "  POST %s/mcp/tools/call\n", *addr)
+
+	if err := srv.Serve(context.Background(), *addr); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 }

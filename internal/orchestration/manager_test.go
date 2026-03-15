@@ -18,6 +18,7 @@ import (
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
 )
 
 type stubExecutor struct{}
@@ -2028,4 +2029,247 @@ func newOrchestrationTestDB(t *testing.T) *sql.DB {
 	}
 
 	return db
+}
+
+// --- Tool Registry Integration Tests ---
+
+func TestToolRegistryDelegation(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	manager := NewManager(stubExecutor{}, vm)
+
+	dir := t.TempDir()
+	registry := tools.DefaultRegistry()
+	manager.SetToolRegistry(registry)
+	manager.SetWorkDir(dir)
+
+	t.Run("bash tool delegation", func(t *testing.T) {
+		name, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+			"function": map[string]interface{}{
+				"name":      "bash",
+				"arguments": `{"command": "echo tool-registry-works"}`,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "bash" {
+			t.Errorf("expected name 'bash', got %q", name)
+		}
+		if !strings.Contains(result, "tool-registry-works") {
+			t.Errorf("expected 'tool-registry-works' in result, got %q", result)
+		}
+	})
+
+	t.Run("file_write delegation", func(t *testing.T) {
+		name, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+			"function": map[string]interface{}{
+				"name":      "file_write",
+				"arguments": `{"path": "delegated.txt", "content": "hello from orchestration"}`,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "file_write" {
+			t.Errorf("expected name 'file_write', got %q", name)
+		}
+		if result == "" {
+			t.Error("expected non-empty result")
+		}
+	})
+
+	t.Run("file_read delegation", func(t *testing.T) {
+		name, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+			"function": map[string]interface{}{
+				"name":      "file_read",
+				"arguments": `{"path": "delegated.txt"}`,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "file_read" {
+			t.Errorf("expected name 'file_read', got %q", name)
+		}
+		if !strings.Contains(result, "hello from orchestration") {
+			t.Errorf("expected file content in result, got %q", result)
+		}
+	})
+
+	t.Run("glob delegation", func(t *testing.T) {
+		name, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+			"function": map[string]interface{}{
+				"name":      "glob",
+				"arguments": `{"pattern": "*.txt"}`,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "glob" {
+			t.Errorf("expected name 'glob', got %q", name)
+		}
+		if !strings.Contains(result, "delegated.txt") {
+			t.Errorf("expected 'delegated.txt' in glob results, got %q", result)
+		}
+	})
+
+	t.Run("unknown tool still fails", func(t *testing.T) {
+		_, _, err := manager.executeBuiltInToolCall(map[string]interface{}{
+			"function": map[string]interface{}{
+				"name":      "totally_unknown_tool",
+				"arguments": `{}`,
+			},
+		})
+		if err == nil {
+			t.Error("expected error for unknown tool")
+		}
+	})
+
+	t.Run("builtin tools still take precedence", func(t *testing.T) {
+		// create_task is a built-in — should NOT delegate to registry
+		name, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+			"function": map[string]interface{}{
+				"name":      "create_task",
+				"arguments": `{"goal": "test precedence", "execute": false}`,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "create_task" {
+			t.Errorf("expected name 'create_task', got %q", name)
+		}
+		if !strings.Contains(result, "test precedence") {
+			t.Errorf("expected goal in result, got %q", result)
+		}
+	})
+}
+
+func TestToolRegistryNilDoesNotPanic(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	manager := NewManager(stubExecutor{}, vm)
+	// Don't set tool registry — should fall through to error
+
+	_, _, err := manager.executeBuiltInToolCall(map[string]interface{}{
+		"function": map[string]interface{}{
+			"name":      "bash",
+			"arguments": `{"command": "echo test"}`,
+		},
+	})
+	if err == nil {
+		t.Error("expected error when no registry set and tool not built-in")
+	}
+}
+
+func TestToolRegistryAccessors(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	manager := NewManager(stubExecutor{}, vm)
+
+	if manager.ToolRegistry() != nil {
+		t.Error("expected nil registry initially")
+	}
+
+	registry := tools.DefaultRegistry()
+	manager.SetToolRegistry(registry)
+
+	if manager.ToolRegistry() == nil {
+		t.Error("expected non-nil registry after set")
+	}
+	if manager.ToolRegistry() != registry {
+		t.Error("expected same registry instance")
+	}
+}
+
+func TestToolDefsIncludedInRunStep(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+
+	// Custom executor that captures the request to verify tool defs
+	var capturedTools []map[string]interface{}
+	executor := &toolCapturingExecutor{
+		onChat: func(req providers.ChatRequest) {
+			capturedTools = req.Tools
+		},
+	}
+
+	manager := NewManagerWithStore(executor, vm, db)
+	registry := tools.DefaultRegistry()
+	manager.SetToolRegistry(registry)
+	manager.SetWorkDir(t.TempDir())
+
+	// Create a task to trigger runStep
+	task, err := manager.CreateTask(context.Background(), TaskRequest{
+		Goal:    "Test tool defs in runStep",
+		Execute: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for task to complete
+	for i := 0; i < 50; i++ {
+		time.Sleep(50 * time.Millisecond)
+		task, err = manager.GetTask(task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed {
+			break
+		}
+	}
+
+	// Verify tool definitions were passed to LLM
+	if len(capturedTools) == 0 {
+		t.Fatal("no tools were passed to LLM request")
+	}
+
+	// Should have built-in orchestration tools + registry tools
+	builtInCount := len(builtInOrchestrationTools())
+	registryCount := len(registry.OpenAIToolDefinitions())
+	expectedCount := builtInCount + registryCount
+
+	if len(capturedTools) != expectedCount {
+		t.Errorf("expected %d tools (builtin=%d + registry=%d), got %d",
+			expectedCount, builtInCount, registryCount, len(capturedTools))
+	}
+
+	// Verify registry tools are present by checking for known tool names
+	toolNames := make(map[string]bool)
+	for _, td := range capturedTools {
+		fn, _ := td["function"].(map[string]interface{})
+		if fn != nil {
+			name, _ := fn["name"].(string)
+			toolNames[name] = true
+		}
+	}
+	for _, expected := range []string{"bash", "file_read", "file_write", "file_edit", "grep", "glob", "git"} {
+		if !toolNames[expected] {
+			t.Errorf("missing expected tool %q in LLM request", expected)
+		}
+	}
+}
+
+type toolCapturingExecutor struct {
+	onChat func(req providers.ChatRequest)
+}
+
+func (e *toolCapturingExecutor) ChatCompletion(ctx context.Context, req providers.ChatRequest, sessionID string) (providers.ChatResponse, error) {
+	if e.onChat != nil {
+		e.onChat(req)
+	}
+	return providers.ChatResponse{
+		ID:    "capture",
+		Model: "stub",
+		Choices: []providers.Choice{{
+			Message: providers.Message{
+				Role:    "assistant",
+				Content: "I used the tools to complete the task.",
+			},
+			FinishReason: "stop",
+		}},
+	}, nil
 }

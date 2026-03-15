@@ -22,23 +22,26 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/compat"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcpserver"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/router"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/subscriptions"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/usage"
 )
 
 var (
-	proxyRouter  *router.Router
-	orchestrator *orchestration.Manager
-	usageTracker *usage.Tracker
-	vectorMemory *memory.VectorMemory
-	db           *sql.DB
-	providerList []providers.Provider
-	startupCheck map[string]interface{}
-	ampConfig    compat.AmpCodeConfig
+	proxyRouter    *router.Router
+	orchestrator   *orchestration.Manager
+	usageTracker   *usage.Tracker
+	vectorMemory   *memory.VectorMemory
+	sessionTracker *memory.SessionTracker
+	db             *sql.DB
+	providerList   []providers.Provider
+	startupCheck   map[string]interface{}
+	ampConfig      compat.AmpCodeConfig
 )
 
 //go:embed migrations/*.sql
@@ -57,6 +60,12 @@ func main() {
 			cmdDoctor(os.Args[2:])
 		case "models":
 			cmdModels(os.Args[2:])
+		case "eval":
+			cmdEval(os.Args[2:])
+		case "chat":
+			cmdChat(os.Args[2:])
+		case "mcp-serve":
+			cmdMCPServe(os.Args[2:])
 		case "version":
 			cmdVersion()
 		case "help", "--help", "-h":
@@ -122,13 +131,29 @@ func startServer() {
 	// Initialize vector memory
 	vectorMemory = memory.NewVectorMemory(db)
 
+	// Initialize session tracker for cross-session memory continuity
+	sessionTracker = memory.NewSessionTracker(db)
+	go func() {
+		for range time.Tick(5 * time.Minute) {
+			n, _ := sessionTracker.EndInactiveSessions(30 * time.Minute)
+			if n > 0 {
+				log.Printf("[Sessions] Auto-ended %d inactive sessions", n)
+			}
+		}
+	}()
+
 	// Initialize providers
 	providerList = initializeProviders()
 	startupCheck = runStartupCheck(providerList)
 
 	// Initialize router
 	proxyRouter = router.NewRouter(providerList, usageTracker, vectorMemory, db)
+	proxyRouter.SetSessionTracker(sessionTracker)
 	orchestrator = orchestration.NewManagerWithStore(proxyRouter, vectorMemory, db)
+	toolRegistry := tools.DefaultRegistry()
+	orchestrator.SetToolRegistry(toolRegistry)
+	cwd, _ := os.Getwd()
+	orchestrator.SetWorkDir(cwd)
 	ampConfig, _ = compat.LoadAmpCodeConfig(db)
 
 	// Create HTTP router
@@ -169,6 +194,17 @@ func startServer() {
 	// Skill dispatch endpoints
 	r.Handle("/v1/skills", withAdminAuth(http.HandlerFunc(skillsListHandler))).Methods("GET")
 	r.Handle("/v1/skills/match", withAdminAuth(http.HandlerFunc(skillsMatchHandler))).Methods("GET")
+	r.Handle("/v1/tools", withAdminAuth(http.HandlerFunc(toolsListHandler(toolRegistry)))).Methods("GET")
+
+	// MCP server mode (expose tools to other agents)
+	if strings.EqualFold(os.Getenv("SYNROUTE_MCP_SERVER"), "true") {
+		mcpSrv := mcpserver.NewServer(toolRegistry, cwd)
+		mcpHandler := mcpSrv.Handler()
+		r.HandleFunc("/mcp/initialize", mcpHandler.HandleInitialize).Methods("POST")
+		r.HandleFunc("/mcp/tools/list", mcpHandler.HandleToolsList).Methods("GET", "POST")
+		r.HandleFunc("/mcp/tools/call", mcpHandler.HandleToolsCall).Methods("POST")
+		log.Println("MCP server enabled on /mcp/* routes")
+	}
 
 	r.Handle("/v1/orchestration/roles", withAdminAuth(http.HandlerFunc(orchestrationRolesHandler))).Methods("GET")
 	r.Handle("/v1/orchestration/workflows", withAdminAuth(http.HandlerFunc(orchestrationWorkflowsHandler))).Methods("GET", "POST")
@@ -213,12 +249,24 @@ func startServer() {
 	r.Handle("/v1/orchestration/swarms/{swarm_id}/rebalance/preview", withAdminAuth(http.HandlerFunc(orchestrationSwarmRebalancePreviewHandler))).Methods("POST")
 	r.Handle("/v1/orchestration/swarms/{swarm_id}/stealable", withAdminAuth(http.HandlerFunc(orchestrationSwarmStealableTasksHandler))).Methods("GET")
 
+	// Session management
+	r.HandleFunc("/v1/session/end", sessionEndHandler).Methods("POST")
+
 	// Diagnostic and management endpoints
 	r.Handle("/v1/test/providers", withAdminAuth(http.HandlerFunc(smokeTestHandler))).Methods("POST")
 	r.Handle("/v1/circuit-breakers/reset", withAdminAuth(http.HandlerFunc(circuitBreakerResetHandler))).Methods("POST")
 	r.Handle("/v1/profile", withAdminAuth(http.HandlerFunc(profileHandler))).Methods("GET")
 	r.Handle("/v1/profile/switch", withAdminAuth(http.HandlerFunc(profileSwitchHandler))).Methods("POST")
 	r.Handle("/v1/doctor", withAdminAuth(http.HandlerFunc(doctorHandler))).Methods("GET")
+
+	// Eval framework endpoints
+	r.Handle("/v1/eval/exercises", withAdminAuth(http.HandlerFunc(evalExercisesHandler))).Methods("GET")
+	r.Handle("/v1/eval/runs", withAdminAuth(http.HandlerFunc(evalRunsListHandler))).Methods("GET")
+	r.Handle("/v1/eval/runs", withAdminAuth(http.HandlerFunc(evalRunStartHandler))).Methods("POST")
+	r.Handle("/v1/eval/runs/{run_id}", withAdminAuth(http.HandlerFunc(evalRunGetHandler))).Methods("GET")
+	r.Handle("/v1/eval/runs/{run_id}/results", withAdminAuth(http.HandlerFunc(evalRunResultsHandler))).Methods("GET")
+	r.Handle("/v1/eval/compare", withAdminAuth(http.HandlerFunc(evalCompareHandler))).Methods("POST")
+	r.Handle("/v1/eval/import", withAdminAuth(http.HandlerFunc(evalImportHandler))).Methods("POST")
 
 	// Amp compatibility management endpoints
 	r.Handle("/v0/management/anthropic-auth-url", withAdminAuth(http.HandlerFunc(subscriptionAnthropicAuthURLHandler))).Methods("GET")
@@ -243,9 +291,14 @@ func startServer() {
 	addr := fmt.Sprintf(":%s", port)
 	log.Printf("🚀 Synapse Router starting on %s", addr)
 	log.Printf("📊 Database: %s", dbPath)
-	log.Printf("🔄 Provider chain: NanoGPT-Sub → Gemini → Codex → Claude Code → Ollama Cloud → NanoGPT-Paid")
+	chainNames := make([]string, len(providerList))
+	for i, p := range providerList {
+		chainNames[i] = p.Name()
+	}
+	log.Printf("🔄 Provider chain: %s", strings.Join(chainNames, " → "))
 	log.Printf("💾 Unified context across all providers via vector memory")
 	log.Printf("⚡ Usage tracking enabled (80%% auto-switch threshold)")
+	log.Printf("🔗 Cross-session memory continuity enabled (30min window)")
 	log.Printf("🧠 Orchestration roles loaded: %d", len(orchestration.DefaultRoles()))
 	log.Printf("🎯 Skill dispatch registry: %d skills", len(orchestration.DefaultSkills()))
 	if strings.TrimSpace(os.Getenv("SYNROUTE_ADMIN_TOKEN")) == "" && strings.TrimSpace(os.Getenv("ADMIN_API_KEY")) == "" {
@@ -265,17 +318,18 @@ func initializeProviders() []providers.Provider {
 
 	var providerList []providers.Provider
 
-	// NanoGPT subscription (first — free, zero-cost models)
 	nanogptAPIKey := os.Getenv("NANOGPT_API_KEY")
-	if nanogptAPIKey != "" {
-		providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "subscription"))
-		log.Println("✓ nanogpt-sub provider initialized")
-	}
 
 	switch profile {
 	case "work":
 		providerList = append(providerList, initializeWorkProviders()...)
 	default:
+		// NanoGPT subscription (first — free, zero-cost models, personal only)
+		if nanogptAPIKey != "" {
+			providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "subscription"))
+			log.Println("✓ nanogpt-sub provider initialized")
+		}
+
 		providerList = append(providerList, initializePersonalProviders()...)
 	}
 
@@ -289,8 +343,8 @@ func initializeProviders() []providers.Provider {
 		log.Println("✓ Ollama Cloud provider initialized")
 	}
 
-	// NanoGPT paid (last — costs money, only used as fallback)
-	if nanogptAPIKey != "" {
+	// NanoGPT paid (last — costs money, only used as fallback, personal only)
+	if nanogptAPIKey != "" && profile != "work" {
 		providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "paid"))
 		log.Println("✓ nanogpt-paid provider initialized")
 	}
@@ -447,6 +501,13 @@ func resolvedExecutablePath() (string, error) {
 func ensureRuntimeSchema(db *sql.DB) error {
 	statements := []string{
 		`ALTER TABLE orchestration_tasks ADD COLUMN assigned_to TEXT`,
+		// Eval metric columns (moved from 005_eval_metrics.sql for idempotency)
+		`ALTER TABLE eval_exercises ADD COLUMN eval_mode TEXT DEFAULT 'docker-test'`,
+		`ALTER TABLE eval_exercises ADD COLUMN reference_code TEXT`,
+		`ALTER TABLE eval_exercises ADD COLUMN criteria TEXT`,
+		`ALTER TABLE eval_results ADD COLUMN metric_score REAL`,
+		`ALTER TABLE eval_results ADD COLUMN metric_name TEXT`,
+		`ALTER TABLE eval_results ADD COLUMN judge_provider TEXT`,
 	}
 
 	for _, statement := range statements {
@@ -541,6 +602,33 @@ func orchestratorRoleCount() int {
 		return 0
 	}
 	return len(orchestrator.Roles())
+}
+
+func sessionEndHandler(w http.ResponseWriter, r *http.Request) {
+	sid := strings.TrimSpace(r.Header.Get("X-Session-ID"))
+	if sid == "" {
+		var body struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			sid = strings.TrimSpace(body.SessionID)
+		}
+	}
+	if sid == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "session_id required (header X-Session-ID or JSON body)"})
+		return
+	}
+	if err := sessionTracker.End(sid); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	log.Printf("[Sessions] Session %s explicitly ended", sid)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ended", "session_id": sid})
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {

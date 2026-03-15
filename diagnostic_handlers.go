@@ -10,6 +10,7 @@ import (
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/app"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/router"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
 )
 
 func smokeTestHandler(w http.ResponseWriter, r *http.Request) {
@@ -22,7 +23,7 @@ func smokeTestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	timeout := 30 * time.Second
+	timeout := 45 * time.Second
 	if req.Timeout != "" {
 		if parsed, err := time.ParseDuration(req.Timeout); err == nil {
 			timeout = parsed
@@ -134,6 +135,17 @@ func skillsListHandler(w http.ResponseWriter, r *http.Request) {
 		"skills": skills,
 		"count":  len(skills),
 	})
+}
+
+func toolsListHandler(registry *tools.Registry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		info := registry.ToolInfo()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"tools": info,
+			"count": len(info),
+		})
+	}
 }
 
 func skillsMatchHandler(w http.ResponseWriter, r *http.Request) {

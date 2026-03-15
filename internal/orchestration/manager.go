@@ -14,6 +14,7 @@ import (
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
 )
 
 type ChatExecutor interface {
@@ -21,13 +22,15 @@ type ChatExecutor interface {
 }
 
 type Manager struct {
-	executor  ChatExecutor
-	memory    *memory.VectorMemory
-	mcpClient *mcp.MCPClient
-	roles     []Role
-	skills    []Skill
-	db        *sql.DB
-	dag       *DAGScheduler
+	executor     ChatExecutor
+	memory       *memory.VectorMemory
+	mcpClient    *mcp.MCPClient
+	toolRegistry *tools.Registry
+	workDir      string
+	roles        []Role
+	skills       []Skill
+	db           *sql.DB
+	dag          *DAGScheduler
 
 	mu                      sync.RWMutex
 	counter                 int
@@ -67,6 +70,27 @@ func (m *Manager) SetMCPClient(client *mcp.MCPClient) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.mcpClient = client
+}
+
+// SetToolRegistry attaches a tool registry for agent tool execution during orchestration.
+func (m *Manager) SetToolRegistry(registry *tools.Registry) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.toolRegistry = registry
+}
+
+// SetWorkDir sets the working directory for tool execution.
+func (m *Manager) SetWorkDir(dir string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.workDir = dir
+}
+
+// ToolRegistry returns the attached tool registry, or nil.
+func (m *Manager) ToolRegistry() *tools.Registry {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.toolRegistry
 }
 
 // Skills returns a copy of the registered skill list.
@@ -1701,11 +1725,15 @@ func (m *Manager) runStep(task *Task, index int, previousOutputs []string) error
 	if m.memory != nil {
 		relevant, _ = m.memory.RetrieveRelevant(task.Goal, task.SessionID, 2000)
 	}
+	toolDefs := builtInOrchestrationTools()
+	if m.toolRegistry != nil {
+		toolDefs = append(toolDefs, m.toolRegistry.OpenAIToolDefinitions()...)
+	}
 	request := providers.ChatRequest{
 		Model:     "auto",
 		MaxTokens: 1500,
 		Messages:  buildMessages(task, task.Steps[index], relevant, previousOutputs),
-		Tools:     builtInOrchestrationTools(),
+		Tools:     toolDefs,
 	}
 
 	resp, err := m.completeToolCallingStep(context.Background(), task, index, request)
@@ -2892,6 +2920,23 @@ func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (strin
 		result, err := json.Marshal(results)
 		return name, string(result), err
 	default:
+		// Delegate to tool registry if available
+		if m.toolRegistry != nil {
+			if _, ok := m.toolRegistry.Get(name); ok {
+				workDir := m.workDir
+				if workDir == "" {
+					workDir = "."
+				}
+				result, err := m.toolRegistry.Execute(context.Background(), name, args, workDir)
+				if err != nil {
+					return name, "", err
+				}
+				if result.Error != "" {
+					return name, result.Error, nil
+				}
+				return name, result.Output, nil
+			}
+		}
 		return name, "", fmt.Errorf("unsupported tool: %s", name)
 	}
 }

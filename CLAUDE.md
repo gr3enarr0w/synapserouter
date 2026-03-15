@@ -1,15 +1,23 @@
 # SynapseRouter (synroute)
 
-Go-based LLM proxy router that distributes requests across subscription providers (Claude Code, Codex, Gemini) and direct providers (NanoGPT, Ollama, Vertex AI). Two profiles: `personal` (OAuth subscriptions) and `work` (Vertex AI). Auto-discovers 159+ models across all active providers.
+Go-based LLM proxy router and coding agent that distributes requests across subscription providers (Claude Code, Codex, Gemini) and direct providers (NanoGPT, Ollama, Vertex AI). Includes interactive agent REPL with tool execution (bash, file I/O, grep, glob, git), worktree isolation, and MCP server mode. Two profiles: `personal` (OAuth subscriptions) and `work` (Vertex AI). Auto-discovers 159+ models across all active providers.
 
 ## Key Files
 
 - `main.go` — Server setup, CLI dispatch, provider initialization, HTTP handlers
-- `commands.go` — CLI command implementations (test, profile, doctor, models, version)
+- `commands.go` — CLI command implementations (chat, test, profile, doctor, models, version, mcp-serve)
+- `eval_commands.go` — CLI: `synroute eval {import,import-all,exercises,run,results,compare}`
+- `eval_handlers.go` — API: `/v1/eval/*` endpoints
+- `internal/eval/` — Eval framework (types, store, importer, docker, runner, scorer) — 11 sources, 4 eval modes
+- `benchmarks/` — Eval benchmark data (ds1000, dare-bench, birdsql, writingbench, pptarena, exercism, multiple, evalplus)
 - `diagnostic_handlers.go` — API endpoints for testing, diagnostics, circuit breaker reset, skill dispatch
 - `internal/orchestration/skills.go` — Skill registry with trigger-based matching
 - `internal/orchestration/dispatch.go` — Auto-dispatch engine: goal → skill chain → task steps
 - `compat_handlers.go` — OpenAI-compatible `/v1/chat/completions` and `/v1/responses` endpoints
+- `internal/tools/` — Agent tool interface, registry, and implementations (bash, file_read/write/edit, grep, glob, git, permissions)
+- `internal/agent/` — Agent loop, REPL, conversation management, renderer
+- `internal/worktree/` — Git worktree isolation with TTL, size caps, background cleanup
+- `internal/mcpserver/` — MCP server: expose tools over HTTP (tools/list, tools/call)
 - `internal/app/` — Shared logic for CLI and API (smoketest, diagnostics, profile, models)
 - `internal/router/router.go` — Provider selection, fallback chain, circuit breakers, health caching
 - `internal/providers/provider.go` — Provider interface (`Name`, `ChatCompletion`, `IsHealthy`, `SupportsModel`)
@@ -41,7 +49,7 @@ Two provider instances from one `NANOGPT_API_KEY`:
 
 ### Profiles
 - `personal`: NanoGPT-Sub + OAuth subscription providers + NanoGPT-Paid
-- `work`: Vertex AI (Claude + Gemini via native GCP auth)
+- `work`: Vertex AI only (Claude + Gemini via native GCP auth) — no NanoGPT
 - Controlled by `ACTIVE_PROFILE` in `.env`
 
 ### Skill Auto-Dispatch
@@ -53,6 +61,18 @@ When a task/goal is submitted to orchestration, the dispatch engine automaticall
 5. Falls back to role-based inference (`inferRoles`) if no skills match
 
 Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-implement`, `go-testing`, `python-testing`, `code-review`, `api-design`, `docker-expert`, `research`
+
+### Agent Execution Layer
+- **Tool Registry** (`internal/tools/`): 7 built-in tools (bash, file_read, file_write, file_edit, grep, glob, git)
+- **Tool Categories**: `read_only` (always allowed), `write` (needs approval), `dangerous` (extra scrutiny)
+- **Agent Loop** (`internal/agent/`): message → LLM → tool calls → LLM → response (max 25 turns)
+- **REPL**: `synroute chat` — interactive with `/exit`, `/clear`, `/model`, `/tools`, `/history`
+- **Worktree Isolation** (`internal/worktree/`): `synroute chat --worktree` creates managed git worktree
+  - TTL-based expiry (default 24h), size caps (10GB total, 2GB per tree), background cleanup (every 5m)
+- **Permission Model**: `interactive` (prompt), `auto_approve` (allow all), `read_only` (deny writes)
+- **MCP Server** (`internal/mcpserver/`): `synroute mcp-serve` or `SYNROUTE_MCP_SERVER=true` on main server
+  - Endpoints: `/mcp/initialize`, `/mcp/tools/list`, `/mcp/tools/call`
+- **Git Safety**: `git push --force`, `git branch -D`, `git checkout --force` blocked by git tool — use bash with explicit approval
 
 ### Key Patterns
 - Gemini 2.5 models: thinking tokens from output budget, min 1024 maxOutputTokens enforced
@@ -77,6 +97,26 @@ go vet ./...                               # Lint
 ./synroute test                            # Smoke test all providers
 ./synroute test --provider nanogpt         # Test single provider
 ./synroute test --json                     # JSON output
+./synroute eval import --source polyglot --path ~/polyglot-benchmark
+./synroute eval import --source roocode --path ~/Roo-Code-Evals
+./synroute eval import --source exercism --path ~/exercism-go --language go
+./synroute eval import --source multiple --path ~/MultiPL-E
+./synroute eval import --source evalplus --path ~/evalplus
+./synroute eval import --source codecontests --path ~/code_contests --count 500
+./synroute eval import --source ds1000 --path benchmarks/ds1000
+./synroute eval import --source birdsql --path benchmarks/birdsql
+./synroute eval import --source dare-bench --path benchmarks/dare-bench
+./synroute eval import --source writingbench --path benchmarks/writingbench
+./synroute eval import --source pptarena --path benchmarks/pptarena
+./synroute eval import-all --dir ~/eval-benchmarks
+./synroute eval exercises --language go    # List imported exercises
+./synroute eval run --language go --count 10 --two-pass
+./synroute eval run --provider nanogpt-sub --count 20
+./synroute eval run --mode routing --count 15
+./synroute eval run --per-suite 40              # 40 per suite (default), pipeline validation
+./synroute eval run --per-suite 0 --count 100   # no per-suite limit, 100 total
+./synroute eval results --json             # Most recent run
+./synroute eval compare --run-a <id1> --run-b <id2>
 ./synroute profile show                    # Show active profile
 ./synroute profile list                    # List available profiles
 ./synroute profile switch work             # Switch to work profile
@@ -84,6 +124,13 @@ go vet ./...                               # Lint
 ./synroute doctor --json                   # JSON diagnostics
 ./synroute models                          # List available models
 ./synroute version                         # Show version info
+./synroute chat                            # Interactive agent REPL
+./synroute chat --model claude-sonnet-4-6 # Specific model
+./synroute chat --message "fix the bug"    # One-shot (non-interactive)
+./synroute chat --system "You are a Go expert"
+./synroute chat --worktree                 # Run in isolated worktree
+./synroute mcp-serve                       # Start standalone MCP server
+./synroute mcp-serve --addr :9090          # Custom port
 ```
 
 ## API Endpoints (Diagnostic)
@@ -98,6 +145,16 @@ curl localhost:8090/health                              # Health check
 curl localhost:8090/v1/models                           # List models
 curl localhost:8090/v1/skills                           # List registered skills
 curl "localhost:8090/v1/skills/match?q=fix+the+Go+auth"  # Preview skill chain for a goal
+curl localhost:8090/v1/tools                             # List agent tools
+# MCP server (requires SYNROUTE_MCP_SERVER=true)
+curl -X POST localhost:8090/mcp/tools/list               # MCP tools/list
+curl -X POST localhost:8090/mcp/tools/call -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"bash","arguments":{"command":"ls"}}}'
+curl localhost:8090/v1/eval/exercises?language=go          # List eval exercises
+curl -X POST localhost:8090/v1/eval/runs -d '{"languages":["go"],"count":5}'
+curl localhost:8090/v1/eval/runs                           # List recent eval runs
+curl localhost:8090/v1/eval/runs/<run_id>                  # Run status + summary
+curl localhost:8090/v1/eval/runs/<run_id>/results          # Individual results
+curl -X POST localhost:8090/v1/eval/compare -d '{"run_a":"<id>","run_b":"<id>"}'
 ```
 
 ## Auto-Dispatch Rules (MANDATORY)

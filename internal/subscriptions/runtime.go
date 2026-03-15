@@ -87,7 +87,7 @@ func LoadRuntimeProviders(ctx context.Context) ([]providers.Provider, error) {
 			if upstream, ok := byName[providerName]; ok {
 				ordered = append(ordered, &runtimeProviderAdapter{
 					name:       "gemini",
-					model:      preferredProviderModel("gemini", upstream.ListModels(), "gemini-3.1-pro-preview"),
+					model:      preferredProviderModel("gemini", upstream.ListModels(), "gemini-3-flash-preview"),
 					maxContext: 1048576,
 					upstream:   upstream,
 				})
@@ -191,15 +191,17 @@ func preferredModel(models []ModelInfo, preferred string) string {
 }
 
 func preferredProviderModel(providerName string, models []ModelInfo, fallback string) string {
-	preferences := []string{fallback}
+	// Provider-specific preferences come first, fallback last
+	var preferences []string
 	switch providerName {
 	case "anthropic":
-		preferences = append(preferences, "claude-sonnet-4-5-20250929", "claude-3-5-sonnet-latest")
+		preferences = []string{"claude-sonnet-4-5-20250929", "claude-3-5-sonnet-latest"}
 	case "openai":
-		preferences = append(preferences, "gpt-5.3-codex", "gpt-5.4", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5-codex")
+		preferences = []string{"gpt-5.3-codex", "gpt-5.4", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5-codex"}
 	case "gemini":
-		preferences = append(preferences, "gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash")
+		preferences = []string{"gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash"}
 	}
+	preferences = append(preferences, fallback)
 	for _, preferred := range preferences {
 		if selected := preferredModel(models, preferred); selected != "" {
 			return selected
