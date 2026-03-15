@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"embed"
 	"encoding/json"
@@ -132,6 +133,8 @@ func startServer() {
 
 	// Create HTTP router
 	r := mux.NewRouter()
+	r.Use(maxBodySizeMiddleware(10 << 20)) // 10MB request body limit
+	r.Use(securityHeadersMiddleware)
 
 	// Health check
 	r.HandleFunc("/health", healthHandler).Methods("GET")
@@ -213,7 +216,7 @@ func startServer() {
 	// Diagnostic and management endpoints
 	r.Handle("/v1/test/providers", withAdminAuth(http.HandlerFunc(smokeTestHandler))).Methods("POST")
 	r.Handle("/v1/circuit-breakers/reset", withAdminAuth(http.HandlerFunc(circuitBreakerResetHandler))).Methods("POST")
-	r.HandleFunc("/v1/profile", profileHandler).Methods("GET")
+	r.Handle("/v1/profile", withAdminAuth(http.HandlerFunc(profileHandler))).Methods("GET")
 	r.Handle("/v1/profile/switch", withAdminAuth(http.HandlerFunc(profileSwitchHandler))).Methods("POST")
 	r.Handle("/v1/doctor", withAdminAuth(http.HandlerFunc(doctorHandler))).Methods("GET")
 
@@ -561,11 +564,11 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	var req providers.ChatRequest
 	rawBody, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "Invalid request body")
 		return
 	}
 	if err := json.NewDecoder(bytes.NewReader(rawBody)).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "Invalid request body")
 		return
 	}
 	if resolved := compat.ResolveModel(ampConfig, req.Model, knownModelIDs()); resolved != "" {
@@ -579,16 +582,15 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := routeChatRequest(r, req, requestSessionID(r), "")
 	if err != nil {
-		// Check if this is a validation error (400) vs service error (503)
 		if strings.Contains(err.Error(), "invalid request:") || strings.Contains(err.Error(), "unknown model") || strings.Contains(err.Error(), "not compatible") {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 			return
 		}
 		if forwardToAmpUpstream(w, r, rawBody) {
 			return
 		}
 		log.Printf("All providers failed: %v", err)
-		http.Error(w, fmt.Sprintf("Service unavailable: %v", err), http.StatusServiceUnavailable)
+		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", fmt.Sprintf("Service unavailable: %v", err))
 		return
 	}
 
@@ -1058,21 +1060,50 @@ func traceHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(trace)
 }
 
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func maxBodySizeMiddleware(maxBytes int64) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Body != nil && (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch) {
+				r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func withAdminAuth(next http.Handler) http.Handler {
 	adminKey := strings.TrimSpace(os.Getenv("SYNROUTE_ADMIN_TOKEN"))
 	if adminKey == "" {
 		adminKey = strings.TrimSpace(os.Getenv("ADMIN_API_KEY"))
 	}
 	if adminKey == "" {
-		return next
+		log.Println("[Auth] WARNING: No SYNROUTE_ADMIN_TOKEN set — admin endpoints require localhost access")
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// If no admin token configured, only allow localhost access
+		if adminKey == "" {
+			remoteAddr := r.RemoteAddr
+			if !strings.HasPrefix(remoteAddr, "127.0.0.1:") && !strings.HasPrefix(remoteAddr, "[::1]:") && !strings.HasPrefix(remoteAddr, "localhost:") {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
 		token := extractBearerToken(r.Header.Get("Authorization"))
 		if token == "" {
 			token = strings.TrimSpace(r.Header.Get("X-Admin-API-Key"))
 		}
-		if token != adminKey {
+		if subtle.ConstantTimeCompare([]byte(token), []byte(adminKey)) != 1 {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

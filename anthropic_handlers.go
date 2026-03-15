@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -88,11 +87,10 @@ type anthropicErrorDetail struct {
 
 func convertAnthropicToInternal(req anthropicMessagesRequest) (providers.ChatRequest, error) {
 	chatReq := providers.ChatRequest{
-		Model:     req.Model,
-		MaxTokens: req.MaxTokens,
-		Stream:    req.Stream,
+		Model:      req.Model,
+		MaxTokens:  req.MaxTokens,
 		ToolChoice: req.ToolChoice,
-		Thinking:  req.Thinking,
+		Thinking:   req.Thinking,
 	}
 	if req.Temperature != nil {
 		chatReq.Temperature = *req.Temperature
@@ -281,7 +279,10 @@ func convertInternalToAnthropic(resp providers.ChatResponse) anthropicMessagesRe
 
 		// Convert tool calls
 		for _, tc := range choice.Message.ToolCalls {
-			fn, _ := tc["function"].(map[string]interface{})
+			fn, ok := tc["function"].(map[string]interface{})
+			if !ok || fn == nil {
+				continue
+			}
 			id, _ := tc["id"].(string)
 			name, _ := fn["name"].(string)
 			args, _ := fn["arguments"].(string)
@@ -367,6 +368,8 @@ func handleAnthropicMessages(w http.ResponseWriter, r *http.Request, preferredPr
 		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
+	// Always get a complete response — we convert to SSE ourselves if streaming requested
+	chatReq.Stream = false
 
 	// Resolve model
 	if resolved := compat.ResolveModel(ampConfig, chatReq.Model, knownModelIDs()); resolved != "" {
@@ -420,13 +423,8 @@ func writeAnthropicError(w http.ResponseWriter, status int, errType, message str
 }
 
 func writeAnthropicStream(w http.ResponseWriter, resp providers.ChatResponse) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		log.Println("[AnthropicStream] ResponseWriter does not support flushing")
+	sse := newSSEWriter(w)
+	if sse == nil {
 		writeAnthropicError(w, http.StatusInternalServerError, "api_error", "Streaming not supported")
 		return
 	}
@@ -460,7 +458,7 @@ func writeAnthropicStream(w http.ResponseWriter, resp providers.ChatResponse) {
 			},
 		},
 	}
-	writeSSEEvent(w, flusher, "message_start", messageStart)
+	sse.WriteEvent("message_start", messageStart)
 
 	// Emit content blocks
 	blockIndex := 0
@@ -470,7 +468,7 @@ func writeAnthropicStream(w http.ResponseWriter, resp providers.ChatResponse) {
 		// Text content
 		if choice.Message.Content != "" {
 			// content_block_start
-			writeSSEEvent(w, flusher, "content_block_start", map[string]interface{}{
+			sse.WriteEvent("content_block_start", map[string]interface{}{
 				"type":  "content_block_start",
 				"index": blockIndex,
 				"content_block": map[string]interface{}{
@@ -480,7 +478,7 @@ func writeAnthropicStream(w http.ResponseWriter, resp providers.ChatResponse) {
 			})
 
 			// content_block_delta
-			writeSSEEvent(w, flusher, "content_block_delta", map[string]interface{}{
+			sse.WriteEvent("content_block_delta", map[string]interface{}{
 				"type":  "content_block_delta",
 				"index": blockIndex,
 				"delta": map[string]interface{}{
@@ -490,7 +488,7 @@ func writeAnthropicStream(w http.ResponseWriter, resp providers.ChatResponse) {
 			})
 
 			// content_block_stop
-			writeSSEEvent(w, flusher, "content_block_stop", map[string]interface{}{
+			sse.WriteEvent("content_block_stop", map[string]interface{}{
 				"type":  "content_block_stop",
 				"index": blockIndex,
 			})
@@ -499,12 +497,15 @@ func writeAnthropicStream(w http.ResponseWriter, resp providers.ChatResponse) {
 
 		// Tool use blocks
 		for _, tc := range choice.Message.ToolCalls {
-			fn, _ := tc["function"].(map[string]interface{})
+			fn, ok := tc["function"].(map[string]interface{})
+			if !ok || fn == nil {
+				continue
+			}
 			id, _ := tc["id"].(string)
 			name, _ := fn["name"].(string)
 			args, _ := fn["arguments"].(string)
 
-			writeSSEEvent(w, flusher, "content_block_start", map[string]interface{}{
+			sse.WriteEvent("content_block_start", map[string]interface{}{
 				"type":  "content_block_start",
 				"index": blockIndex,
 				"content_block": map[string]interface{}{
@@ -515,7 +516,7 @@ func writeAnthropicStream(w http.ResponseWriter, resp providers.ChatResponse) {
 				},
 			})
 
-			writeSSEEvent(w, flusher, "content_block_delta", map[string]interface{}{
+			sse.WriteEvent("content_block_delta", map[string]interface{}{
 				"type":  "content_block_delta",
 				"index": blockIndex,
 				"delta": map[string]interface{}{
@@ -524,7 +525,7 @@ func writeAnthropicStream(w http.ResponseWriter, resp providers.ChatResponse) {
 				},
 			})
 
-			writeSSEEvent(w, flusher, "content_block_stop", map[string]interface{}{
+			sse.WriteEvent("content_block_stop", map[string]interface{}{
 				"type":  "content_block_stop",
 				"index": blockIndex,
 			})
@@ -533,7 +534,7 @@ func writeAnthropicStream(w http.ResponseWriter, resp providers.ChatResponse) {
 
 		// message_delta with stop_reason
 		stopReason := mapFinishReasonToAnthropic(choice.FinishReason)
-		writeSSEEvent(w, flusher, "message_delta", map[string]interface{}{
+		sse.WriteEvent("message_delta", map[string]interface{}{
 			"type": "message_delta",
 			"delta": map[string]interface{}{
 				"stop_reason":   stopReason,
@@ -546,17 +547,8 @@ func writeAnthropicStream(w http.ResponseWriter, resp providers.ChatResponse) {
 	}
 
 	// message_stop
-	writeSSEEvent(w, flusher, "message_stop", map[string]interface{}{
+	sse.WriteEvent("message_stop", map[string]interface{}{
 		"type": "message_stop",
 	})
 }
 
-func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, event string, data interface{}) {
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		log.Printf("[AnthropicStream] Failed to marshal %s event: %v", event, err)
-		return
-	}
-	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, jsonData)
-	flusher.Flush()
-}

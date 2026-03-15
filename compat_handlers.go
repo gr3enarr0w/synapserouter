@@ -3,17 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
-	"database/sql"
 
 	"github.com/gorilla/mux"
 
@@ -21,6 +22,18 @@ import (
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/subscriptions"
 )
+
+func writeOpenAIError(w http.ResponseWriter, status int, errType, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": map[string]interface{}{
+			"message": message,
+			"type":    errType,
+			"code":    errType,
+		},
+	})
+}
 
 type responsesRequest struct {
 	Model              string                   `json:"model"`
@@ -72,6 +85,26 @@ func shouldUseAmpFallback(model string) bool {
 	return strings.TrimSpace(ampConfig.UpstreamURL) != "" && !isKnownModel(model)
 }
 
+func isPrivateIP(host string) bool {
+	hostname := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		hostname = h
+	}
+	ip := net.ParseIP(hostname)
+	if ip == nil {
+		// Try DNS resolution
+		addrs, err := net.LookupHost(hostname)
+		if err != nil || len(addrs) == 0 {
+			return false
+		}
+		ip = net.ParseIP(addrs[0])
+		if ip == nil {
+			return false
+		}
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+}
+
 func forwardToAmpUpstream(w http.ResponseWriter, r *http.Request, rawBody []byte) bool {
 	upstreamURL := strings.TrimSpace(ampConfig.UpstreamURL)
 	if upstreamURL == "" {
@@ -80,6 +113,17 @@ func forwardToAmpUpstream(w http.ResponseWriter, r *http.Request, rawBody []byte
 	base, err := url.Parse(upstreamURL)
 	if err != nil {
 		http.Error(w, "Invalid Amp upstream URL", http.StatusInternalServerError)
+		return true
+	}
+	// SSRF protection: only allow http/https and block private IPs
+	if base.Scheme != "http" && base.Scheme != "https" {
+		log.Printf("[Amp] Blocked non-HTTP scheme: %s", base.Scheme)
+		http.Error(w, "Invalid upstream URL scheme", http.StatusBadRequest)
+		return true
+	}
+	if isPrivateIP(base.Host) {
+		log.Printf("[Amp] Blocked private IP in upstream: %s", base.Host)
+		http.Error(w, "Upstream URL must not target private networks", http.StatusBadRequest)
 		return true
 	}
 	target, err := base.Parse(r.URL.Path)
@@ -129,16 +173,16 @@ func responsesHandler(w http.ResponseWriter, r *http.Request) {
 func responsesCompactHandler(w http.ResponseWriter, r *http.Request) {
 	var req responsesRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "Invalid request body")
 		return
 	}
 	if req.Stream {
-		http.Error(w, "Streaming not supported for compact responses", http.StatusBadRequest)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "Streaming not supported for compact responses")
 		return
 	}
 	chatReq, err := convertResponsesRequest(req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
 	sessionID := requestSessionID(r)
@@ -154,12 +198,11 @@ func responsesCompactHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := routeChatRequest(r, chatReq, sessionID, "")
 	if err != nil {
-		// Check if this is a validation error (400) vs service error (503)
 		if strings.Contains(err.Error(), "invalid request:") || strings.Contains(err.Error(), "unknown model") || strings.Contains(err.Error(), "not compatible") {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 			return
 		}
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", err.Error())
 		return
 	}
 	outputText := ""
@@ -245,17 +288,17 @@ func handleResponsesRequest(w http.ResponseWriter, r *http.Request, preferredPro
 	var req responsesRequest
 	rawBody, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "Invalid request body")
 		return
 	}
 	if err := json.NewDecoder(bytes.NewReader(rawBody)).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "Invalid request body")
 		return
 	}
 
 	chatReq, err := convertResponsesRequest(req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
 
@@ -290,12 +333,11 @@ func handleResponsesRequest(w http.ResponseWriter, r *http.Request, preferredPro
 			writeResponsesStreamError(w, err)
 			return
 		}
-		// Check if this is a validation error (400) vs service error (503)
 		if strings.Contains(err.Error(), "invalid request:") || strings.Contains(err.Error(), "unknown model") || strings.Contains(err.Error(), "not compatible") {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 			return
 		}
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", err.Error())
 		return
 	}
 
@@ -545,11 +587,11 @@ func providerChatHandler(w http.ResponseWriter, r *http.Request) {
 	var req providers.ChatRequest
 	rawBody, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "Invalid request body")
 		return
 	}
 	if err := json.NewDecoder(bytes.NewReader(rawBody)).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "Invalid request body")
 		return
 	}
 
@@ -563,15 +605,14 @@ func providerChatHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := routeChatRequest(r, req, requestSessionID(r), providerName)
 	if err != nil {
-		// Check if this is a validation error (400) vs service error (503)
 		if strings.Contains(err.Error(), "invalid request:") || strings.Contains(err.Error(), "unknown model") || strings.Contains(err.Error(), "not compatible") {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 			return
 		}
 		if forwardToAmpUpstream(w, r, rawBody) {
 			return
 		}
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", err.Error())
 		return
 	}
 
@@ -789,15 +830,13 @@ func hasStructuredChatMessages(messages []providers.Message) bool {
 }
 
 func writeResponsesStream(w http.ResponseWriter, resp providers.ChatResponse, outputText string, req responsesRequest) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+	sse := newSSEWriter(w)
+	if sse == nil {
+		writeOpenAIError(w, http.StatusInternalServerError, "server_error", "Streaming not supported")
 		return
 	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
+	flusher := sse.flusher
+	_ = flusher // used by existing event loop below
 
 	events := []map[string]interface{}{
 		{"type": "response.created", "response": map[string]interface{}{"id": resp.ID, "model": resp.Model}},
@@ -1183,11 +1222,15 @@ func ampUpstreamURLHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ampConfig.UpstreamURL = strings.TrimSpace(payload.Value)
-		_ = compat.SaveAmpCodeConfig(db, ampConfig)
+		if err := compat.SaveAmpCodeConfig(db, ampConfig); err != nil {
+			log.Printf("[Amp] Warning: failed to save config: %v", err)
+		}
 		writeJSON(w, map[string]string{"upstream-url": ampConfig.UpstreamURL})
 	case http.MethodDelete:
 		ampConfig.UpstreamURL = ""
-		_ = compat.SaveAmpCodeConfig(db, ampConfig)
+		if err := compat.SaveAmpCodeConfig(db, ampConfig); err != nil {
+			log.Printf("[Amp] Warning: failed to save config: %v", err)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -1205,11 +1248,15 @@ func ampUpstreamAPIKeyHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ampConfig.UpstreamAPIKey = strings.TrimSpace(payload.Value)
-		_ = compat.SaveAmpCodeConfig(db, ampConfig)
+		if err := compat.SaveAmpCodeConfig(db, ampConfig); err != nil {
+			log.Printf("[Amp] Warning: failed to save config: %v", err)
+		}
 		writeJSON(w, map[string]string{"upstream-api-key": ampConfig.UpstreamAPIKey})
 	case http.MethodDelete:
 		ampConfig.UpstreamAPIKey = ""
-		_ = compat.SaveAmpCodeConfig(db, ampConfig)
+		if err := compat.SaveAmpCodeConfig(db, ampConfig); err != nil {
+			log.Printf("[Amp] Warning: failed to save config: %v", err)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -1227,7 +1274,9 @@ func ampUpstreamAPIKeysHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ampConfig.UpstreamAPIKeys = sanitizeAmpKeyEntries(payload.Value)
-		_ = compat.SaveAmpCodeConfig(db, ampConfig)
+		if err := compat.SaveAmpCodeConfig(db, ampConfig); err != nil {
+			log.Printf("[Amp] Warning: failed to save config: %v", err)
+		}
 		writeJSON(w, map[string]interface{}{"upstream-api-keys": ampConfig.UpstreamAPIKeys})
 	case http.MethodPatch:
 		var payload struct {
@@ -1245,11 +1294,15 @@ func ampUpstreamAPIKeysHandler(w http.ResponseWriter, r *http.Request) {
 			byName[entry.Name] = entry
 		}
 		ampConfig.UpstreamAPIKeys = mapAmpKeyEntries(byName)
-		_ = compat.SaveAmpCodeConfig(db, ampConfig)
+		if err := compat.SaveAmpCodeConfig(db, ampConfig); err != nil {
+			log.Printf("[Amp] Warning: failed to save config: %v", err)
+		}
 		writeJSON(w, map[string]interface{}{"upstream-api-keys": ampConfig.UpstreamAPIKeys})
 	case http.MethodDelete:
 		ampConfig.UpstreamAPIKeys = nil
-		_ = compat.SaveAmpCodeConfig(db, ampConfig)
+		if err := compat.SaveAmpCodeConfig(db, ampConfig); err != nil {
+			log.Printf("[Amp] Warning: failed to save config: %v", err)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -1267,7 +1320,9 @@ func ampModelMappingsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ampConfig.ModelMappings = payload.Value
-		_ = compat.SaveAmpCodeConfig(db, ampConfig)
+		if err := compat.SaveAmpCodeConfig(db, ampConfig); err != nil {
+			log.Printf("[Amp] Warning: failed to save config: %v", err)
+		}
 		writeJSON(w, map[string]interface{}{"model-mappings": ampConfig.ModelMappings})
 	case http.MethodPatch:
 		var payload struct {
@@ -1285,11 +1340,15 @@ func ampModelMappingsHandler(w http.ResponseWriter, r *http.Request) {
 			byFrom[strings.ToLower(entry.From)] = entry
 		}
 		ampConfig.ModelMappings = mapAmpModelMappings(byFrom)
-		_ = compat.SaveAmpCodeConfig(db, ampConfig)
+		if err := compat.SaveAmpCodeConfig(db, ampConfig); err != nil {
+			log.Printf("[Amp] Warning: failed to save config: %v", err)
+		}
 		writeJSON(w, map[string]interface{}{"model-mappings": ampConfig.ModelMappings})
 	case http.MethodDelete:
 		ampConfig.ModelMappings = nil
-		_ = compat.SaveAmpCodeConfig(db, ampConfig)
+		if err := compat.SaveAmpCodeConfig(db, ampConfig); err != nil {
+			log.Printf("[Amp] Warning: failed to save config: %v", err)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -1307,7 +1366,9 @@ func ampForceModelMappingsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ampConfig.ForceModelMappings = payload.Value
-		_ = compat.SaveAmpCodeConfig(db, ampConfig)
+		if err := compat.SaveAmpCodeConfig(db, ampConfig); err != nil {
+			log.Printf("[Amp] Warning: failed to save config: %v", err)
+		}
 		writeJSON(w, map[string]bool{"force-model-mappings": ampConfig.ForceModelMappings})
 	}
 }
@@ -1325,7 +1386,9 @@ func ampRestrictManagementToLocalhostHandler(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		ampConfig.RestrictManagementToLocalhost = payload.Value
-		_ = compat.SaveAmpCodeConfig(db, ampConfig)
+		if err := compat.SaveAmpCodeConfig(db, ampConfig); err != nil {
+			log.Printf("[Amp] Warning: failed to save config: %v", err)
+		}
 		writeJSON(w, map[string]bool{"restrict-management-to-localhost": ampConfig.RestrictManagementToLocalhost})
 	}
 }
@@ -1373,7 +1436,9 @@ func mapAmpModelMappings(entries map[string]compat.AmpModelMapping) []compat.Amp
 
 func writeJSON(w http.ResponseWriter, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(payload)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("[Response] Warning: failed to encode JSON response: %v", err)
+	}
 }
 
 func stringValue(value interface{}) string {
@@ -1386,28 +1451,64 @@ func stringValue(value interface{}) string {
 	return ""
 }
 
-// writeChatCompletionStream writes a chat completion response in SSE format
-// This provides API compatibility with streaming endpoints even though the
-// underlying provider response is complete (not true chunked streaming)
-func writeChatCompletionStream(w http.ResponseWriter, resp providers.ChatResponse) {
+// SSEWriter handles Server-Sent Events streaming setup and writing.
+type SSEWriter struct {
+	w       http.ResponseWriter
+	flusher http.Flusher
+}
+
+// newSSEWriter creates an SSEWriter with proper headers. Returns nil if flushing is unsupported.
+func newSSEWriter(w http.ResponseWriter) *SSEWriter {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		log.Println("[SSE] ResponseWriter does not support flushing")
+		return nil
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	return &SSEWriter{w: w, flusher: flusher}
+}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		log.Println("[Stream] ResponseWriter does not support flushing")
-		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+// WriteData writes an SSE data-only line (OpenAI format: "data: ...\n\n").
+func (s *SSEWriter) WriteData(data interface{}) {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("[SSE] Failed to marshal data: %v", err)
+		return
+	}
+	fmt.Fprintf(s.w, "data: %s\n\n", jsonData)
+	s.flusher.Flush()
+}
+
+// WriteEvent writes a named SSE event (Anthropic format: "event: ...\ndata: ...\n\n").
+func (s *SSEWriter) WriteEvent(event string, data interface{}) {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("[SSE] Failed to marshal %s event: %v", event, err)
+		return
+	}
+	fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", event, jsonData)
+	s.flusher.Flush()
+}
+
+// WriteDone writes the OpenAI [DONE] marker.
+func (s *SSEWriter) WriteDone() {
+	fmt.Fprintf(s.w, "data: [DONE]\n\n")
+	s.flusher.Flush()
+}
+
+func writeChatCompletionStream(w http.ResponseWriter, resp providers.ChatResponse) {
+	sse := newSSEWriter(w)
+	if sse == nil {
+		writeOpenAIError(w, http.StatusInternalServerError, "server_error", "Streaming not supported")
 		return
 	}
 
-	// Convert the complete response into streaming format
-	// Send the content as a delta chunk
 	if len(resp.Choices) > 0 {
 		choice := resp.Choices[0]
 
-		// Send content chunk
-		chunk := map[string]interface{}{
+		sse.WriteData(map[string]interface{}{
 			"id":      resp.ID,
 			"object":  "chat.completion.chunk",
 			"created": resp.Created,
@@ -1422,19 +1523,9 @@ func writeChatCompletionStream(w http.ResponseWriter, resp providers.ChatRespons
 					"finish_reason": nil,
 				},
 			},
-		}
+		})
 
-		chunkJSON, err := json.Marshal(chunk)
-		if err != nil {
-			log.Printf("[Stream] Failed to marshal chunk: %v", err)
-			return
-		}
-
-		fmt.Fprintf(w, "data: %s\n\n", chunkJSON)
-		flusher.Flush()
-
-		// Send finish chunk
-		finishChunk := map[string]interface{}{
+		sse.WriteData(map[string]interface{}{
 			"id":      resp.ID,
 			"object":  "chat.completion.chunk",
 			"created": resp.Created,
@@ -1446,19 +1537,8 @@ func writeChatCompletionStream(w http.ResponseWriter, resp providers.ChatRespons
 					"finish_reason": choice.FinishReason,
 				},
 			},
-		}
-
-		finishJSON, err := json.Marshal(finishChunk)
-		if err != nil {
-			log.Printf("[Stream] Failed to marshal finish chunk: %v", err)
-			return
-		}
-
-		fmt.Fprintf(w, "data: %s\n\n", finishJSON)
-		flusher.Flush()
+		})
 	}
 
-	// Send [DONE] marker
-	fmt.Fprintf(w, "data: [DONE]\n\n")
-	flusher.Flush()
+	sse.WriteDone()
 }

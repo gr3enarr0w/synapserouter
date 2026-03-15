@@ -261,6 +261,33 @@ func TestConvertInternalToAnthropic_ToolCallResponse(t *testing.T) {
 	}
 }
 
+func TestConvertInternalToAnthropic_MalformedToolCalls(t *testing.T) {
+	resp := providers.ChatResponse{
+		Choices: []providers.Choice{
+			{
+				Message: providers.Message{
+					Role: "assistant",
+					ToolCalls: []map[string]interface{}{
+						{"id": "call_1", "function": "not_a_map"},          // wrong type
+						{"id": "call_2"},                                    // missing function key
+						nil,                                                 // nil entry
+						{"id": "call_3", "type": "function", "function": map[string]interface{}{"name": "valid", "arguments": "{}"}},
+					},
+				},
+				FinishReason: "tool_calls",
+			},
+		},
+	}
+	// Should not panic — malformed entries skipped, valid one kept
+	out := convertInternalToAnthropic(resp)
+	if len(out.Content) != 1 {
+		t.Fatalf("expected 1 valid content block (skipping malformed), got %d", len(out.Content))
+	}
+	if out.Content[0].Name != "valid" {
+		t.Errorf("expected tool name 'valid', got %s", out.Content[0].Name)
+	}
+}
+
 func TestConvertInternalToAnthropic_EmptyContent(t *testing.T) {
 	resp := providers.ChatResponse{
 		Choices: []providers.Choice{{FinishReason: "stop"}},

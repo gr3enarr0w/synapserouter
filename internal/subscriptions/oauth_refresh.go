@@ -160,7 +160,7 @@ func refreshGeminiToken(ctx context.Context, credential ProviderCredential) (Pro
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {strings.TrimSpace(credential.RefreshToken)},
 		"client_id":     {geminiClientID},
-		"client_secret": {geminiClientSecret},
+		"client_secret": {geminiClientSecret()},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, geminiTokenURL, strings.NewReader(form.Encode()))
 	if err != nil {

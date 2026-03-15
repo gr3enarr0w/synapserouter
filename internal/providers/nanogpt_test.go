@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewNanoGPTProvider_Tiers(t *testing.T) {
@@ -193,6 +195,89 @@ func TestNanoGPTProvider_ListModels(t *testing.T) {
 	models2 := p.ListModels()
 	if len(models2) != 3 {
 		t.Fatalf("cached ListModels() returned %d models, want 3", len(models2))
+	}
+}
+
+func TestNanoGPTProvider_ChatCompletion_ErrorCases(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantErr    string
+	}{
+		{
+			name:       "429 rate limit",
+			statusCode: http.StatusTooManyRequests,
+			body:       `{"error":{"message":"Rate limit exceeded. Please retry after 30s"}}`,
+			wantErr:    "nanogpt error 429",
+		},
+		{
+			name:       "500 server error",
+			statusCode: http.StatusInternalServerError,
+			body:       `{"error":{"message":"Internal server error"}}`,
+			wantErr:    "nanogpt error 500",
+		},
+		{
+			name:       "malformed JSON response",
+			statusCode: http.StatusOK,
+			body:       `{not valid json`,
+			wantErr:    "", // should still return response (decode failure produces empty response)
+		},
+		{
+			name:       "empty response body",
+			statusCode: http.StatusOK,
+			body:       `{}`,
+			wantErr:    "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.statusCode)
+				w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			t.Setenv("NANOGPT_BASE_URL", srv.URL)
+			p := NewNanoGPTProvider("test-key", "subscription")
+
+			_, err := p.ChatCompletion(context.Background(), ChatRequest{
+				Model:    "auto",
+				Messages: []Message{{Role: "user", Content: "hi"}},
+			}, "sess-err")
+
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("error = %q, want containing %q", err.Error(), tt.wantErr)
+				}
+			}
+		})
+	}
+}
+
+func TestNanoGPTProvider_ChatCompletion_Timeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(3 * time.Second) // longer than provider timeout
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	t.Setenv("NANOGPT_BASE_URL", srv.URL)
+	p := NewNanoGPTProvider("test-key", "subscription")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := p.ChatCompletion(ctx, ChatRequest{
+		Model:    "auto",
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	}, "sess-timeout")
+
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
 	}
 }
 

@@ -34,7 +34,7 @@ const (
 	codexDefaultPort    = 1455
 
 	geminiClientID       = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
-	geminiClientSecret   = "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"
+	geminiClientSecretDefault = "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"
 	geminiAuthURL        = "https://accounts.google.com/o/oauth2/v2/auth"
 	geminiTokenURL       = "https://oauth2.googleapis.com/token"
 	geminiUserInfoURL    = "https://www.googleapis.com/oauth2/v1/userinfo?alt=json"
@@ -43,6 +43,13 @@ const (
 
 	loginTimeout = 5 * time.Minute
 )
+
+func geminiClientSecret() string {
+	if s := strings.TrimSpace(os.Getenv("GEMINI_CLIENT_SECRET")); s != "" {
+		return s
+	}
+	return geminiClientSecretDefault
+}
 
 type LoginOptions struct {
 	CallbackPort int
@@ -396,7 +403,7 @@ func exchangeGeminiToken(ctx context.Context, code, redirectURI string) (Provide
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"client_id":     {geminiClientID},
-		"client_secret": {geminiClientSecret},
+		"client_secret": {geminiClientSecret()},
 		"code":          {strings.TrimSpace(code)},
 		"redirect_uri":  {redirectURI},
 	}
