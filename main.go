@@ -195,6 +195,8 @@ func startServer() {
 	r.Handle("/v1/skills", withAdminAuth(http.HandlerFunc(skillsListHandler))).Methods("GET")
 	r.Handle("/v1/skills/match", withAdminAuth(http.HandlerFunc(skillsMatchHandler))).Methods("GET")
 	r.Handle("/v1/tools", withAdminAuth(http.HandlerFunc(toolsListHandler(toolRegistry)))).Methods("GET")
+	r.Handle("/v1/agent/chat", withAdminAuth(http.HandlerFunc(agentChatHandler(toolRegistry)))).Methods("POST")
+	r.Handle("/v1/agent/pool", withAdminAuth(http.HandlerFunc(agentPoolHandler))).Methods("GET")
 
 	// MCP server mode (expose tools to other agents)
 	if strings.EqualFold(os.Getenv("SYNROUTE_MCP_SERVER"), "true") {

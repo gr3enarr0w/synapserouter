@@ -15,7 +15,8 @@ Go-based LLM proxy router and coding agent that distributes requests across subs
 - `internal/orchestration/dispatch.go` — Auto-dispatch engine: goal → skill chain → task steps
 - `compat_handlers.go` — OpenAI-compatible `/v1/chat/completions` and `/v1/responses` endpoints
 - `internal/tools/` — Agent tool interface, registry, and implementations (bash, file_read/write/edit, grep, glob, git, permissions)
-- `internal/agent/` — Agent loop, REPL, conversation management, renderer
+- `internal/agent/` — Agent loop, REPL, sub-agents, handoffs, guardrails, state persistence, tracing, streaming
+- `internal/environment/` — Project environment detection, version resolution, best practices engine
 - `internal/worktree/` — Git worktree isolation with TTL, size caps, background cleanup
 - `internal/mcpserver/` — MCP server: expose tools over HTTP (tools/list, tools/call)
 - `internal/app/` — Shared logic for CLI and API (smoketest, diagnostics, profile, models)
@@ -63,10 +64,30 @@ When a task/goal is submitted to orchestration, the dispatch engine automaticall
 Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-implement`, `go-testing`, `python-testing`, `code-review`, `api-design`, `docker-expert`, `research`
 
 ### Agent Execution Layer
-- **Tool Registry** (`internal/tools/`): 7 built-in tools (bash, file_read, file_write, file_edit, grep, glob, git)
+- **Tool Registry** (`internal/tools/`): 7 built-in tools + 2 agent tools (delegate, handoff)
 - **Tool Categories**: `read_only` (always allowed), `write` (needs approval), `dangerous` (extra scrutiny)
 - **Agent Loop** (`internal/agent/`): message → LLM → tool calls → LLM → response (max 25 turns)
-- **REPL**: `synroute chat` — interactive with `/exit`, `/clear`, `/model`, `/tools`, `/history`
+- **Sub-Agent SDK** (`internal/agent/subagent.go`): parent-child agent spawning with config inheritance
+  - `SpawnChild(SpawnConfig)` — create child agent (inherits model, tools, workdir)
+  - `RunChild(ctx, cfg, task)` — spawn + run + collect result
+  - `RunChildrenParallel(ctx, tasks, maxConcurrent)` — parallel delegation
+- **Handoffs** (`internal/agent/handoff.go`): OpenAI Swarm-style agent-to-agent context transfer
+  - `ExecuteHandoff(ctx, Handoff)` — spawn specialist with context summary
+  - `DelegateTool` / `HandoffTool` — LLM-invocable tools for delegation
+- **Agent Pool** (`internal/agent/pool.go`): concurrency-limited agent management
+  - Default 5 concurrent agents, semaphore-based, resource tracking
+- **Guardrails** (`internal/agent/guardrails.go`): input/output validation
+  - `MaxLengthGuardrail`, `SecretPatternGuardrail`, `BlocklistGuardrail`
+  - `GuardrailChain` — compose multiple guardrails
+- **State Persistence** (`internal/agent/state.go`): SQLite-backed session save/load/resume
+  - `SaveState(db)`, `LoadState(db, id)`, `LoadLatestState(db)`, `RestoreAgent()`
+  - Migration: `migrations/006_agent_sessions.sql`
+- **Budget Tracking** (`internal/agent/budget.go`): turn/token/duration limits
+  - Per-agent `AgentBudget` with `BudgetTracker` enforcement
+- **Tracing** (`internal/agent/trace.go`): structured event spans (llm_call, tool_call, handoff)
+- **Metrics** (`internal/agent/metrics.go`): request/tool/sub-agent performance tracking
+- **Streaming** (`internal/agent/streaming.go`): line-by-line output via `StreamWriter`
+- **REPL**: `synroute chat` — interactive with `/exit`, `/clear`, `/model`, `/tools`, `/history`, `/agents`, `/budget`
 - **Worktree Isolation** (`internal/worktree/`): `synroute chat --worktree` creates managed git worktree
   - TTL-based expiry (default 24h), size caps (10GB total, 2GB per tree), background cleanup (every 5m)
 - **Permission Model**: `interactive` (prompt), `auto_approve` (allow all), `read_only` (deny writes)
@@ -74,11 +95,26 @@ Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-impl
   - Endpoints: `/mcp/initialize`, `/mcp/tools/list`, `/mcp/tools/call`
 - **Git Safety**: `git push --force`, `git branch -D`, `git checkout --force` blocked by git tool — use bash with explicit approval
 
+### Environment Best Practices Engine
+- **Detection** (`internal/environment/detector.go`): auto-detect language from config files
+  - Supports: Go (go.mod), Python (requirements.txt, pyproject.toml), JS (package.json), Rust (Cargo.toml), Java (pom.xml), Ruby (Gemfile), C++ (CMakeLists.txt)
+- **Version Resolution** (`internal/environment/resolver.go`): match installed runtime vs project requirements
+  - Known Python version constraints for ML packages (tensorflow→3.12, torch→3.12, etc.)
+- **Best Practices** (`internal/environment/best_practices.go`): per-language checks
+  - Go: go.mod, go.sum, .gitignore
+  - Python: virtual environment, pinned deps, version compatibility
+  - JS: lockfile, Node version pinning
+  - Rust: Cargo.lock, edition
+  - Java: build wrapper
+- **Command Wrapping** (`internal/environment/setup.go`): auto-activate venv, generate setup/test/build commands
+
 ### Key Patterns
-- Gemini 2.5 models: thinking tokens from output budget, min 1024 maxOutputTokens enforced
+- Gemini 2.5+ models: thinking tokens from output budget, min 1024 maxOutputTokens enforced
 - Codex: SSE streaming via `/responses` endpoint (NOT `/responses/compact`)
 - NanoGPT-Sub: defaults to "qwen/qwen3.5-plus" for auto
 - NanoGPT-Paid: defaults to "chatgpt-4o-latest" for auto (only via fallback)
+- Gemini personal (subscription): defaults to "gemini-3-flash-preview" for auto
+- Vertex Gemini (work): defaults to "gemini-3.1-pro-preview" for auto
 - Vertex Claude: use model names without dates (e.g. `claude-sonnet-4-6`)
 
 ## Dev Commands
@@ -129,6 +165,10 @@ go vet ./...                               # Lint
 ./synroute chat --message "fix the bug"    # One-shot (non-interactive)
 ./synroute chat --system "You are a Go expert"
 ./synroute chat --worktree                 # Run in isolated worktree
+./synroute chat --max-agents 3             # Limit concurrent sub-agents
+./synroute chat --budget 10000             # Max total tokens budget
+./synroute chat --resume                   # Resume most recent session
+./synroute chat --session <id>             # Resume specific session
 ./synroute mcp-serve                       # Start standalone MCP server
 ./synroute mcp-serve --addr :9090          # Custom port
 ```
@@ -146,6 +186,9 @@ curl localhost:8090/v1/models                           # List models
 curl localhost:8090/v1/skills                           # List registered skills
 curl "localhost:8090/v1/skills/match?q=fix+the+Go+auth"  # Preview skill chain for a goal
 curl localhost:8090/v1/tools                             # List agent tools
+# Agent SDK API
+curl -X POST localhost:8090/v1/agent/chat -d '{"message":"fix the tests","model":"auto"}'
+curl localhost:8090/v1/agent/pool                        # Agent pool metrics
 # MCP server (requires SYNROUTE_MCP_SERVER=true)
 curl -X POST localhost:8090/mcp/tools/list               # MCP tools/list
 curl -X POST localhost:8090/mcp/tools/call -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"bash","arguments":{"command":"ls"}}}'

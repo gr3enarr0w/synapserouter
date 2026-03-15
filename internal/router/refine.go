@@ -69,6 +69,9 @@ func (r *Router) RefineIntent(ctx context.Context, req *providers.ChatRequest, s
 		Content: refinementSystemPrompt,
 	})
 	for _, msg := range relevant {
+		if msg.Role == "tool" {
+			continue // orphaned tool results lack ToolCallID, break Gemini/Claude APIs
+		}
 		messages = append(messages, providers.Message{
 			Role:    msg.Role,
 			Content: msg.Content,

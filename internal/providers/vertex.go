@@ -52,7 +52,7 @@ func NewVertexProvider(cfg VertexConfig) *VertexProvider {
 			maxContext: maxCtx,
 			timeout:    120 * time.Second,
 		},
-		client:      &http.Client{Timeout: 120 * time.Second},
+		client:      NewLLMClient(120 * time.Second),
 		project:     cfg.Project,
 		location:    cfg.Location,
 		publisher:   cfg.Publisher,
@@ -106,7 +106,7 @@ func (p *VertexProvider) defaultModel() string {
 	if p.publisher == "anthropic" {
 		return "claude-sonnet-4-5"
 	}
-	return "gemini-2.5-pro"
+	return "gemini-3.1-pro-preview"
 }
 
 // ── Claude via rawPredict ──

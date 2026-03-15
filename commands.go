@@ -331,6 +331,10 @@ func cmdChat(args []string) {
 	message := fs.String("message", "", "One-shot message (non-interactive)")
 	system := fs.String("system", "", "Custom system prompt")
 	useWorktree := fs.Bool("worktree", false, "Run in isolated git worktree")
+	maxAgents := fs.Int("max-agents", 5, "Max concurrent sub-agents")
+	budgetTokens := fs.Int64("budget", 0, "Max total tokens budget (0 = unlimited)")
+	resume := fs.Bool("resume", false, "Resume most recent session")
+	sessionID := fs.String("session", "", "Resume specific session ID")
 	fs.Parse(args)
 
 	ac, err := app.InitLight(context.Background())
@@ -353,9 +357,16 @@ func cmdChat(args []string) {
 	config := agent.DefaultConfig()
 	config.Model = *model
 	config.WorkDir = cwd
+	config.MaxAgents = *maxAgents
+	config.DB = ac.DB
 	if *system != "" {
 		config.SystemPrompt = *system
 	}
+	if *budgetTokens > 0 {
+		config.Budget = &agent.AgentBudget{MaxTokens: *budgetTokens}
+	}
+	config.Resume = *resume
+	config.SessionID = *sessionID
 
 	ctx := context.Background()
 
@@ -384,6 +395,16 @@ func cmdChat(args []string) {
 	}
 
 	if *message != "" {
+		// One-shot mode: use a temp directory to avoid writing files into the
+		// project root (e.g. palindrome.go causing "main redeclared" in a Go project).
+		if !*useWorktree {
+			tmpDir, tmpErr := os.MkdirTemp("", "synroute-chat-*")
+			if tmpErr == nil {
+				config.WorkDir = tmpDir
+				defer os.RemoveAll(tmpDir)
+			}
+		}
+
 		response, err := agent.RunOneShot(ctx, ac.ProxyRouter, registry, config, *message)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -397,11 +418,58 @@ func cmdChat(args []string) {
 	}
 
 	renderer := agent.NewRenderer(os.Stdout)
-	ag := agent.New(ac.ProxyRouter, registry, renderer, config)
+
+	// Create agent pool for sub-agent concurrency
+	pool := agent.NewPool(config.MaxAgents)
+
+	var ag *agent.Agent
+
+	// Session resume: restore from database if requested
+	if config.SessionID != "" && config.DB != nil {
+		state, err := agent.LoadState(config.DB, config.SessionID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading session: %v\n", err)
+			os.Exit(1)
+		}
+		ag = agent.RestoreAgent(ac.ProxyRouter, registry, renderer, state)
+		fmt.Fprintf(os.Stderr, "Resumed session: %s (%d messages)\n", state.SessionID, len(state.Messages))
+	} else if config.Resume && config.DB != nil {
+		state, err := agent.LoadLatestState(config.DB)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "No session to resume: %v\n", err)
+			ag = agent.New(ac.ProxyRouter, registry, renderer, config)
+		} else {
+			ag = agent.RestoreAgent(ac.ProxyRouter, registry, renderer, state)
+			fmt.Fprintf(os.Stderr, "Resumed session: %s (%d messages)\n", state.SessionID, len(state.Messages))
+		}
+	} else {
+		ag = agent.New(ac.ProxyRouter, registry, renderer, config)
+	}
+
+	ag.SetPool(pool)
+
+	// Register delegation tools
+	registry.Register(agent.NewDelegateTool(ag))
+	registry.Register(agent.NewHandoffTool(ag))
+
+	// Set budget tracker if configured
+	if config.Budget != nil {
+		ag.SetInputGuardrails(agent.NewGuardrailChain(&agent.SecretPatternGuardrail{}))
+	}
+
 	repl := agent.NewREPL(ag, renderer)
 	if err := repl.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Auto-save session on exit
+	if config.DB != nil {
+		if err := ag.SaveState(config.DB); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save session: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Session saved: %s\n", ag.SessionID())
+		}
 	}
 
 	// On exit, offer to clean up worktree

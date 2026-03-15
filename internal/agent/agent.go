@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
@@ -25,6 +27,21 @@ type Agent struct {
 	renderer     *Renderer
 	config       Config
 	sessionID    string
+
+	// Sub-agent hierarchy
+	mu       sync.Mutex
+	parentID string
+	children []*ChildRef
+	budget   *BudgetTracker
+	pool     *Pool
+
+	// Guardrails
+	inputGuardrails  *GuardrailChain
+	outputGuardrails *GuardrailChain
+
+	// Observability
+	trace   *Trace
+	metrics *AgentMetrics
 }
 
 // New creates an agent with the given executor, tool registry, and config.
@@ -45,14 +62,76 @@ func (a *Agent) SetPermissions(pc *tools.PermissionChecker) {
 	a.permissions = pc
 }
 
+// SetPool sets the agent pool for concurrency management.
+func (a *Agent) SetPool(pool *Pool) {
+	a.pool = pool
+}
+
+// SetInputGuardrails sets guardrails applied to user input.
+func (a *Agent) SetInputGuardrails(gc *GuardrailChain) {
+	a.inputGuardrails = gc
+}
+
+// SetOutputGuardrails sets guardrails applied to agent output.
+func (a *Agent) SetOutputGuardrails(gc *GuardrailChain) {
+	a.outputGuardrails = gc
+}
+
+// EnableTracing starts recording structured trace spans.
+func (a *Agent) EnableTracing() {
+	a.trace = NewTrace(a.sessionID, a.parentID)
+}
+
+// Trace returns the agent's trace, or nil if tracing is disabled.
+func (a *Agent) Trace() *Trace {
+	return a.trace
+}
+
+// SetMetrics attaches a metrics tracker to this agent.
+func (a *Agent) SetMetrics(m *AgentMetrics) {
+	a.metrics = m
+}
+
+// Metrics returns the agent's metrics tracker.
+func (a *Agent) Metrics() *AgentMetrics {
+	return a.metrics
+}
+
 // Run processes a user message through the agent loop and returns the final text response.
 func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
+	// Input guardrails
+	if a.inputGuardrails != nil {
+		if result := a.inputGuardrails.Validate(userMessage); !result.Passed {
+			return "", fmt.Errorf("input guardrail: %s", result.Reason)
+		}
+	}
+
 	a.conversation.Add(providers.Message{
 		Role:    "user",
 		Content: userMessage,
 	})
 
-	return a.loop(ctx)
+	start := time.Now()
+	response, err := a.loop(ctx)
+
+	// Record metrics
+	if a.metrics != nil {
+		turns := len(a.conversation.Messages()) / 2 // rough estimate
+		a.metrics.RecordRequest(time.Since(start), 0, turns, err != nil)
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	// Output guardrails
+	if a.outputGuardrails != nil {
+		if result := a.outputGuardrails.Validate(response); !result.Passed {
+			return "", fmt.Errorf("output guardrail: %s", result.Reason)
+		}
+	}
+
+	return response, nil
 }
 
 // Clear resets the conversation history.
@@ -67,6 +146,14 @@ func (a *Agent) SessionID() string {
 
 func (a *Agent) loop(ctx context.Context) (string, error) {
 	for turn := 0; turn < a.config.MaxTurns; turn++ {
+		// Budget check
+		if a.budget != nil {
+			a.budget.RecordTurn()
+			if reason := a.budget.Exceeded(); reason != "" {
+				return "", fmt.Errorf("agent budget exceeded: %s", reason)
+			}
+		}
+
 		messages := a.buildMessages()
 		toolDefs := a.registry.OpenAIToolDefinitions()
 
@@ -76,9 +163,26 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			Tools:    toolDefs,
 		}
 
+		// Trace LLM call
+		var endLLMSpan func(error)
+		if a.trace != nil {
+			endLLMSpan = a.trace.StartSpan("llm_call", "llm_call", map[string]interface{}{
+				"model": a.config.Model,
+				"turn":  turn,
+			})
+		}
+
 		resp, err := a.executor.ChatCompletion(ctx, req, a.sessionID)
+		if endLLMSpan != nil {
+			endLLMSpan(err)
+		}
 		if err != nil {
 			return "", fmt.Errorf("LLM call failed: %w", err)
+		}
+
+		// Track token usage
+		if a.budget != nil && resp.Usage.TotalTokens > 0 {
+			a.budget.RecordTokens(int64(resp.Usage.TotalTokens))
 		}
 
 		if len(resp.Choices) == 0 {
@@ -106,7 +210,23 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 				a.renderer.ToolCall(name, args)
 			}
 
+			toolStart := time.Now()
 			result, execErr := a.registry.ExecuteChecked(ctx, name, args, a.config.WorkDir, a.permissions)
+			toolDuration := time.Since(toolStart)
+
+			// Trace and metrics for tool call
+			if a.trace != nil {
+				a.trace.AddSpan(Span{
+					Name:      name,
+					Type:      "tool_call",
+					StartTime: toolStart,
+					Duration:  toolDuration,
+					Metadata:  map[string]interface{}{"args": args},
+				})
+			}
+			if a.metrics != nil {
+				a.metrics.RecordToolCall(name, toolDuration)
+			}
 			var resultContent string
 			if execErr != nil {
 				resultContent = fmt.Sprintf("error: %v", execErr)

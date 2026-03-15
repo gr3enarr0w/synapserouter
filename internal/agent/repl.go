@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
 )
@@ -145,6 +146,40 @@ func (r *REPL) handleCommand(input string) bool {
 			fmt.Fprintf(r.out, "  %3d. [%s] %s\n", i+1, msg.Role, content)
 		}
 
+	case "/agents":
+		children := r.agent.Children()
+		if len(children) == 0 {
+			fmt.Fprintln(r.out, "No sub-agents spawned")
+		} else {
+			fmt.Fprintf(r.out, "Sub-agents (%d):\n", len(children))
+			for _, c := range children {
+				fmt.Fprintf(r.out, "  %-20s [%s] %s\n", c.ID, c.Role, c.Status)
+			}
+		}
+
+	case "/budget":
+		if r.agent.budget == nil {
+			fmt.Fprintln(r.out, "No budget configured")
+		} else {
+			snap := r.agent.budget.Snapshot()
+			fmt.Fprintf(r.out, "Budget usage:\n")
+			fmt.Fprintf(r.out, "  Turns:   %d", snap.Turns)
+			if snap.Budget.MaxTurns > 0 {
+				fmt.Fprintf(r.out, " / %d", snap.Budget.MaxTurns)
+			}
+			fmt.Fprintln(r.out)
+			fmt.Fprintf(r.out, "  Tokens:  %d", snap.Tokens)
+			if snap.Budget.MaxTokens > 0 {
+				fmt.Fprintf(r.out, " / %d", snap.Budget.MaxTokens)
+			}
+			fmt.Fprintln(r.out)
+			fmt.Fprintf(r.out, "  Elapsed: %s", snap.Elapsed.Round(time.Second))
+			if snap.Budget.MaxDuration > 0 {
+				fmt.Fprintf(r.out, " / %s", snap.Budget.MaxDuration)
+			}
+			fmt.Fprintln(r.out)
+		}
+
 	case "/help":
 		fmt.Fprintln(r.out, `Commands:
   /exit      Exit the REPL
@@ -152,6 +187,8 @@ func (r *REPL) handleCommand(input string) bool {
   /model     Show or set the model (e.g., /model claude-sonnet-4-6)
   /tools     List available tools
   /history   Show conversation history
+  /agents    Show spawned sub-agents
+  /budget    Show resource budget usage
   /help      Show this help`)
 
 	default:

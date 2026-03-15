@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ type Router struct {
 	providers       []providers.Provider
 	usageTracker    *usage.Tracker
 	vectorMemory    *memory.VectorMemory
+	sessionTracker  *memory.SessionTracker
 	db              *sql.DB
 	circuitBreakers map[string]*CircuitBreaker
 	healthMu        sync.RWMutex
@@ -81,6 +83,16 @@ func NewRouter(
 	}
 }
 
+// SetSessionTracker sets the session tracker for cross-session memory continuity.
+func (r *Router) SetSessionTracker(st *memory.SessionTracker) {
+	r.sessionTracker = st
+}
+
+// SessionTracker returns the router's session tracker (may be nil).
+func (r *Router) SessionTracker() *memory.SessionTracker {
+	return r.sessionTracker
+}
+
 // isHealthyCached returns cached health status to avoid burning provider API quota
 // on health checks. A successful request resets the cache; a circuit breaker open
 // overrides the cache. Only falls through to a real IsHealthy call if the cache is
@@ -129,6 +141,13 @@ func (r *Router) ChatCompletionForProvider(
 		}
 	}
 
+	// Touch session as active for cross-session tracking
+	if sessionID != "" && r.sessionTracker != nil {
+		if err := r.sessionTracker.Touch(sessionID); err != nil {
+			log.Printf("[Router] Warning: failed to touch session: %v", err)
+		}
+	}
+
 	// Retrieve memory BEFORE storing new messages (to avoid retrieving what we just stored)
 	memoryQuery := lastUserMessage(req.Messages)
 	var retrievedMessages []memory.Message
@@ -141,10 +160,28 @@ func (r *Router) ChatCompletionForProvider(
 		} else {
 			retrievedMessages = relevant
 
+			// Cross-session fallback: carry over context from recently ended session
+			if len(relevant) == 0 && r.sessionTracker != nil {
+				endedSession, findErr := r.sessionTracker.FindRecentEnded(sessionID, 30*time.Minute)
+				if findErr == nil && endedSession != "" {
+					crossMsgs, crossErr := r.vectorMemory.RetrieveRecentFromSession(endedSession, 8)
+					if crossErr == nil && len(crossMsgs) > 0 {
+						retrievedMessages = crossMsgs
+						log.Printf("[Router] Cross-session continuity: carried %d messages from ended session %s",
+							len(crossMsgs), endedSession)
+					}
+				}
+			}
+
 			// Inject retrieved memory into request (prepend to provide context)
-			if len(relevant) > 0 {
-				priorMessages := make([]providers.Message, 0, len(relevant)+len(req.Messages))
-				for _, msg := range relevant {
+			// Filter out tool-role messages — they lack ToolCallID/Name after
+			// retrieval which causes Gemini 400s (function_response.name missing).
+			if len(retrievedMessages) > 0 {
+				priorMessages := make([]providers.Message, 0, len(retrievedMessages)+len(req.Messages))
+				for _, msg := range retrievedMessages {
+					if msg.Role == "tool" {
+						continue // orphaned tool results can't be reconstructed
+					}
 					priorMessages = append(priorMessages, providers.Message{
 						Role:    msg.Role,
 						Content: msg.Content,
@@ -152,25 +189,28 @@ func (r *Router) ChatCompletionForProvider(
 				}
 				priorMessages = append(priorMessages, req.Messages...)
 				req.Messages = priorMessages
-				log.Printf("[Router] Injected %d memory messages into request for session %s", len(relevant), sessionID)
+				log.Printf("[Router] Injected %d memory messages into request for session %s", len(retrievedMessages), sessionID)
 			}
 
 			// Build debug metadata if requested
 			if includeMemoryDebug {
-				candidates := make([]providers.Message, len(relevant))
-				for i, msg := range relevant {
+				candidates := make([]providers.Message, len(retrievedMessages))
+				for i, msg := range retrievedMessages {
 					candidates[i] = providers.Message{Role: msg.Role, Content: msg.Content}
 				}
 				metadata = &providers.ProxyMetadata{
 					Provider:             "",
 					SessionID:            sessionID,
 					MemoryQuery:          memoryQuery,
-					MemoryCandidateCount: len(relevant),
+					MemoryCandidateCount: len(retrievedMessages),
 					MemoryCandidates:     candidates,
 				}
 			}
 		}
 	}
+
+	// Skill-aware preprocessing: analyze conversation and inject skill context
+	r.PreprocessRequest(&req)
 
 	// Store the NEW messages
 	if sessionID != "" && !req.SkipMemory {
@@ -193,6 +233,7 @@ func (r *Router) ChatCompletionForProvider(
 		return providers.ChatResponse{}, err
 	}
 
+	startTime := time.Now()
 	resp, err := r.tryProvider(ctx, provider, req, sessionID)
 	attempts := []providerAttempt{{
 		Provider: provider.Name(),
@@ -204,6 +245,9 @@ func (r *Router) ChatCompletionForProvider(
 		r.persistAudit(requestID, sessionID, provider.Name(), "", "", memoryQuery, metadata, attempts, err)
 		return providers.ChatResponse{}, err
 	}
+
+	// Stall detection: if response took too long with minimal output, auto-continue
+	resp, _ = r.handleStall(ctx, req, resp, provider, sessionID, time.Since(startTime), metadata)
 
 	// Store the assistant response in memory for continuity
 	if sessionID != "" && !req.SkipMemory && len(resp.Choices) > 0 {
@@ -336,6 +380,13 @@ func (r *Router) ChatCompletionWithDebug(
 		}
 	}
 
+	// Touch session as active for cross-session tracking
+	if sessionID != "" && r.sessionTracker != nil {
+		if err := r.sessionTracker.Touch(sessionID); err != nil {
+			log.Printf("[Router] Warning: failed to touch session: %v", err)
+		}
+	}
+
 	// 1. Retrieve memory BEFORE storing new messages
 	memoryQuery := lastUserMessage(req.Messages)
 	var retrievedMessages []memory.Message
@@ -348,10 +399,28 @@ func (r *Router) ChatCompletionWithDebug(
 		} else {
 			retrievedMessages = relevant
 
+			// Cross-session fallback: carry over context from recently ended session
+			if len(relevant) == 0 && r.sessionTracker != nil {
+				endedSession, findErr := r.sessionTracker.FindRecentEnded(sessionID, 30*time.Minute)
+				if findErr == nil && endedSession != "" {
+					crossMsgs, crossErr := r.vectorMemory.RetrieveRecentFromSession(endedSession, 8)
+					if crossErr == nil && len(crossMsgs) > 0 {
+						retrievedMessages = crossMsgs
+						log.Printf("[Router] Cross-session continuity: carried %d messages from ended session %s",
+							len(crossMsgs), endedSession)
+					}
+				}
+			}
+
 			// Inject retrieved memory into request
-			if len(relevant) > 0 {
-				priorMessages := make([]providers.Message, 0, len(relevant)+len(req.Messages))
-				for _, msg := range relevant {
+			// Filter out tool-role messages — they lack ToolCallID/Name after
+			// retrieval which causes Gemini 400s (function_response.name missing).
+			if len(retrievedMessages) > 0 {
+				priorMessages := make([]providers.Message, 0, len(retrievedMessages)+len(req.Messages))
+				for _, msg := range retrievedMessages {
+					if msg.Role == "tool" {
+						continue
+					}
 					priorMessages = append(priorMessages, providers.Message{
 						Role:    msg.Role,
 						Content: msg.Content,
@@ -359,25 +428,28 @@ func (r *Router) ChatCompletionWithDebug(
 				}
 				priorMessages = append(priorMessages, req.Messages...)
 				req.Messages = priorMessages
-				log.Printf("[Router] Injected %d memory messages into request for session %s", len(relevant), sessionID)
+				log.Printf("[Router] Injected %d memory messages into request for session %s", len(retrievedMessages), sessionID)
 			}
 
 			// Build debug metadata if requested
 			if includeMemoryDebug {
-				candidates := make([]providers.Message, len(relevant))
-				for i, msg := range relevant {
+				candidates := make([]providers.Message, len(retrievedMessages))
+				for i, msg := range retrievedMessages {
 					candidates[i] = providers.Message{Role: msg.Role, Content: msg.Content}
 				}
 				metadata = &providers.ProxyMetadata{
 					Provider:             "",
 					SessionID:            sessionID,
 					MemoryQuery:          memoryQuery,
-					MemoryCandidateCount: len(relevant),
+					MemoryCandidateCount: len(retrievedMessages),
 					MemoryCandidates:     candidates,
 				}
 			}
 		}
 	}
+
+	// Skill-aware preprocessing: analyze conversation and inject skill context
+	r.PreprocessRequest(&req)
 
 	// 2. Store the NEW messages
 	if sessionID != "" && !req.SkipMemory {
@@ -404,10 +476,16 @@ func (r *Router) ChatCompletionWithDebug(
 	log.Printf("[Router] Selected provider: %s", provider.Name())
 
 	// 3. Try selected provider with fallback using the original request body.
+	startTime := time.Now()
 	resp, finalProvider, attempts, err := r.tryProvidersWithFallback(ctx, req, provider, sessionID)
 	if err != nil {
 		r.persistAudit(requestID, sessionID, provider.Name(), "", "", memoryQuery, metadata, attempts, err)
 		return providers.ChatResponse{}, err
+	}
+
+	// Stall detection: if response took too long with minimal output, auto-continue
+	if finalProv := r.findProviderByName(finalProvider); finalProv != nil {
+		resp, _ = r.handleStall(ctx, req, resp, finalProv, sessionID, time.Since(startTime), metadata)
 	}
 
 	// Store the assistant response in memory for continuity
@@ -646,6 +724,85 @@ func (r *Router) tryProvider(
 
 	log.Printf("[Router] ✓ Success with %s (tokens: %d)", provider.Name(), resp.Usage.TotalTokens)
 	return resp, nil
+}
+
+const stallContinuePrompt = "Continue where you left off. If you were waiting on a long-running operation, report what you have so far and suggest next steps."
+
+func stallTimeoutSeconds() int {
+	v := os.Getenv("STALL_TIMEOUT_SECONDS")
+	if v == "" {
+		return 180
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 180
+	}
+	return n
+}
+
+// handleStall checks if a response looks stalled (took too long, very short output)
+// and retries once with a continuation prompt. Returns the original or retried response
+// and updates metadata flags.
+func (r *Router) handleStall(
+	ctx context.Context,
+	req providers.ChatRequest,
+	resp providers.ChatResponse,
+	provider providers.Provider,
+	sessionID string,
+	elapsed time.Duration,
+	metadata *providers.ProxyMetadata,
+) (providers.ChatResponse, bool) {
+	threshold := time.Duration(stallTimeoutSeconds()) * time.Second
+	if elapsed < threshold {
+		return resp, false
+	}
+
+	// Check if the response is substantive
+	responseLen := 0
+	if len(resp.Choices) > 0 {
+		responseLen = len(resp.Choices[0].Message.Content)
+	}
+	if responseLen >= 50 {
+		return resp, false
+	}
+
+	log.Printf("[Router] Stall detected: %s took %s with only %d chars output, retrying with continuation prompt",
+		provider.Name(), elapsed, responseLen)
+
+	if metadata != nil {
+		metadata.StallDetected = true
+	}
+
+	// Append continuation prompt and retry
+	retryReq := req
+	retryReq.Messages = append(append([]providers.Message{}, req.Messages...), providers.Message{
+		Role:    "user",
+		Content: stallContinuePrompt,
+	})
+	retryReq.SkipSkillPreprocess = true
+	retryReq.SkipMemory = true
+
+	retryResp, err := provider.ChatCompletion(ctx, retryReq, sessionID)
+	if err != nil {
+		log.Printf("[Router] Stall retry failed: %v, returning original response", err)
+		return resp, true
+	}
+
+	if metadata != nil {
+		metadata.StallRetried = true
+	}
+
+	log.Printf("[Router] Stall retry succeeded with %d chars", len(retryResp.Choices[0].Message.Content))
+	return retryResp, true
+}
+
+func (r *Router) findProviderByName(name string) providers.Provider {
+	for _, p := range r.providers {
+		if p.Name() == name {
+			return p
+		}
+	}
+	return nil
 }
 
 func estimateTokens(messages []providers.Message) int {

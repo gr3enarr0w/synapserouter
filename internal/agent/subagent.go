@@ -1,0 +1,179 @@
+package agent
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
+)
+
+// SpawnConfig configures a child agent.
+type SpawnConfig struct {
+	Role        string       // agent role (e.g., "tester", "researcher")
+	Model       string       // model override (empty = inherit parent)
+	Tools       *tools.Registry // tool registry (nil = inherit parent)
+	Budget      *AgentBudget // resource limits for child
+	WorkDir     string       // working directory (empty = inherit parent)
+	System      string       // system prompt override
+}
+
+// ChildRef tracks a spawned child agent.
+type ChildRef struct {
+	ID        string    `json:"id"`
+	ParentID  string    `json:"parent_id"`
+	Role      string    `json:"role"`
+	Status    string    `json:"status"` // "running", "completed", "failed"
+	StartedAt time.Time `json:"started_at"`
+	Result    string    `json:"result,omitempty"`
+	Error     string    `json:"error,omitempty"`
+}
+
+// SpawnChild creates and returns a child agent configured from the parent.
+func (a *Agent) SpawnChild(cfg SpawnConfig) *Agent {
+	model := cfg.Model
+	if model == "" {
+		model = a.config.Model
+	}
+
+	registry := cfg.Tools
+	if registry == nil {
+		registry = a.registry
+	}
+
+	workDir := cfg.WorkDir
+	if workDir == "" {
+		workDir = a.config.WorkDir
+	}
+
+	maxTurns := a.config.MaxTurns
+	if cfg.Budget != nil && cfg.Budget.MaxTurns > 0 {
+		maxTurns = cfg.Budget.MaxTurns
+	}
+
+	sysPrompt := cfg.System
+	if sysPrompt == "" {
+		sysPrompt = childSystemPrompt(cfg.Role, workDir)
+	}
+
+	childConfig := Config{
+		Model:        model,
+		SystemPrompt: sysPrompt,
+		MaxTurns:     maxTurns,
+		WorkDir:      workDir,
+	}
+
+	child := New(a.executor, registry, a.renderer, childConfig)
+	child.parentID = a.sessionID
+
+	if cfg.Budget != nil {
+		child.budget = NewBudgetTracker(*cfg.Budget)
+	}
+
+	// Track child in parent
+	a.mu.Lock()
+	a.children = append(a.children, &ChildRef{
+		ID:        child.sessionID,
+		ParentID:  a.sessionID,
+		Role:      cfg.Role,
+		Status:    "running",
+		StartedAt: time.Now(),
+	})
+	a.mu.Unlock()
+
+	return child
+}
+
+// RunChild spawns a child agent, runs a task, and returns the result.
+// This is the convenience method for single-shot delegation.
+func (a *Agent) RunChild(ctx context.Context, cfg SpawnConfig, task string) (string, error) {
+	child := a.SpawnChild(cfg)
+	result, err := child.Run(ctx, task)
+
+	// Update child ref status
+	a.mu.Lock()
+	for _, ref := range a.children {
+		if ref.ID == child.sessionID {
+			if err != nil {
+				ref.Status = "failed"
+				ref.Error = err.Error()
+			} else {
+				ref.Status = "completed"
+				ref.Result = result
+			}
+		}
+	}
+	a.mu.Unlock()
+
+	return result, err
+}
+
+// Children returns the list of child agent references.
+func (a *Agent) Children() []*ChildRef {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	refs := make([]*ChildRef, len(a.children))
+	copy(refs, a.children)
+	return refs
+}
+
+// ParentID returns the parent agent's session ID, if this is a child.
+func (a *Agent) ParentID() string {
+	return a.parentID
+}
+
+// RunChildrenParallel spawns multiple child agents and runs them concurrently.
+// Returns results indexed by role. Respects the provided concurrency limit.
+func (a *Agent) RunChildrenParallel(ctx context.Context, tasks []DelegateTask, maxConcurrent int) []DelegateResult {
+	if maxConcurrent <= 0 {
+		maxConcurrent = 5
+	}
+
+	results := make([]DelegateResult, len(tasks))
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+
+	for i, task := range tasks {
+		wg.Add(1)
+		go func(idx int, dt DelegateTask) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			result, err := a.RunChild(ctx, dt.Config, dt.Task)
+			results[idx] = DelegateResult{
+				Role:   dt.Config.Role,
+				Task:   dt.Task,
+				Result: result,
+			}
+			if err != nil {
+				results[idx].Error = err.Error()
+			}
+		}(i, task)
+	}
+
+	wg.Wait()
+	return results
+}
+
+// DelegateTask pairs a spawn config with a task prompt.
+type DelegateTask struct {
+	Config SpawnConfig
+	Task   string
+}
+
+// DelegateResult holds the outcome of a delegated task.
+type DelegateResult struct {
+	Role   string `json:"role"`
+	Task   string `json:"task"`
+	Result string `json:"result,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+func childSystemPrompt(role, workDir string) string {
+	return fmt.Sprintf(`You are a %s agent working in: %s
+
+You have been delegated a specific task by a parent agent. Focus exclusively on completing the delegated task.
+Use the available tools to accomplish your goal. Be concise and return actionable results.`, role, workDir)
+}
