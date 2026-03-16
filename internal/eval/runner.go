@@ -220,6 +220,11 @@ func samplePerSuite(exercises []Exercise, n int, rng *rand.Rand) []Exercise {
 }
 
 func (r *Runner) runExercise(ctx context.Context, ex Exercise, config EvalRunConfig, timeout time.Duration) EvalResult {
+	// Agent mode: iterative test → fix loop with test file context
+	if config.AgentMode {
+		return r.runExerciseAgent(ctx, ex, config, timeout)
+	}
+
 	result := EvalResult{
 		ID:         fmt.Sprintf("res-%d", time.Now().UnixNano()),
 		ExerciseID: ex.ID,

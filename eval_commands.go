@@ -450,6 +450,8 @@ func cmdEvalRun(args []string) {
 	perSuite := fs.Int("per-suite", 40, "Exercises per suite (0 = all, default 40 for pipeline validation)")
 	seed := fs.Int64("seed", 0, "Random seed for reproducibility")
 	twoPass := fs.Bool("two-pass", false, "Enable two-pass with error feedback")
+	agentMode := fs.Bool("agent", false, "Agent mode: iterative test→fix loop with test file context")
+	maxTurns := fs.Int("max-turns", 5, "Max fix iterations in agent mode")
 	timeout := fs.Int("timeout", 120, "Per-exercise Docker timeout in seconds")
 	concurrency := fs.Int("concurrency", 4, "Parallel exercises (1=sequential, max 10)")
 	jsonOut := fs.Bool("json", false, "Output JSON")
@@ -480,6 +482,8 @@ func cmdEvalRun(args []string) {
 		CountPerSuite: *perSuite,
 		Seed:          *seed,
 		TwoPass:       *twoPass,
+		AgentMode:     *agentMode,
+		MaxTurns:      *maxTurns,
 		Timeout:       *timeout,
 		Concurrency:   *concurrency,
 	}

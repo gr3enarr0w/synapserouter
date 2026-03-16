@@ -30,6 +30,8 @@ type EvalRunConfig struct {
 	CountPerSuite int     `json:"count_per_suite,omitempty"`
 	Seed         int64    `json:"seed,omitempty"`
 	TwoPass      bool     `json:"two_pass,omitempty"`
+	AgentMode    bool     `json:"agent_mode,omitempty"`
+	MaxTurns     int      `json:"max_turns,omitempty"`
 	Timeout      int      `json:"timeout_seconds,omitempty"`
 	Concurrency  int      `json:"concurrency,omitempty"`
 }
