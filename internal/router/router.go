@@ -272,10 +272,11 @@ func (r *Router) ChatCompletionForProvider(
 		}
 	}
 
-	if metadata != nil {
-		metadata.Provider = provider.Name()
-		resp.XProxyMetadata = metadata
+	if metadata == nil {
+		metadata = &providers.ProxyMetadata{}
 	}
+	metadata.Provider = provider.Name()
+	resp.XProxyMetadata = metadata
 	r.persistAudit(requestID, sessionID, provider.Name(), provider.Name(), resp.Model, memoryQuery, metadata, attempts, nil)
 	return resp, nil
 }

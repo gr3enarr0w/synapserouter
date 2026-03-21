@@ -267,8 +267,17 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			Tools:    a.registry.OpenAIToolDefinitions(),
 		}
 
-		a.emit(EventLLMStart, a.config.TargetProvider, map[string]any{
-			"model": a.config.Model,
+		// Resolve which provider will handle this call for the event
+		startProvider := a.config.TargetProvider
+		startModel := a.config.Model
+		if startProvider == "" && len(a.config.EscalationChain) > 0 && a.providerIdx < len(a.config.EscalationChain) {
+			level := a.config.EscalationChain[a.providerIdx]
+			if len(level.Providers) > 0 {
+				startProvider = level.Providers[0]
+			}
+		}
+		a.emit(EventLLMStart, startProvider, map[string]any{
+			"model": startModel,
 			"turn":  turn,
 			"role":  a.sessionID,
 		})

@@ -108,14 +108,26 @@ func (lr *LogRenderer) renderText(e AgentEvent) {
 
 	case EventLLMStart:
 		if lr.verbosity >= VerbosityNormal {
-			fmt.Fprintf(lr.out, "%s\033[34mllm\033[0m → %s (turn %d)%s\n",
-				prefix, str(e.Data, "model"), intVal(e.Data, "turn"), agent)
+			provider := e.Provider
+			if provider == "" {
+				provider = "router"
+			}
+			fmt.Fprintf(lr.out, "%s\033[34mllm\033[0m → %s [%s] (turn %d)%s\n",
+				prefix, provider, str(e.Data, "model"), intVal(e.Data, "turn"), agent)
 		}
 
 	case EventLLMComplete:
 		if lr.verbosity >= VerbosityNormal {
-			fmt.Fprintf(lr.out, "%s\033[34mllm\033[0m ← %s | %s | %d tokens%s\n",
-				prefix, e.Provider, str(e.Data, "duration"),
+			provider := e.Provider
+			if provider == "" {
+				provider = "?"
+			}
+			model := str(e.Data, "model")
+			if model == "" {
+				model = "?"
+			}
+			fmt.Fprintf(lr.out, "%s\033[34mllm\033[0m ← %s [%s] | %s | %d tokens%s\n",
+				prefix, provider, model, str(e.Data, "duration"),
 				intVal(e.Data, "tokens_used"), agent)
 		} else {
 			fmt.Fprintf(lr.out, "%s\033[34mllm\033[0m %s%s\n",
