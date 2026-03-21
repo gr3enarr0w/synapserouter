@@ -55,7 +55,7 @@ func NewNanoGPTProvider(apiKey, tier string) *NanoGPTProvider {
 			maxContext: 0, // determined per-model via MaxContextTokens()
 			timeout:    120 * time.Second,
 		},
-		client: &http.Client{Timeout: 120 * time.Second},
+		client: NewLLMClient(120 * time.Second),
 		tier:   tier,
 	}
 }
@@ -65,7 +65,7 @@ func (p *NanoGPTProvider) ChatCompletion(ctx context.Context, req ChatRequest, s
 		if p.tier == "paid" {
 			req.Model = "chatgpt-4o-latest"
 		} else {
-			req.Model = "qwen/qwen3.5-plus"
+			req.Model = "qwen/qwen3.5-397b-a17b"
 		}
 	}
 
@@ -242,7 +242,7 @@ func (p *NanoGPTProvider) MaxContextTokens() int {
 	if p.tier == "paid" {
 		return nanoGPTModelContext("chatgpt-4o-latest")
 	}
-	return nanoGPTModelContext("qwen/qwen3.5-plus")
+	return nanoGPTModelContext("qwen/qwen3.5-397b-a17b")
 }
 
 // NanoGPTModelContext returns the context token limit for a specific NanoGPT model.

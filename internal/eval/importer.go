@@ -1236,8 +1236,10 @@ func ImportDS1000(store *Store, repoPath string) (*ImportResult, error) {
 }
 
 func buildDS1000TestRunner(entry ds1000Entry) string {
-	// The code_context contains test_execution and test_string functions
-	// We wrap them in a test runner script
+	// The code_context contains generate_test_case(), exec_context, test_execution(), etc.
+	// test_execution() handles exec internally via exec_context.replace("[insert]", solution).
+	// Do NOT exec(solution_code, globals()) — that fails because context variables
+	// like df, ax, etc. aren't in globals. Let test_execution handle it.
 	var sb strings.Builder
 	sb.WriteString("import sys\nsys.path.insert(0, '.')\n\n")
 	sb.WriteString(entry.CodeContext)
@@ -1245,13 +1247,13 @@ func buildDS1000TestRunner(entry ds1000Entry) string {
 	sb.WriteString("# Read the solution\n")
 	sb.WriteString("with open('solution.py', 'r') as f:\n")
 	sb.WriteString("    solution_code = f.read()\n\n")
-	sb.WriteString("# Execute and test\n")
+	sb.WriteString("# Test via the code_context's test functions\n")
 	sb.WriteString("try:\n")
-	sb.WriteString("    exec(solution_code, globals())\n")
-	sb.WriteString("    result = test_execution(solution_code) if 'test_execution' in dir() else None\n")
-	sb.WriteString("    if result is not None and result != 0:\n")
-	sb.WriteString("        print(f'FAIL: test_execution returned {result}')\n")
-	sb.WriteString("        sys.exit(1)\n")
+	sb.WriteString("    if 'test_execution' in dir():\n")
+	sb.WriteString("        result = test_execution(solution_code)\n")
+	sb.WriteString("        if result is not None and result != 0:\n")
+	sb.WriteString("            print(f'FAIL: test_execution returned {result}')\n")
+	sb.WriteString("            sys.exit(1)\n")
 	sb.WriteString("    if 'test_string' in dir():\n")
 	sb.WriteString("        test_result = test_string(solution_code)\n")
 	sb.WriteString("        if test_result is not None and test_result != 0:\n")

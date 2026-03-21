@@ -2,6 +2,9 @@ package providers
 
 import (
 	"context"
+	"crypto/tls"
+	"net"
+	"net/http"
 	"time"
 )
 
@@ -20,8 +23,9 @@ type ChatRequest struct {
 	Thinking        map[string]interface{}   `json:"thinking,omitempty"`
 
 	// Memory control fields (not part of OpenAI spec)
-	SkipMemory bool `json:"skip_memory,omitempty"`
-	ForceStore bool `json:"force_store,omitempty"`
+	SkipMemory          bool `json:"skip_memory,omitempty"`
+	ForceStore          bool `json:"force_store,omitempty"`
+	SkipSkillPreprocess bool `json:"skip_skill_preprocess,omitempty"`
 }
 
 // Message represents a chat message
@@ -65,6 +69,8 @@ type ProxyMetadata struct {
 	MemoryQuery          string    `json:"memory_query,omitempty"`
 	MemoryCandidateCount int       `json:"memory_candidate_count,omitempty"`
 	MemoryCandidates     []Message `json:"memory_candidates,omitempty"`
+	StallDetected        bool      `json:"stall_detected,omitempty"`
+	StallRetried         bool      `json:"stall_retried,omitempty"`
 }
 
 // Provider interface that all LLM providers must implement
@@ -91,4 +97,25 @@ func (bp *BaseProvider) Name() string {
 
 func (bp *BaseProvider) MaxContextTokens() int {
 	return bp.maxContext
+}
+
+// NewLLMClient creates an HTTP client suitable for LLM API calls.
+// Unlike http.Client{Timeout: X}, this only bounds connection setup and
+// time-to-first-response-byte, NOT total body read time. This prevents
+// streaming/thinking responses from being killed mid-stream.
+func NewLLMClient(responseHeaderTimeout time.Duration) *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: responseHeaderTimeout,
+			IdleConnTimeout:       90 * time.Second,
+			MaxIdleConns:          20,
+			MaxIdleConnsPerHost:   10,
+			TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+		},
+	}
 }

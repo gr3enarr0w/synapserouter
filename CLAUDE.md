@@ -31,13 +31,13 @@ Go-based LLM proxy router and coding agent that distributes requests across subs
 ## Architecture
 
 ### Provider Chain (Personal Profile)
-Cost-optimized escalation: free/included models first, paid API last.
+Cost-optimized escalation: subscription models first, paid API last.
 
 `NanoGPT-Sub → Gemini → Codex → Claude Code → Ollama → NanoGPT-Paid`
 
-- `nanogpt-sub`: NanoGPT subscription models (qwen, deepseek, etc. — zero cost)
-- `gemini`, `codex`, `claude-code`: CLI subscription providers (free)
-- `nanogpt-paid`: NanoGPT paid API models (claude/gpt/gemini via NanoGPT — costs money)
+- `nanogpt-sub`: NanoGPT subscription models (qwen, deepseek, etc. — included in subscription)
+- `gemini`, `codex`, `claude-code`: CLI subscription providers (included in subscriptions)
+- `nanogpt-paid`: NanoGPT paid API models (claude/gpt/gemini via NanoGPT — costs money per call)
 - List order = priority (`GetBestProvider()` returns first under threshold)
 - Circuit breakers open on failures, parse "reset after Ns" from 429 errors
 - Health checks cached (2min TTL) to avoid burning API quota
@@ -66,7 +66,7 @@ Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-impl
 ### Agent Execution Layer
 - **Tool Registry** (`internal/tools/`): 7 built-in tools + 2 agent tools (delegate, handoff)
 - **Tool Categories**: `read_only` (always allowed), `write` (needs approval), `dangerous` (extra scrutiny)
-- **Agent Loop** (`internal/agent/`): message → LLM → tool calls → LLM → response (max 25 turns)
+- **Agent Loop** (`internal/agent/`): message → LLM → tool calls → pipeline check → repeat (unlimited turns)
 - **Sub-Agent SDK** (`internal/agent/subagent.go`): parent-child agent spawning with config inheritance
   - `SpawnChild(SpawnConfig)` — create child agent (inherits model, tools, workdir)
   - `RunChild(ctx, cfg, task)` — spawn + run + collect result
@@ -111,11 +111,27 @@ Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-impl
 ### Key Patterns
 - Gemini 2.5+ models: thinking tokens from output budget, min 1024 maxOutputTokens enforced
 - Codex: SSE streaming via `/responses` endpoint (NOT `/responses/compact`)
-- NanoGPT-Sub: defaults to "qwen/qwen3.5-plus" for auto
+- NanoGPT-Sub: defaults to "qwen/qwen3.5-397b-a17b" for auto (paid subscription, not free)
 - NanoGPT-Paid: defaults to "chatgpt-4o-latest" for auto (only via fallback)
 - Gemini personal (subscription): defaults to "gemini-3-flash-preview" for auto
 - Vertex Gemini (work): defaults to "gemini-3.1-pro-preview" for auto
 - Vertex Claude: use model names without dates (e.g. `claude-sonnet-4-6`)
+- Default subscription provider order: `gemini,openai,anthropic` (configurable via env)
+
+### Agent Pipeline (`internal/agent/pipeline.go`)
+- **Software pipeline**: Plan → Implement → Self-Check → Code Review → Acceptance Test → Deploy
+- **Data science pipeline**: EDA → Data Prep → Model → Review → Deploy → Verify
+- Pipeline detected automatically from matched skills
+- Quality gates: verification phases require minimum tool calls (can't rubber-stamp)
+- Sub-agent reviews: code-review and acceptance-test phases spawn FRESH agents with no shared context
+- Provider escalation triggered by pipeline phases (Escalate flag), not by separate mechanisms
+- Max 3 fail-back cycles before accepting result
+
+### Skills System (`internal/orchestration/skilldata/`)
+- 38+ embedded skills parsed from YAML frontmatter in `.md` files via `go:embed`
+- `ParseSkillsFromFS()` — no hardcoded Go registry, everything from frontmatter
+- Adding a skill: create `.md` file with frontmatter (name, triggers, role, phase, mcp_tools), rebuild
+- Skills injected into system prompt when triggers match the user's message
 
 ## Dev Commands
 
@@ -167,6 +183,7 @@ go vet ./...                               # Lint
 ./synroute chat --worktree                 # Run in isolated worktree
 ./synroute chat --max-agents 3             # Limit concurrent sub-agents
 ./synroute chat --budget 10000             # Max total tokens budget
+./synroute chat --project my-app            # Create ~/Development/my-app/ and work there
 ./synroute chat --resume                   # Resume most recent session
 ./synroute chat --session <id>             # Resume specific session
 ./synroute mcp-serve                       # Start standalone MCP server
@@ -257,9 +274,111 @@ Do NOT skip steps or ask whether to run them. The pipeline runs automatically af
 - Do not claim full parity without an explicit audit
 - Do not describe synroute as an MCP server — it is a standalone LLM router
 
+## Post-Run Audit (MANDATORY for every `synroute chat` run)
+
+After every agent run completes, perform this audit before reporting results. This is how we verify what works and what doesn't — every project, every session.
+
+### 1. Analyze the Work
+- Read the full agent output — don't just check if it exited cleanly
+- List every tool call the agent made and what it produced
+- Identify which providers were used and whether escalation fired
+
+### 2. Verify Output Matches Intent
+- Compare what the agent produced against what was requested
+- Check every specific detail: distances, values, formats, field names, auth methods
+- If the agent said "I did X" — verify X actually happened (fetch API state, read files, run the code)
+
+### 3. Check for Duplicates / Side Effects
+- Verify no duplicate resources were created (API entries, files, DB records)
+- Check that cleanup happened if requested
+- Verify old/stale state was removed
+
+### 4. Code Review (if code was generated)
+- Does it compile? Did the agent run `go build`?
+- Are there tests? Did they pass?
+- Is the code idiomatic for the language?
+- Are there hardcoded values that should be configurable?
+
+### 5. Identify Missing Steps
+For each project, consider which of these the agent SHOULD have done but didn't:
+- **Planning** — did it plan before implementing?
+- **Research** — did it look up APIs/docs before guessing?
+- **Implementation** — did it build all required components?
+- **Testing** — did it run tests or verify results?
+- **Review** — did it compare output vs input for completeness?
+- **Documentation** — did it document what it built?
+- **Escalation** — when stuck, did it escalate to research/different provider?
+- **Self-correction** — when results were wrong, did it detect and fix?
+
+### 6. Record Findings
+- Document what worked and what didn't
+- Identify patterns (e.g., "agent always misses rest periods in workout parsing")
+- Update skills, prompts, or agent behavior based on findings
+- Feed learnings into the next run
+
+### 7. Provider Chain Verification
+- Which providers were actually used? (check logs for "Success with X")
+- Did escalation happen when it should have?
+- Did auto-review use a different provider than implementation?
+- Were all subscription providers reachable?
+
+This audit is how we iteratively improve synapserouter. Each project run teaches us what the agent gets right and wrong, and we fix the gaps before the next project.
+
+## Workflow Rules (learned from real usage)
+
+### Tool Builder, Not Tool Runner
+- The agent BUILDS programs, scripts, and tools — it does NOT do the work itself
+- When a task involves repeated operations (API calls, data processing, sync): write a PROGRAM that does it
+- The user should end up with a runnable tool, not just completed side effects
+- Use bash/curl ONLY for research (testing APIs, inspecting responses) and verification (running the built tool)
+- The deliverable is ALWAYS a program the user can run, not a series of manual operations
+- This is how Claude Code works: it writes code, the user runs it
+
+### Plan Before Execute
+- ANY new feature or non-trivial change MUST be planned first (enter plan mode automatically)
+- Do NOT jump to implementation — always plan, get approval, then execute
+
+### The Router IS the Escalation
+- Synapserouter's entire purpose is cost-optimized escalation across providers
+- The agent uses the router's existing provider chain — no parallel escalation systems
+- Provider chain: `NanoGPT-Sub → Gemini → Codex → Claude Code → Ollama → NanoGPT-Paid`
+- Agent sends `model: "auto"` and lets the router pick
+- NanoGPT subscription is a PAID subscription, not free
+
+### Project Lifecycle Pipeline
+- Every substantial task goes through: Plan → Implement → Self-Check → Code Review → Acceptance Test → Deploy
+- Plan phase produces acceptance criteria that ALL later phases check against
+- Code review and acceptance test use FRESH sub-agents with no shared conversation (independent review)
+- Quality gates: verification phases must make tool calls (can't rubber-stamp with text)
+- Pipeline is the ONLY control flow mechanism — no bolted-on stall detection, mode switching, or failure tracking
+
+### Keep the Agent Simple
+- The agent loop is: call LLM → execute tools → check pipeline → repeat
+- ONE system per responsibility — no overlapping mechanisms
+- Pipeline handles all phase transitions and provider escalation
+- No inline prompt injection during tool execution
+- System prompt generated once per session, not every loop iteration
+
+### Skills Are Self-Contained
+- Adding a skill = drop one `.md` file in `internal/orchestration/skilldata/`, rebuild
+- No Go code changes needed — frontmatter defines triggers, role, phase, MCP tools
+- Skills compiled into binary via `go:embed`
+
+### Agent Working Directory
+- One-shot `--message` mode works in the CURRENT directory, not a temp dir
+- Files must persist after the agent exits
+- `--project <name>` flag creates `~/Development/<name>/` and works there
+
 ## Do Not
 
 - Put code style rules here (use linters and `go vet`)
 - Add comments, docstrings, or type annotations to code you didn't change
 - Over-engineer solutions beyond what was asked
 - Commit `.env` or credential files
+- Refer to NanoGPT subscription as "free" — it is a paid subscription
+- Hardcode model names in escalation paths
+- Build parallel systems that duplicate the router's job
+- Bolt on mechanisms to the agent loop — use the pipeline
+- Have the agent DO the work instead of BUILD the tool that does the work
+- Skip planning for non-trivial changes
+- Declare success without verifying the actual result

@@ -44,7 +44,7 @@ func RunSmokeTests(ctx context.Context, providerList []providers.Provider, opts 
 
 func testOneProvider(ctx context.Context, p providers.Provider, timeout time.Duration) SmokeTestResult {
 	if timeout == 0 {
-		timeout = 30 * time.Second
+		timeout = 45 * time.Second
 	}
 
 	provCtx, cancel := context.WithTimeout(ctx, timeout)

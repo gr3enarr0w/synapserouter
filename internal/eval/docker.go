@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -150,6 +151,15 @@ func scaffoldGo(dir string, ex Exercise, code string) error {
 }
 
 func scaffoldPython(dir string, ex Exercise, code string) error {
+	// DS1000 pattern: test has generate_test_case or reads from solution.py via exec()
+	// Scaffold as solution.py + test_runner.py (NOT pytest)
+	if isDS1000TestPattern(ex.TestFile) {
+		if err := os.WriteFile(filepath.Join(dir, "solution.py"), []byte(code), 0644); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dir, "test_runner.py"), []byte(ex.TestFile), 0644)
+	}
+
 	// Implementation
 	implFile := toSnake(ex.Slug) + ".py"
 	if err := os.WriteFile(filepath.Join(dir, implFile), []byte(code), 0644); err != nil {
@@ -183,6 +193,13 @@ print("PASS")
 	}
 
 	return os.WriteFile(filepath.Join(dir, testFile), []byte(testContent), 0644)
+}
+
+// isDS1000TestPattern detects DS-1000 style tests that use generate_test_case/exec()
+// and read from solution.py. These need special scaffolding.
+func isDS1000TestPattern(testFile string) bool {
+	return strings.Contains(testFile, "generate_test_case") ||
+		(strings.Contains(testFile, "exec(") && strings.Contains(testFile, "solution.py"))
 }
 
 // fixInlineCheckDef handles MBPP tests where the check function is on one line:
@@ -298,6 +315,10 @@ func detectJSImportPath(testFile, slug string) string {
 	return slug
 }
 
+// javaDisabledRegex matches @Disabled("...") and @Ignore("...") annotations
+// used by exercism to skip all tests except the first.
+var javaDisabledRegex = regexp.MustCompile(`\s*@(?:Disabled|Ignore)\s*\([^)]*\)\s*\n`)
+
 func scaffoldJava(dir string, ex Exercise, code string) error {
 	srcDir := filepath.Join(dir, "src", "main", "java")
 	testDir := filepath.Join(dir, "src", "test", "java")
@@ -312,14 +333,21 @@ func scaffoldJava(dir string, ex Exercise, code string) error {
 	if err := os.WriteFile(filepath.Join(srcDir, className+".java"), []byte(code), 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(testDir, className+"Test.java"), []byte(ex.TestFile), 0644); err != nil {
+
+	// Strip @Disabled/@Ignore annotations so all tests run (same pattern as JS xtest→test)
+	testContent := javaDisabledRegex.ReplaceAllString(ex.TestFile, "\n")
+
+	if err := os.WriteFile(filepath.Join(testDir, className+"Test.java"), []byte(testContent), 0644); err != nil {
 		return err
 	}
 
-	// build.gradle
+	// build.gradle with assertj (142/147 exercism Java tests need it)
 	gradle := `plugins { id 'java' }
 repositories { mavenCentral() }
-dependencies { testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0' }
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+    testImplementation 'org.assertj:assertj-core:3.25.1'
+}
 test { useJUnitPlatform() }
 `
 	return os.WriteFile(filepath.Join(dir, "build.gradle"), []byte(gradle), 0644)
@@ -352,17 +380,10 @@ func scaffoldRust(dir string, ex Exercise, code string) error {
 func scaffoldCpp(dir string, ex Exercise, code string) error {
 	slug := toSnake(ex.Slug)
 
-	// Implementation
-	if err := os.WriteFile(filepath.Join(dir, slug+".cpp"), []byte(code), 0644); err != nil {
+	// Header-only approach: write LLM code into .h file
+	// Tests #include the header, so this is the natural pattern
+	if err := os.WriteFile(filepath.Join(dir, slug+".h"), []byte(code), 0644); err != nil {
 		return err
-	}
-
-	// Header if code references it
-	if strings.Contains(ex.TestFile, slug+".h") {
-		header := fmt.Sprintf("#pragma once\n// Generated header for %s\n", slug)
-		if err := os.WriteFile(filepath.Join(dir, slug+".h"), []byte(header), 0644); err != nil {
-			return err
-		}
 	}
 
 	// Test
@@ -370,14 +391,24 @@ func scaffoldCpp(dir string, ex Exercise, code string) error {
 		return err
 	}
 
-	// CMakeLists.txt
+	// Catch2 v2 requires CATCH_CONFIG_MAIN in exactly one TU to emit implementation
+	// Always use the local path — we download catch.hpp to test/ directory
+	testMain := "#define CATCH_CONFIG_MAIN\n#include \"test/catch.hpp\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "test_main.cpp"), []byte(testMain), 0644); err != nil {
+		return err
+	}
+
+	// CMakeLists.txt — header-only: only compile test + test_main (no separate .cpp)
 	cmake := fmt.Sprintf(`cmake_minimum_required(VERSION 3.14)
 project(%s)
 set(CMAKE_CXX_STANDARD 17)
-add_executable(%s_test %s.cpp %s_test.cpp)
+add_definitions(-DEXERCISM_RUN_ALL_TESTS)
+include_directories(${CMAKE_SOURCE_DIR})
+include_directories(${CMAKE_SOURCE_DIR}/test)
+add_executable(%s_test %s_test.cpp test_main.cpp)
 enable_testing()
 add_test(NAME %s_test COMMAND %s_test)
-`, slug, slug, slug, slug, slug, slug)
+`, slug, slug, slug, slug, slug)
 
 	return os.WriteFile(filepath.Join(dir, "CMakeLists.txt"), []byte(cmake), 0644)
 }

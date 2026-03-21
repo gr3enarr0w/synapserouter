@@ -98,7 +98,7 @@ func RestoreAgent(executor ChatExecutor, registry *tools.Registry, renderer *Ren
 	config := Config{
 		Model:        state.Model,
 		SystemPrompt: state.SystemPrompt,
-		MaxTurns:     25,
+		MaxTurns:     0,
 		WorkDir:      state.WorkDir,
 	}
 

@@ -27,6 +27,17 @@ func (c *Conversation) Messages() []providers.Message {
 	return c.messages
 }
 
+// LastUserMessage returns the content of the most recent user message,
+// or empty string if no user messages exist.
+func (c *Conversation) LastUserMessage() string {
+	for i := len(c.messages) - 1; i >= 0; i-- {
+		if c.messages[i].Role == "user" {
+			return c.messages[i].Content
+		}
+	}
+	return ""
+}
+
 // Clear resets the conversation history.
 func (c *Conversation) Clear() {
 	c.messages = nil

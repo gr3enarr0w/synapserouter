@@ -531,6 +531,11 @@ func buildPrompt(ex Exercise) string {
 		sb.WriteString("\n```\n\n")
 	}
 
+	// Language-specific hints
+	if ex.Language == "cpp" {
+		sb.WriteString("IMPORTANT: Write a header-only implementation. Start with #pragma once and put all code in the .h file. Do NOT write a .cpp file.\n\n")
+	}
+
 	sb.WriteString("Return ONLY the implementation code. No tests, no explanations.\n")
 	return sb.String()
 }

@@ -1,6 +1,7 @@
 package orchestration
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"unicode"
@@ -179,6 +180,47 @@ func MCPToolsForChain(chain []Skill) []string {
 	return tools
 }
 
+// VerifyCommandsForChain collects all verification commands from matched skills.
+// Returns a formatted string of commands the reviewer should execute.
+func VerifyCommandsForChain(chain []Skill) string {
+	var b strings.Builder
+	idx := 0
+	for _, skill := range chain {
+		for _, v := range skill.Verify {
+			idx++
+			if v.Manual != "" && v.Command == "" {
+				// Manual-only check
+				b.WriteString(fmt.Sprintf("%d. [MANUAL] [%s] %s\n", idx, skill.Name, v.Name))
+				b.WriteString(fmt.Sprintf("   Check: %s\n\n", v.Manual))
+				continue
+			}
+			b.WriteString(fmt.Sprintf("%d. [%s] %s\n", idx, skill.Name, v.Name))
+			if v.Command != "" {
+				b.WriteString(fmt.Sprintf("   Command: `%s`\n", v.Command))
+			}
+			if v.Expect != "" {
+				b.WriteString(fmt.Sprintf("   Expected: output contains \"%s\"\n", v.Expect))
+			}
+			if v.ExpectNot != "" {
+				b.WriteString(fmt.Sprintf("   Expected: output does NOT contain \"%s\"\n", v.ExpectNot))
+			}
+			if v.Manual != "" {
+				b.WriteString(fmt.Sprintf("   [MANUAL] Also check: %s\n", v.Manual))
+			}
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
 func skillPrompt(skill Skill, goal string) string {
-	return "[" + skill.Name + "] " + skill.Description + ". Apply to this goal: " + goal
+	var b strings.Builder
+	b.WriteString("[" + skill.Name + "] " + skill.Description)
+	if skill.Instructions != "" {
+		b.WriteString("\n\n--- Skill Instructions ---\n")
+		b.WriteString(skill.Instructions)
+		b.WriteString("\n--- End Instructions ---\n")
+	}
+	b.WriteString("\n\nApply to this goal: " + goal)
+	return b.String()
 }

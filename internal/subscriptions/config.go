@@ -41,7 +41,7 @@ func LoadConfig(ctx context.Context) (Config, error) {
 
 	cfg := Config{
 		ServerTimeout:    getenvDurationAny([]string{"SYNROUTE_SUBSCRIPTIONS_TIMEOUT_SECONDS", "SUBSCRIPTION_GATEWAY_TIMEOUT_SECONDS", "SYNAPSE_GATEWAY_TIMEOUT_SECONDS", "CLIPROXY_API_TIMEOUT_SECONDS"}, defaultModelTimeout) * time.Second,
-		RouteModelOrder:  parseModelOrder(strings.TrimSpace(getenvAny([]string{"SYNROUTE_SUBSCRIPTION_PROVIDER_ORDER", "SUBSCRIPTION_GATEWAY_PROVIDER_ORDER", "SYNAPSE_GATEWAY_PROVIDER_ORDER", "CLIPROXY_PROVIDER_ORDER"}, ""))),
+		RouteModelOrder:  parseModelOrder(strings.TrimSpace(getenvAny([]string{"SYNROUTE_SUBSCRIPTION_PROVIDER_ORDER", "SUBSCRIPTION_GATEWAY_PROVIDER_ORDER", "SYNAPSE_GATEWAY_PROVIDER_ORDER", "CLIPROXY_PROVIDER_ORDER"}, "gemini,openai,anthropic"))),
 		EnableHealthLogs: strings.EqualFold(strings.TrimSpace(getenvAny([]string{"SYNROUTE_SUBSCRIPTIONS_ENABLE_HEALTH_LOGS", "SUBSCRIPTION_GATEWAY_ENABLE_HEALTH_LOGS", "SYNAPSE_GATEWAY_ENABLE_HEALTH_LOGS", "CLIPROXY_ENABLE_HEALTH_LOGS"}, "")), "true"),
 	}
 

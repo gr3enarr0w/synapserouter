@@ -1,0 +1,107 @@
+---
+name: javascript-patterns
+description: "Modern JS/TS development — React, Node.js, TypeScript-first, Next.js patterns."
+triggers:
+  - "javascript"
+  - "typescript"
+  - ".js"
+  - ".ts"
+  - ".tsx"
+  - ".jsx"
+  - "react"
+  - "node.js"
+  - "nodejs"
+  - "next.js"
+  - "nextjs"
+role: coder
+phase: analyze
+mcp_tools:
+  - "context7.query-docs"
+---
+# Skill: JavaScript & TypeScript Patterns
+
+Modern JS/TS development — React, Node.js, TypeScript-first, Next.js patterns.
+
+Source: [React Best Practices](https://mcpmarket.com/tools/skills/react-performance-best-practices-6), [TypeScript Best Practices](https://lobehub.com/skills/0xbigboss-claude-code-typescript-best-practices).
+
+---
+
+## When to Use
+
+- Writing React components or hooks
+- TypeScript type design
+- Node.js backend development
+- Next.js app router patterns
+
+---
+
+## Core Rules
+
+1. **TypeScript-first** — strict mode, no `any`, explicit return types
+2. **Functional components** — hooks over class components
+3. **Immutability** — spread/map/filter, never mutate state directly
+4. **Discriminated unions** — `type Result = { ok: true; data: T } | { ok: false; error: E }`
+5. **Zod for validation** — runtime validation matching TypeScript types
+6. **Async/await** — over raw promises, with proper error handling
+7. **ESM modules** — `import/export` not `require/module.exports`
+
+---
+
+## Patterns
+
+### React component with TypeScript
+```tsx
+interface TicketCardProps {
+  ticket: Ticket;
+  onSelect: (key: string) => void;
+}
+
+export function TicketCard({ ticket, onSelect }: TicketCardProps) {
+  return (
+    <div onClick={() => onSelect(ticket.key)}>
+      <h3>{ticket.summary}</h3>
+      <span>{ticket.status}</span>
+    </div>
+  );
+}
+```
+
+### Custom hook
+```tsx
+function useTickets(projectKey: string) {
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`/api/tickets?project=${projectKey}`)
+      .then(res => res.json())
+      .then(setTickets)
+      .finally(() => setLoading(false));
+  }, [projectKey]);
+
+  return { tickets, loading };
+}
+```
+
+### Zod schema validation
+```ts
+import { z } from "zod";
+
+const TicketSchema = z.object({
+  key: z.string(),
+  summary: z.string().min(1),
+  status: z.enum(["Open", "Closed", "Resolved"]),
+  confidence: z.number().min(0).max(1),
+});
+
+type Ticket = z.infer<typeof TicketSchema>;
+```
+
+---
+
+## Anti-Patterns
+
+- `any` type — use `unknown` + type guards instead
+- Inline styles — use CSS modules or Tailwind
+- useEffect for derived state — compute during render
+- Index as key in lists — use stable unique IDs

@@ -401,6 +401,38 @@ func (vm *VectorMemory) TrimToTokenLimit(messages []Message, maxTokens int) []Me
 	return result
 }
 
+// RetrieveRecentFromSession gets the most recent N messages from a specific session,
+// returned in chronological order. Used for cross-session memory carry-over.
+func (vm *VectorMemory) RetrieveRecentFromSession(sessionID string, limit int) ([]Message, error) {
+	rows, err := vm.db.Query(`
+		SELECT role, content
+		FROM memory
+		WHERE session_id = ?
+		ORDER BY timestamp DESC
+		LIMIT ?
+	`, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []Message
+	for rows.Next() {
+		var msg Message
+		if err := rows.Scan(&msg.Role, &msg.Content); err != nil {
+			continue
+		}
+		messages = append(messages, msg)
+	}
+
+	// Reverse to chronological order
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+
+	return messages, nil
+}
+
 // GetSessionHistory gets full conversation history for a session
 func (vm *VectorMemory) GetSessionHistory(sessionID string) ([]Message, error) {
 	rows, err := vm.db.Query(`

@@ -37,12 +37,18 @@ func (t *FileReadTool) InputSchema() map[string]interface{} {
 }
 
 func (t *FileReadTool) Execute(ctx context.Context, args map[string]interface{}, workDir string) (*ToolResult, error) {
+	const defaultLineLimit = 2000
+
 	path := resolveToolPath(stringArg(args, "path"), workDir)
 	offset := intArg(args, "offset", 1)
 	limit := intArg(args, "limit", 0)
+	userSetLimit := limit > 0
 
 	if offset < 1 {
 		offset = 1
+	}
+	if limit <= 0 {
+		limit = defaultLineLimit
 	}
 
 	f, err := os.Open(path)
@@ -62,7 +68,11 @@ func (t *FileReadTool) Execute(ctx context.Context, args map[string]interface{},
 		if lineNum < offset {
 			continue
 		}
-		if limit > 0 && linesRead >= limit {
+		if linesRead >= limit {
+			// Keep counting total lines
+			for scanner.Scan() {
+				lineNum++
+			}
 			break
 		}
 		fmt.Fprintf(&b, "%6d\t%s\n", lineNum, scanner.Text())
@@ -78,6 +88,11 @@ func (t *FileReadTool) Execute(ctx context.Context, args map[string]interface{},
 			return &ToolResult{Output: "(empty file)"}, nil
 		}
 		return &ToolResult{Output: fmt.Sprintf("(no lines in range, file has %d lines)", lineNum)}, nil
+	}
+
+	// Notify if output was capped by default limit
+	if !userSetLimit && lineNum > limit {
+		b.WriteString(fmt.Sprintf("\n(showing first %d of %d lines, use offset/limit for more)\n", linesRead, lineNum))
 	}
 
 	return &ToolResult{Output: b.String()}, nil

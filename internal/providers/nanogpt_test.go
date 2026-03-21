@@ -142,8 +142,8 @@ func TestNanoGPTProvider_ChatCompletion_DefaultModel(t *testing.T) {
 		reqModel  string
 		wantModel string
 	}{
-		{"sub auto defaults to qwen", "subscription", "auto", "qwen/qwen3.5-plus"},
-		{"sub empty defaults to qwen", "subscription", "", "qwen/qwen3.5-plus"},
+		{"sub auto defaults to qwen", "subscription", "auto", "qwen/qwen3.5-397b-a17b"},
+		{"sub empty defaults to qwen", "subscription", "", "qwen/qwen3.5-397b-a17b"},
 		{"paid auto defaults to chatgpt", "paid", "auto", "chatgpt-4o-latest"},
 		{"paid empty defaults to chatgpt", "paid", "", "chatgpt-4o-latest"},
 		{"explicit model preserved", "subscription", "deepseek-r1", "deepseek-r1"},

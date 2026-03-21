@@ -18,46 +18,43 @@ type OllamaCloudProvider struct {
 	model  string
 }
 
-func NewOllamaCloudProvider(baseURL, apiKey, model string) *OllamaCloudProvider {
+func NewOllamaCloudProvider(baseURL, apiKey, model, name string) *OllamaCloudProvider {
 	if baseURL == "" {
-		baseURL = "https://ollama.com/api"
+		baseURL = "http://localhost:11434"
 	}
 	if model == "" {
-		model = "llama3.1-70b-cloud"
+		model = "qwen3.5:cloud"
+	}
+	if name == "" {
+		name = "ollama-cloud"
 	}
 
 	return &OllamaCloudProvider{
 		BaseProvider: BaseProvider{
-			name:       "ollama-cloud",
-			baseURL:    baseURL,
+			name:       name,
+			baseURL:    strings.TrimSuffix(baseURL, "/"),
 			apiKey:     apiKey,
-			maxContext: 128000,
+			maxContext: 256000,
 			timeout:    180 * time.Second,
 		},
-		client: &http.Client{Timeout: 180 * time.Second},
+		client: NewLLMClient(180 * time.Second),
 		model:  model,
 	}
 }
 
 func (p *OllamaCloudProvider) ChatCompletion(ctx context.Context, req ChatRequest, sessionID string) (ChatResponse, error) {
-	// Convert to Ollama format
-	ollamaReq := map[string]interface{}{
-		"model":    p.model,
-		"messages": req.Messages,
-		"stream":   false,
+	if req.Model == "" || strings.EqualFold(req.Model, "auto") {
+		req.Model = p.model
 	}
 
-	if req.Temperature > 0 {
-		ollamaReq["temperature"] = req.Temperature
-	}
-
-	body, err := json.Marshal(ollamaReq)
+	// Use OpenAI-compatible endpoint — handles tools and reports usage
+	body, err := json.Marshal(req)
 	if err != nil {
 		return ChatResponse{}, err
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST",
-		p.baseURL+"/chat", bytes.NewBuffer(body))
+		p.baseURL+"/v1/chat/completions", bytes.NewBuffer(body))
 	if err != nil {
 		return ChatResponse{}, err
 	}
@@ -82,39 +79,18 @@ func (p *OllamaCloudProvider) ChatCompletion(ctx context.Context, req ChatReques
 		return ChatResponse{}, fmt.Errorf("ollama error %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var ollamaResp map[string]interface{}
-	if err := json.Unmarshal(respBody, &ollamaResp); err != nil {
-		return ChatResponse{}, err
+	var chatResp ChatResponse
+	if err := json.Unmarshal(respBody, &chatResp); err != nil {
+		return ChatResponse{}, fmt.Errorf("failed to parse ollama response: %w", err)
 	}
 
-	// Convert Ollama response to OpenAI format
-	return p.convertResponse(ollamaResp), nil
-}
-
-func (p *OllamaCloudProvider) convertResponse(resp map[string]interface{}) ChatResponse {
-	message, _ := resp["message"].(map[string]interface{})
-	content, _ := message["content"].(string)
-	role, _ := message["role"].(string)
-
-	return ChatResponse{
-		ID:      fmt.Sprintf("ollama-%d", time.Now().Unix()),
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   p.model,
-		Choices: []Choice{
-			{
-				Index: 0,
-				Message: Message{
-					Role:    role,
-					Content: content,
-				},
-				FinishReason: "stop",
-			},
-		},
-	}
+	return chatResp, nil
 }
 
 func (p *OllamaCloudProvider) SupportsModel(model string) bool {
+	if model == "" || strings.EqualFold(model, "auto") {
+		return true // Ollama Cloud handles auto routing
+	}
 	model = strings.ToLower(model)
 	return strings.Contains(model, "llama") || strings.EqualFold(model, p.model)
 }
@@ -123,7 +99,7 @@ func (p *OllamaCloudProvider) IsHealthy(ctx context.Context) bool {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/tags", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/api/tags", nil)
 	if err != nil {
 		return false
 	}

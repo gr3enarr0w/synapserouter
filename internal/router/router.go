@@ -83,6 +83,15 @@ func NewRouter(
 	}
 }
 
+// ProviderNames returns the ordered list of provider names in the chain.
+func (r *Router) ProviderNames() []string {
+	names := make([]string, len(r.providers))
+	for i, p := range r.providers {
+		names[i] = p.Name()
+	}
+	return names
+}
+
 // SetSessionTracker sets the session tracker for cross-session memory continuity.
 func (r *Router) SetSessionTracker(st *memory.SessionTracker) {
 	r.sessionTracker = st
@@ -710,11 +719,20 @@ func (r *Router) tryProvider(
 	r.healthCache[provider.Name()] = &cachedHealth{healthy: true, checkedAt: time.Now()}
 	r.healthMu.Unlock()
 
-	// Track usage
-	if resp.Usage.TotalTokens > 0 {
+	// Track usage — estimate if provider doesn't report tokens
+	tokens := resp.Usage.TotalTokens
+	estimated := false
+	if tokens == 0 {
+		tokens = estimateTokens(req.Messages)
+		if len(resp.Choices) > 0 {
+			tokens += len(resp.Choices[0].Message.Content) / 4
+		}
+		estimated = true
+	}
+	if tokens > 0 {
 		if err := r.usageTracker.RecordUsage(
 			provider.Name(),
-			int64(resp.Usage.TotalTokens),
+			int64(tokens),
 			resp.ID,
 			resp.Model,
 		); err != nil {
@@ -722,7 +740,11 @@ func (r *Router) tryProvider(
 		}
 	}
 
-	log.Printf("[Router] ✓ Success with %s (tokens: %d)", provider.Name(), resp.Usage.TotalTokens)
+	suffix := ""
+	if estimated {
+		suffix = " estimated"
+	}
+	log.Printf("[Router] ✓ Success with %s (tokens: %d%s)", provider.Name(), tokens, suffix)
 	return resp, nil
 }
 

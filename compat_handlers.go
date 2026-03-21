@@ -635,6 +635,10 @@ func routeChatRequest(r *http.Request, req providers.ChatRequest, sessionID, pre
 		return providers.ChatResponse{}, fmt.Errorf("invalid request: %w", err)
 	}
 
+	if r.Header.Get("X-Skip-Skills") == "true" {
+		req.SkipSkillPreprocess = true
+	}
+
 	includeMemoryDebug := r.Header.Get("X-Debug-Memory") == "true"
 	ctx := subscriptions.WithPreferredUpstreamAPIKey(r.Context(), resolveAmpUpstreamAPIKeyForRequest(r))
 	if preferredProvider == "" {
