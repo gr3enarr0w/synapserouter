@@ -21,6 +21,7 @@ import (
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/app"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/compat"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcpserver"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
@@ -338,11 +339,47 @@ func initializeProviders() []providers.Provider {
 	// Ollama Cloud (available in all profiles)
 	ollamaAPIKey := os.Getenv("OLLAMA_API_KEY")
 	ollamaBaseURL := os.Getenv("OLLAMA_BASE_URL")
-	ollamaModel := os.Getenv("OLLAMA_MODEL")
-	if ollamaAPIKey != "" {
-		ollamaProvider := providers.NewOllamaCloudProvider(ollamaBaseURL, ollamaAPIKey, ollamaModel)
-		providerList = append(providerList, ollamaProvider)
-		log.Println("✓ Ollama Cloud provider initialized")
+	if ollamaAPIKey != "" || ollamaBaseURL != "" {
+		registered := 0
+
+		// Planners (unique — planning is a separate phase)
+		for _, m := range []struct{ envVar, name string }{
+			{"OLLAMA_PLANNER_1", "ollama-planner-1"},
+			{"OLLAMA_PLANNER_2", "ollama-planner-2"},
+		} {
+			model := os.Getenv(m.envVar)
+			if model == "" {
+				continue
+			}
+			providerList = append(providerList,
+				providers.NewOllamaCloudProvider(ollamaBaseURL, ollamaAPIKey, model, m.name))
+			log.Printf("✓ %s provider initialized (model=%s)", m.name, model)
+			registered++
+		}
+
+		// Chain models — grouped by level with | separator
+		chainLevels := app.ParseOllamaChain(os.Getenv("OLLAMA_CHAIN"))
+		modelIdx := 0
+		for _, models := range chainLevels {
+			for _, model := range models {
+				modelIdx++
+				name := fmt.Sprintf("ollama-chain-%d", modelIdx)
+				providerList = append(providerList,
+					providers.NewOllamaCloudProvider(ollamaBaseURL, ollamaAPIKey, model, name))
+				log.Printf("✓ %s provider initialized (model=%s)", name, model)
+				registered++
+			}
+		}
+
+		// Fallback: single OLLAMA_MODEL if no chain configured
+		if registered == 0 {
+			ollamaModel := os.Getenv("OLLAMA_MODEL")
+			if ollamaModel != "" {
+				providerList = append(providerList,
+					providers.NewOllamaCloudProvider(ollamaBaseURL, ollamaAPIKey, ollamaModel, "ollama-cloud"))
+				log.Printf("✓ ollama-cloud provider initialized (model=%s)", ollamaModel)
+			}
+		}
 	}
 
 	// NanoGPT paid (last — costs money, only used as fallback, personal only)
