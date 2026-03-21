@@ -13,6 +13,7 @@ import (
 type SpawnConfig struct {
 	Role        string       // agent role (e.g., "tester", "researcher")
 	Model       string       // model override (empty = inherit parent)
+	Provider    string       // target specific provider by name (empty = default routing)
 	Tools       *tools.Registry // tool registry (nil = inherit parent)
 	Budget      *AgentBudget // resource limits for child
 	WorkDir     string       // working directory (empty = inherit parent)
@@ -54,14 +55,18 @@ func (a *Agent) SpawnChild(cfg SpawnConfig) *Agent {
 
 	sysPrompt := cfg.System
 	if sysPrompt == "" {
-		sysPrompt = childSystemPrompt(cfg.Role, workDir)
+		// Build skill-aware system prompt: base + dynamically matched skills
+		sysPrompt = a.buildChildSystemPrompt(cfg.Role, workDir)
 	}
 
 	childConfig := Config{
-		Model:        model,
-		SystemPrompt: sysPrompt,
-		MaxTurns:     maxTurns,
-		WorkDir:      workDir,
+		Model:          model,
+		SystemPrompt:   sysPrompt,
+		MaxTurns:       maxTurns,
+		WorkDir:        workDir,
+		TargetProvider: cfg.Provider,
+		Skills:         a.config.Skills, // inherit parent's skill registry for dynamic matching
+		EventBus:       a.config.EventBus,
 	}
 
 	child := New(a.executor, registry, a.renderer, childConfig)
@@ -70,6 +75,11 @@ func (a *Agent) SpawnChild(cfg SpawnConfig) *Agent {
 	if cfg.Budget != nil {
 		child.budget = NewBudgetTracker(*cfg.Budget)
 	}
+
+	a.emit(EventSubAgentSpawn, cfg.Provider, map[string]any{
+		"child_id": child.sessionID,
+		"role":     cfg.Role,
+	})
 
 	// Track child in parent
 	a.mu.Lock()
@@ -89,15 +99,19 @@ func (a *Agent) SpawnChild(cfg SpawnConfig) *Agent {
 // This is the convenience method for single-shot delegation.
 func (a *Agent) RunChild(ctx context.Context, cfg SpawnConfig, task string) (string, error) {
 	child := a.SpawnChild(cfg)
+	childStart := time.Now()
 	result, err := child.Run(ctx, task)
+	childDuration := time.Since(childStart)
 
 	// Update child ref status
+	status := "completed"
 	a.mu.Lock()
 	for _, ref := range a.children {
 		if ref.ID == child.sessionID {
 			if err != nil {
 				ref.Status = "failed"
 				ref.Error = err.Error()
+				status = "failed"
 			} else {
 				ref.Status = "completed"
 				ref.Result = result
@@ -105,6 +119,18 @@ func (a *Agent) RunChild(ctx context.Context, cfg SpawnConfig, task string) (str
 		}
 	}
 	a.mu.Unlock()
+
+	resultPreview := result
+	if len(resultPreview) > 200 {
+		resultPreview = resultPreview[:200] + "..."
+	}
+	a.emit(EventSubAgentComplete, cfg.Provider, map[string]any{
+		"child_id":       child.sessionID,
+		"role":           cfg.Role,
+		"status":         status,
+		"duration":       childDuration.String(),
+		"result_preview": resultPreview,
+	})
 
 	return result, err
 }
@@ -171,9 +197,14 @@ type DelegateResult struct {
 	Error  string `json:"error,omitempty"`
 }
 
-func childSystemPrompt(role, workDir string) string {
+// buildChildSystemPrompt creates a system prompt for a child agent.
+// Skills are NOT injected here — they go in the task prompt instead,
+// where they can be tailored per role (planner vs coder vs reviewer).
+// This avoids double-injecting the same skill content.
+func (a *Agent) buildChildSystemPrompt(role, workDir string) string {
 	return fmt.Sprintf(`You are a %s agent working in: %s
 
 You have been delegated a specific task by a parent agent. Focus exclusively on completing the delegated task.
-Use the available tools to accomplish your goal. Be concise and return actionable results.`, role, workDir)
+Use the available tools to accomplish your goal. Be concise and return actionable results.
+When your task includes a SKILL REFERENCE section, follow those patterns and formats exactly.`, role, workDir)
 }

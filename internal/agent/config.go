@@ -34,6 +34,10 @@ type Config struct {
 	// Each level's models rotate (cross-review in 2 stages).
 	EscalationChain []EscalationLevel
 
+	// Observability
+	EventBus  *EventBus // Real-time event bus (nil = no events)
+	Verbosity int       // 0=compact, 1=normal, 2=verbose
+
 	// State persistence
 	DB        *sql.DB // SQLite database for session persistence
 	Resume    bool    // Resume most recent session on startup

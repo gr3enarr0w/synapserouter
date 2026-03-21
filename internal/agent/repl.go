@@ -198,8 +198,26 @@ func (r *REPL) handleCommand(input string) bool {
 }
 
 // RunOneShot executes a single message and returns the response.
+// Sets up the same infrastructure as the REPL: pool, delegation tools, guardrails.
+// If config.EventBus is set, attaches a LogRenderer for real-time structured output.
 func RunOneShot(ctx context.Context, executor ChatExecutor, registry *tools.Registry, config Config, message string) (string, error) {
 	renderer := NewRenderer(os.Stderr) // tool output to stderr, final response to stdout
-	agent := New(executor, registry, renderer, config)
-	return agent.Run(ctx, message)
+	ag := New(executor, registry, renderer, config)
+
+	// Start LogRenderer if event bus is configured
+	if config.EventBus != nil {
+		events := config.EventBus.Subscribe()
+		lr := NewLogRenderer(os.Stderr, config.Verbosity, false)
+		go lr.Run(events)
+		defer config.EventBus.Close()
+	}
+
+	// Match REPL setup: pool, delegation tools, guardrails
+	pool := NewPool(config.MaxAgents)
+	ag.SetPool(pool)
+	registry.Register(NewDelegateTool(ag))
+	registry.Register(NewHandoffTool(ag))
+	ag.SetInputGuardrails(NewGuardrailChain(&SecretPatternGuardrail{}))
+
+	return ag.Run(ctx, message)
 }

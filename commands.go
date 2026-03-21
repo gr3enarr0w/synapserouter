@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -330,12 +331,24 @@ func cmdChat(args []string) {
 	model := fs.String("model", "auto", "Model to use")
 	message := fs.String("message", "", "One-shot message (non-interactive)")
 	system := fs.String("system", "", "Custom system prompt")
+	project := fs.String("project", "", "Project name — creates ~/Development/<name>/ and works there")
 	useWorktree := fs.Bool("worktree", false, "Run in isolated git worktree")
 	maxAgents := fs.Int("max-agents", 5, "Max concurrent sub-agents")
 	budgetTokens := fs.Int64("budget", 0, "Max total tokens budget (0 = unlimited)")
 	resume := fs.Bool("resume", false, "Resume most recent session")
 	sessionID := fs.String("session", "", "Resume specific session ID")
+	verbose := fs.Int("verbose", 0, "Verbosity level: 0=compact, 1=normal, 2=verbose (also -v/-vv)")
+	jsonEvents := fs.Bool("json-events", false, "Emit events as JSON lines to stderr")
 	fs.Parse(args)
+
+	// Support -v / -vv shorthand via remaining args
+	for _, a := range fs.Args() {
+		if a == "-v" {
+			*verbose = 1
+		} else if a == "-vv" {
+			*verbose = 2
+		}
+	}
 
 	ac, err := app.InitLight(context.Background())
 	if err != nil {
@@ -354,6 +367,18 @@ func cmdChat(args []string) {
 	registry := tools.DefaultRegistry()
 	cwd, _ := os.Getwd()
 
+	// Create project directory if --project specified
+	if *project != "" {
+		home, _ := os.UserHomeDir()
+		projectDir := filepath.Join(home, "Development", *project)
+		if err := os.MkdirAll(projectDir, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating project directory: %v\n", err)
+			os.Exit(1)
+		}
+		cwd = projectDir
+		fmt.Fprintf(os.Stderr, "Working in project: %s\n", projectDir)
+	}
+
 	config := agent.DefaultConfig()
 	config.Model = *model
 	config.WorkDir = cwd
@@ -367,6 +392,14 @@ func cmdChat(args []string) {
 	}
 	config.Resume = *resume
 	config.SessionID = *sessionID
+	config.EscalationChain = ac.EscalationChain
+	config.AutoOrchestrate = true
+
+	// Event bus for real-time observability
+	bus := agent.NewEventBus()
+	config.EventBus = bus
+	config.Verbosity = *verbose
+	_ = jsonEvents // used in RunOneShot path below
 
 	ctx := context.Background()
 
@@ -395,16 +428,7 @@ func cmdChat(args []string) {
 	}
 
 	if *message != "" {
-		// One-shot mode: use a temp directory to avoid writing files into the
-		// project root (e.g. palindrome.go causing "main redeclared" in a Go project).
-		if !*useWorktree {
-			tmpDir, tmpErr := os.MkdirTemp("", "synroute-chat-*")
-			if tmpErr == nil {
-				config.WorkDir = tmpDir
-				defer os.RemoveAll(tmpDir)
-			}
-		}
-
+		// One-shot mode: work in the current directory so created files persist.
 		response, err := agent.RunOneShot(ctx, ac.ProxyRouter, registry, config, *message)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -418,6 +442,13 @@ func cmdChat(args []string) {
 	}
 
 	renderer := agent.NewRenderer(os.Stdout)
+
+	// Start event log renderer for interactive mode (writes to stderr)
+	if bus != nil {
+		events := bus.Subscribe()
+		lr := agent.NewLogRenderer(os.Stderr, *verbose, *jsonEvents)
+		go lr.Run(events)
+	}
 
 	// Create agent pool for sub-agent concurrency
 	pool := agent.NewPool(config.MaxAgents)

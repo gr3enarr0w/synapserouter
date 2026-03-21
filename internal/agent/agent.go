@@ -72,6 +72,9 @@ type Agent struct {
 	cachedSystemPrompt string // built once, reused
 	cachedSkillContext string // computed once from originalRequest, injected into all sub-agents
 	skillContextOnce   sync.Once
+
+	// Event bus for real-time observability
+	bus *EventBus
 }
 
 // New creates an agent with the given executor, tool registry, and config.
@@ -84,6 +87,7 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer *Renderer, co
 		renderer:     renderer,
 		config:       config,
 		sessionID:    fmt.Sprintf("agent-%d", uniqueID()),
+		bus:          config.EventBus,
 	}
 }
 
@@ -115,6 +119,30 @@ func (a *Agent) EnableTracing() {
 // Trace returns the agent's trace, or nil if tracing is disabled.
 func (a *Agent) Trace() *Trace {
 	return a.trace
+}
+
+// SetEventBus attaches an event bus for real-time observability.
+func (a *Agent) SetEventBus(bus *EventBus) {
+	a.bus = bus
+}
+
+// emit publishes an event to the bus if one is attached.
+func (a *Agent) emit(eventType EventType, provider string, data map[string]any) {
+	if a.bus == nil {
+		return
+	}
+	phase := ""
+	if a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
+		phase = a.pipeline.Phases[a.pipelinePhase].Name
+	}
+	a.bus.Publish(AgentEvent{
+		AgentID:  a.sessionID,
+		ParentID: a.parentID,
+		Type:     eventType,
+		Phase:    phase,
+		Provider: provider,
+		Data:     data,
+	})
 }
 
 // SetMetrics attaches a metrics tracker to this agent.
@@ -158,6 +186,16 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		a.pipelinePhase = 0
 		a.initializeImplementPhase()
 		log.Printf("[Agent] pipeline: %s (%d phases)", a.pipeline.Name, len(a.pipeline.Phases))
+
+		a.emit(EventPipelineStart, "", map[string]any{
+			"pipeline_name":  a.pipeline.Name,
+			"phase_count":    len(a.pipeline.Phases),
+			"matched_skills": skillNames,
+		})
+		a.emit(EventSkillMatch, "", map[string]any{
+			"skill_names":   skillNames,
+			"trigger_count": len(matched),
+		})
 
 		// Fire parallel plan phase immediately if configured
 		firstPhase := a.pipeline.Phases[0]
@@ -229,17 +267,40 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			Tools:    a.registry.OpenAIToolDefinitions(),
 		}
 
+		a.emit(EventLLMStart, a.config.TargetProvider, map[string]any{
+			"model": a.config.Model,
+			"turn":  turn,
+			"role":  a.sessionID,
+		})
+
 		var endSpan func(error)
 		if a.trace != nil {
 			endSpan = a.trace.StartSpan("llm_call", "llm_call", map[string]interface{}{"turn": turn})
 		}
+		llmStart := time.Now()
 		resp, err := a.callLLMWithRetry(ctx, req)
+		llmDuration := time.Since(llmStart)
 		if endSpan != nil {
 			endSpan(err)
 		}
 		if err != nil {
+			a.emit(EventError, a.config.TargetProvider, map[string]any{
+				"source":  "llm_call",
+				"message": err.Error(),
+			})
 			return "", fmt.Errorf("LLM call failed: %w", err)
 		}
+
+		respProvider := ""
+		if resp.XProxyMetadata != nil {
+			respProvider = resp.XProxyMetadata.Provider
+		}
+		a.emit(EventLLMComplete, respProvider, map[string]any{
+			"model":       resp.Model,
+			"tokens_used": resp.Usage.TotalTokens,
+			"duration":    llmDuration.String(),
+		})
+
 		if a.budget != nil && resp.Usage.TotalTokens > 0 {
 			a.budget.RecordTokens(int64(resp.Usage.TotalTokens))
 		}
@@ -281,6 +342,10 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		if a.renderer != nil {
 			a.renderer.ToolCall(name, args)
 		}
+		a.emit(EventToolStart, "", map[string]any{
+			"tool_name":    name,
+			"args_summary": formatToolCallSummary(name, args),
+		})
 
 		toolStart := time.Now()
 		result, execErr := a.registry.ExecuteChecked(ctx, name, args, a.config.WorkDir, a.permissions)
@@ -298,8 +363,10 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		}
 
 		var resultContent string
+		isError := false
 		if execErr != nil {
 			resultContent = fmt.Sprintf("error: %v\n%s", execErr, toolErrorHint(name))
+			isError = true
 			if a.renderer != nil {
 				a.renderer.ToolResult(name, resultContent, true)
 			}
@@ -307,11 +374,26 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			resultContent = result.Output
 			if result.Error != "" {
 				resultContent = result.Error + "\n" + resultContent
+				isError = true
 			}
 			if a.renderer != nil {
 				a.renderer.ToolResult(name, resultContent, result.Error != "")
 			}
 		}
+
+		toolEventData := map[string]any{
+			"tool_name": name,
+			"duration":  toolDuration.String(),
+			"is_error":  isError,
+		}
+		if isError || a.bus != nil {
+			lines := strings.Count(resultContent, "\n") + 1
+			toolEventData["output_lines"] = lines
+			if len(resultContent) <= 500 {
+				toolEventData["output"] = resultContent
+			}
+		}
+		a.emit(EventToolComplete, "", toolEventData)
 
 		// Truncate tool output for conversation (keep full output in renderer)
 		conversationContent := truncateToolOutput(resultContent, 32*1024)
@@ -556,6 +638,12 @@ func (a *Agent) advancePipeline(content string) bool {
 	if shouldAdvance && currentPhase.MinToolCalls > 0 && a.phaseToolCalls < currentPhase.MinToolCalls {
 		log.Printf("[Agent] quality gate: phase %s needs %d tool calls, has %d — rejecting",
 			currentPhase.Name, currentPhase.MinToolCalls, a.phaseToolCalls)
+		a.emit(EventQualityGate, "", map[string]any{
+			"phase":    currentPhase.Name,
+			"required": currentPhase.MinToolCalls,
+			"actual":   a.phaseToolCalls,
+			"rejected": true,
+		})
 		a.conversation.Add(providers.Message{
 			Role: "user",
 			Content: fmt.Sprintf("You claimed phase '%s' is complete, but you only made %d tool calls (minimum %d required). You MUST use tools to gather evidence — fetch real data, inspect actual output, run tests. Do not state opinions without evidence. Use tools now, then re-assess.",
@@ -597,6 +685,17 @@ func (a *Agent) advancePipeline(content string) bool {
 
 		log.Printf("[Agent] pipeline: advancing to phase %d/%d: %s",
 			a.pipelinePhase+1, len(a.pipeline.Phases), nextPhase.Name)
+
+		a.emit(EventPhaseComplete, "", map[string]any{
+			"phase_name": currentPhase.Name,
+			"passed":     true,
+			"cycle":      a.pipelineCycles,
+		})
+		a.emit(EventPhaseStart, "", map[string]any{
+			"phase_name":   nextPhase.Name,
+			"phase_index":  a.pipelinePhase,
+			"total_phases": len(a.pipeline.Phases),
+		})
 
 		// Parallel implement: spawn N coders working concurrently on split tasks
 		// Only if the named providers exist in the escalation chain
@@ -951,11 +1050,18 @@ func (a *Agent) escalateProvider() bool {
 		return false
 	}
 
+	fromLevel := a.providerIdx
 	a.providerIdx++
 	a.levelRotationIdx = 0
 	level := a.config.EscalationChain[a.providerIdx]
 	log.Printf("[Agent] escalating to level %d/%d: %v",
 		a.providerIdx+1, len(a.config.EscalationChain), level.Providers)
+
+	a.emit(EventEscalation, "", map[string]any{
+		"from_level": fromLevel,
+		"to_level":   a.providerIdx,
+		"providers":  fmt.Sprintf("%v", level.Providers),
+	})
 	return true
 }
 
@@ -1194,6 +1300,16 @@ When done, say IMPLEMENT_COMPLETE.`,
 
 	log.Printf("[Agent] spawning %d parallel %s sub-agents", len(tasks), phase.Name)
 
+	providerNames := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		providerNames = append(providerNames, t.provider)
+	}
+	a.emit(EventParallelStart, "", map[string]any{
+		"agent_count": len(tasks),
+		"phase":       phase.Name,
+		"providers":   fmt.Sprintf("%v", providerNames),
+	})
+
 	// For implement phases, give each agent its own temp directory to prevent file conflicts
 	if phase.Name != "plan" {
 		for i := range tasks {
@@ -1300,6 +1416,11 @@ When done, say IMPLEMENT_COMPLETE.`,
 		for i := 0; i < n; i++ {
 			reviewIdx := (i - 1 + n) % n // agent[i] reviews agent[i-1]'s work
 			reviewTarget := tasks[reviewIdx].role
+			a.emit(EventCrossReview, phase.CoderProviders[i], map[string]any{
+				"reviewer": fmt.Sprintf("agent-%d", i+1),
+				"target":   reviewTarget,
+				"step":     i + 1,
+			})
 			reviewOutput := stage1Outputs[reviewTarget]
 			if len(reviewOutput) > 3000 {
 				reviewOutput = reviewOutput[:3000] + "\n[...truncated]"
