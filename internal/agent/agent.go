@@ -70,6 +70,8 @@ type Agent struct {
 	pipelineCycles     int    // how many times we've failed back to implement (cap at 3)
 	acceptanceCriteria string // generated in plan phase
 	cachedSystemPrompt string // built once, reused
+	cachedSkillContext string // computed once from originalRequest, injected into all sub-agents
+	skillContextOnce   sync.Once
 }
 
 // New creates an agent with the given executor, tool registry, and config.
@@ -349,7 +351,17 @@ func (a *Agent) buildMessages() []providers.Message {
 // matchedSkillContext matches the latest user message against skill triggers
 // and returns the full instructions for all matched skills plus any MCP tool
 // results, formatted for injection into the system prompt.
+// Computed once from originalRequest and cached — all sub-agents get the same
+// skill context regardless of how their task prompt is worded.
 func (a *Agent) matchedSkillContext() string {
+	a.skillContextOnce.Do(func() {
+		a.cachedSkillContext = a.computeSkillContext()
+	})
+	return a.cachedSkillContext
+}
+
+// computeSkillContext does the actual skill matching and formatting.
+func (a *Agent) computeSkillContext() string {
 	if len(a.config.Skills) == 0 {
 		return ""
 	}
@@ -1305,6 +1317,9 @@ ACCEPTANCE CRITERIA:
 %s
 ---
 
+SKILL REFERENCE (check code against these patterns and formats):
+%s
+
 WORK TO REVIEW (from %s):
 ---
 %s
@@ -1312,11 +1327,12 @@ WORK TO REVIEW (from %s):
 
 Your job:
 1. Find bugs, logic errors, missing edge cases, incorrect patterns
-2. Check against acceptance criteria — does this work meet them?
+2. Check against acceptance criteria AND skill reference — does this work meet them?
 3. List every issue with specifics (file, line, what's wrong)
 4. If you find issues, fix them directly in the codebase
 5. Say IMPLEMENT_COMPLETE when done.`, i+1, n, reviewTarget,
 				a.originalRequest, a.acceptanceCriteria,
+				skillContext,
 				reviewTarget, reviewOutput)
 
 			go func(idx int, task string) {
