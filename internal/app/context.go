@@ -169,7 +169,8 @@ func initializeProviders(profile string) []providers.Provider {
 	}
 
 	// NanoGPT paid (last — costs money, only used as fallback, personal only)
-	if nanogptAPIKey != "" && profile != "work" {
+	// Disable via NANOGPT_DISABLED=true to prevent all NanoGPT API calls
+	if nanogptAPIKey != "" && profile != "work" && os.Getenv("NANOGPT_DISABLED") != "true" {
 		providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "paid"))
 	}
 

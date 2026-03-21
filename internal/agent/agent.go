@@ -584,25 +584,32 @@ func (a *Agent) executeForCurrentProvider(ctx context.Context, req providers.Cha
 		}
 	}
 
-	// When escalated, try providers at the current level, then walk up
-	for a.providerIdx > 0 && a.providerIdx < len(a.config.EscalationChain) {
-		level := a.config.EscalationChain[a.providerIdx]
+	// Use the escalation chain at ALL levels (including Level 0).
+	// This ensures the agent uses Ollama chain models first, not whatever
+	// the router's default selection picks (which might be Gemini/NanoGPT).
+	if len(a.config.EscalationChain) > 0 {
 		if pae, ok := a.executor.(ProviderAwareExecutor); ok {
-			// Try each provider at this level
-			for _, provider := range level.Providers {
-				resp, err := pae.ChatCompletionForProvider(ctx, req, a.sessionID, provider, false)
-				if err == nil {
-					return resp, nil
+			for a.providerIdx < len(a.config.EscalationChain) {
+				level := a.config.EscalationChain[a.providerIdx]
+				// Try each provider at this level
+				for _, provider := range level.Providers {
+					resp, err := pae.ChatCompletionForProvider(ctx, req, a.sessionID, provider, false)
+					if err == nil {
+						return resp, nil
+					}
+					log.Printf("[Agent] provider %s failed (%v), trying next", provider, err)
 				}
-				log.Printf("[Agent] provider %s failed (%v), trying next", provider, err)
+				// All providers at this level failed, advance to next level
+				a.providerIdx++
+				a.emit(EventEscalation, "", map[string]any{
+					"from_level": a.providerIdx - 1,
+					"to_level":   a.providerIdx,
+					"providers":  fmt.Sprintf("%v", level.Providers),
+				})
 			}
-			// All providers at this level failed, advance to next level
-			a.providerIdx++
-			continue
 		}
-		break
 	}
-	// Not escalated or all escalated providers exhausted — use default routing
+	// No escalation chain configured or all levels exhausted — use default routing
 	return a.executor.ChatCompletion(ctx, req, a.sessionID)
 }
 
