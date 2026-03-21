@@ -47,6 +47,36 @@ func (r *Renderer) ToolResult(name string, result string, isError bool) {
 	}
 }
 
+// ToolDiff displays a colored unified diff for file edits.
+func (r *Renderer) ToolDiff(path, oldText, newText string) {
+	fmt.Fprintf(r.out, "\033[2m── file_edit: %s ──\033[0m\n", path)
+
+	oldLines := strings.Split(oldText, "\n")
+	newLines := strings.Split(newText, "\n")
+
+	maxLines := 30
+	count := 0
+
+	for _, line := range oldLines {
+		if count >= maxLines {
+			fmt.Fprintf(r.out, "  \033[2m... (%d more removed lines)\033[0m\n", len(oldLines)-count)
+			break
+		}
+		fmt.Fprintf(r.out, "  \033[31m- %s\033[0m\n", line)
+		count++
+	}
+
+	count = 0
+	for _, line := range newLines {
+		if count >= maxLines {
+			fmt.Fprintf(r.out, "  \033[2m... (%d more added lines)\033[0m\n", len(newLines)-count)
+			break
+		}
+		fmt.Fprintf(r.out, "  \033[32m+ %s\033[0m\n", line)
+		count++
+	}
+}
+
 // Error displays an error message.
 func (r *Renderer) Error(msg string) {
 	fmt.Fprintf(r.out, "\033[31merror:\033[0m %s\n", msg)

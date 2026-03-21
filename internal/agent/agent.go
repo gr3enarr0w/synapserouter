@@ -57,7 +57,9 @@ type Agent struct {
 	trace   *Trace
 	metrics *AgentMetrics
 
-	// Provider escalation
+	// Provider escalation — providerIdx is MONOTONICALLY INCREASING.
+	// Once escalated to a level, never goes back to a lower one.
+	// All mutations MUST go through setMinProviderLevel().
 	providerIdx      int // index into config.EscalationChain levels
 	levelRotationIdx int // tracks provider rotation within current escalation level
 
@@ -386,7 +388,19 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 				isError = true
 			}
 			if a.renderer != nil {
-				a.renderer.ToolResult(name, resultContent, result.Error != "")
+				// Show colored diff for file edits
+				if name == "file_edit" && !isError {
+					oldText, _ := args["old_text"].(string)
+					newText, _ := args["new_text"].(string)
+					path, _ := args["path"].(string)
+					if oldText != "" && newText != "" {
+						a.renderer.ToolDiff(path, oldText, newText)
+					} else {
+						a.renderer.ToolResult(name, resultContent, false)
+					}
+				} else {
+					a.renderer.ToolResult(name, resultContent, result.Error != "")
+				}
 			}
 		}
 
@@ -593,32 +607,27 @@ func (a *Agent) executeForCurrentProvider(ctx context.Context, req providers.Cha
 		}
 	}
 
-	// Use the escalation chain at ALL levels (including Level 0).
-	// This ensures the agent uses Ollama chain models first, not whatever
-	// the router's default selection picks (which might be Gemini/NanoGPT).
-	if len(a.config.EscalationChain) > 0 {
+	// Try providers at the CURRENT escalation level only.
+	// NEVER mutates providerIdx — the pipeline/caller decides escalation.
+	// NEVER falls through to default routing — stays on current level.
+	levelProvs := a.currentLevelProviders()
+	if len(levelProvs) > 0 {
 		if pae, ok := a.executor.(ProviderAwareExecutor); ok {
-			for a.providerIdx < len(a.config.EscalationChain) {
-				level := a.config.EscalationChain[a.providerIdx]
-				// Try each provider at this level
-				for _, provider := range level.Providers {
-					resp, err := pae.ChatCompletionForProvider(ctx, req, a.sessionID, provider, false)
-					if err == nil {
-						return resp, nil
-					}
-					log.Printf("[Agent] provider %s failed (%v), trying next", provider, err)
+			var lastErr error
+			for _, provider := range levelProvs {
+				resp, err := pae.ChatCompletionForProvider(ctx, req, a.sessionID, provider, false)
+				if err == nil {
+					return resp, nil
 				}
-				// All providers at this level failed, advance to next level
-				a.providerIdx++
-				a.emit(EventEscalation, "", map[string]any{
-					"from_level": a.providerIdx - 1,
-					"to_level":   a.providerIdx,
-					"providers":  fmt.Sprintf("%v", level.Providers),
-				})
+				log.Printf("[Agent] provider %s at level %d failed (%v), trying next at same level",
+					provider, a.providerIdx, err)
+				lastErr = err
 			}
+			// All providers at this level failed — return error, let caller decide
+			return providers.ChatResponse{}, fmt.Errorf("all providers at level %d failed: %w", a.providerIdx, lastErr)
 		}
 	}
-	// No escalation chain configured or all levels exhausted — use default routing
+	// No escalation chain configured — use default routing
 	return a.executor.ChatCompletion(ctx, req, a.sessionID)
 }
 
@@ -688,8 +697,7 @@ func (a *Agent) advancePipeline(content string) bool {
 		// After implement phase passes, advance providerIdx past Level 0 (coders)
 		// to Level 1 (first review level). This ensures reviews use bigger models.
 		if currentPhase.Name == "implement" && a.providerIdx == 0 && len(a.config.EscalationChain) > 1 {
-			a.providerIdx = 1
-			a.levelRotationIdx = 0
+			a.setMinProviderLevel(1)
 			log.Printf("[Agent] advanced past coder level to review level %d: %v",
 				a.providerIdx, a.config.EscalationChain[a.providerIdx].Providers)
 		}
@@ -714,8 +722,12 @@ func (a *Agent) advancePipeline(content string) bool {
 		})
 
 		// Parallel implement: spawn N coders working concurrently on split tasks
-		// Only if the named providers exist in the escalation chain
-		if nextPhase.ParallelSubAgents > 0 && len(nextPhase.CoderProviders) > 0 && a.hasProviders(nextPhase.CoderProviders) {
+		// For plan phase, check hardcoded providers. For others, use current level.
+		canParallel := nextPhase.ParallelSubAgents > 0 && len(a.currentLevelProviders()) > 0
+		if nextPhase.Name == "plan" {
+			canParallel = nextPhase.ParallelSubAgents > 0 && len(nextPhase.CoderProviders) > 0 && a.hasProviders(nextPhase.CoderProviders)
+		}
+		if canParallel {
 			parallelResult := a.runParallelPhase(nextPhase)
 			a.conversation.Add(providers.Message{
 				Role:    "user",
@@ -797,8 +809,12 @@ func (a *Agent) advancePipeline(content string) bool {
 	log.Printf("[Agent] pipeline: starting phase %d/%d: %s",
 		a.pipelinePhase+1, len(a.pipeline.Phases), currentPhase.Name)
 
-	// Parallel phase starting: spawn sub-agents immediately (only if providers exist)
-	if currentPhase.ParallelSubAgents > 0 && len(currentPhase.CoderProviders) > 0 && a.hasProviders(currentPhase.CoderProviders) {
+	// Parallel phase starting: spawn sub-agents immediately
+	canRunParallel := currentPhase.ParallelSubAgents > 0 && len(a.currentLevelProviders()) > 0
+	if currentPhase.Name == "plan" {
+		canRunParallel = currentPhase.ParallelSubAgents > 0 && len(currentPhase.CoderProviders) > 0 && a.hasProviders(currentPhase.CoderProviders)
+	}
+	if canRunParallel {
 		parallelResult := a.runParallelPhase(currentPhase)
 		if currentPhase.StoreAs == "criteria" {
 			a.acceptanceCriteria = parallelResult
@@ -1052,38 +1068,60 @@ Your job:
 	return result, nil
 }
 
-// escalateProvider moves to the next provider in the escalation chain.
-// Returns true if a new provider was selected, false if already at the end.
-// Never over-increments past the last provider — stays capped at the most capable.
+// setMinProviderLevel enforces monotonic escalation. The provider level can
+// only go UP, never down. This is the ONLY way to change providerIdx.
+func (a *Agent) setMinProviderLevel(level int) {
+	if level <= a.providerIdx {
+		return // already at or above this level
+	}
+	if len(a.config.EscalationChain) == 0 {
+		return
+	}
+	if level >= len(a.config.EscalationChain) {
+		level = len(a.config.EscalationChain) - 1
+	}
+	fromLevel := a.providerIdx
+	a.providerIdx = level
+	a.levelRotationIdx = 0
+	providers := a.config.EscalationChain[a.providerIdx].Providers
+	log.Printf("[Agent] escalating to level %d/%d: %v",
+		a.providerIdx+1, len(a.config.EscalationChain), providers)
+	a.emit(EventEscalation, "", map[string]any{
+		"from_level": fromLevel,
+		"to_level":   a.providerIdx,
+		"providers":  fmt.Sprintf("%v", providers),
+	})
+}
+
+// escalateProvider moves to the next provider level. Returns true if escalated.
 func (a *Agent) escalateProvider() bool {
 	if len(a.config.EscalationChain) == 0 {
 		return false
 	}
 	if a.providerIdx >= len(a.config.EscalationChain)-1 {
-		level := a.config.EscalationChain[a.providerIdx]
-		log.Printf("[Agent] escalation chain exhausted — staying on %v (level %d)",
-			level.Providers, a.providerIdx)
+		log.Printf("[Agent] escalation chain exhausted — staying on level %d", a.providerIdx)
 		return false
 	}
-
-	fromLevel := a.providerIdx
-	a.providerIdx++
-	a.levelRotationIdx = 0
-	level := a.config.EscalationChain[a.providerIdx]
-	log.Printf("[Agent] escalating to level %d/%d: %v",
-		a.providerIdx+1, len(a.config.EscalationChain), level.Providers)
-
-	a.emit(EventEscalation, "", map[string]any{
-		"from_level": fromLevel,
-		"to_level":   a.providerIdx,
-		"providers":  fmt.Sprintf("%v", level.Providers),
-	})
+	a.setMinProviderLevel(a.providerIdx + 1)
 	return true
 }
 
-// initializeImplementPhase populates the implement phase's CoderProviders
-// from the escalation chain Level 0. Called after pipeline init so that
-// hardcoded values aren't needed in pipeline.go.
+// currentLevelProviders returns the providers at the current escalation level.
+// This is the ONLY way to get providers for non-plan phases — never use cached
+// CoderProviders for implement/review phases.
+func (a *Agent) currentLevelProviders() []string {
+	if len(a.config.EscalationChain) == 0 {
+		return nil
+	}
+	idx := a.providerIdx
+	if idx >= len(a.config.EscalationChain) {
+		idx = len(a.config.EscalationChain) - 1
+	}
+	return a.config.EscalationChain[idx].Providers
+}
+
+// initializeImplementPhase sets the initial parallel agent count from Level 0.
+// CoderProviders is NOT cached — currentLevelProviders() is used at runtime.
 func (a *Agent) initializeImplementPhase() {
 	if a.pipeline == nil || len(a.config.EscalationChain) == 0 {
 		return
@@ -1091,12 +1129,11 @@ func (a *Agent) initializeImplementPhase() {
 	level0 := a.config.EscalationChain[0]
 	for i := range a.pipeline.Phases {
 		phase := &a.pipeline.Phases[i]
-		if phase.Name == "implement" && phase.ParallelSubAgents == 0 && len(phase.CoderProviders) == 0 {
+		if phase.Name == "implement" && phase.ParallelSubAgents == 0 {
 			if len(level0.Providers) > 0 {
 				phase.ParallelSubAgents = len(level0.Providers)
-				phase.CoderProviders = level0.Providers
 				log.Printf("[Agent] implement phase: %d parallel coders from chain level 0: %v",
-					phase.ParallelSubAgents, phase.CoderProviders)
+					phase.ParallelSubAgents, level0.Providers)
 			}
 		}
 	}
@@ -1196,9 +1233,16 @@ func (a *Agent) runParallelPhase(phase PipelinePhase) string {
 	// Use a timeout context rather than background to prevent runaway sub-agents
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+	// For plan phases, use the hardcoded planner providers.
+	// For ALL other phases, use currentLevelProviders() — never stale cached values.
+	levelProviders := phase.CoderProviders // plan phase keeps its own
+	if phase.Name != "plan" {
+		levelProviders = a.currentLevelProviders()
+	}
+
 	n := phase.ParallelSubAgents
-	if n > len(phase.CoderProviders) {
-		n = len(phase.CoderProviders)
+	if n > len(levelProviders) {
+		n = len(levelProviders)
 	}
 
 	// Build task descriptions based on phase type
@@ -1308,7 +1352,7 @@ When done, say IMPLEMENT_COMPLETE.`,
 			}
 			tasks = append(tasks, taskDef{
 				role:     fmt.Sprintf("agent-%d", i+1),
-				provider: phase.CoderProviders[i],
+				provider: levelProviders[i],
 				task:     fmt.Sprintf(rolePrompts[roleIdx], i+1, n, a.originalRequest, a.acceptanceCriteria, skillContext),
 			})
 		}
@@ -1432,7 +1476,7 @@ When done, say IMPLEMENT_COMPLETE.`,
 		for i := 0; i < n; i++ {
 			reviewIdx := (i - 1 + n) % n // agent[i] reviews agent[i-1]'s work
 			reviewTarget := tasks[reviewIdx].role
-			a.emit(EventCrossReview, phase.CoderProviders[i], map[string]any{
+			a.emit(EventCrossReview, levelProviders[i], map[string]any{
 				"reviewer": fmt.Sprintf("agent-%d", i+1),
 				"target":   reviewTarget,
 				"step":     i + 1,
@@ -1480,7 +1524,7 @@ Your job:
 				}()
 				out, err := a.RunChild(ctx, SpawnConfig{
 					Role:     fmt.Sprintf("cross-review-%d", idx+1),
-					Provider: phase.CoderProviders[idx],
+					Provider: levelProviders[idx],
 				}, task)
 				crossResults <- result{role: fmt.Sprintf("cross-review-%d", idx+1), output: out, err: err}
 			}(i, crossTask)
