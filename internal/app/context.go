@@ -159,8 +159,9 @@ func initializeProviders(profile string) []providers.Provider {
 			}
 		}
 
-		// NanoGPT subscription (55K tokens/week cap, disable via NANOGPT_SUB_DISABLED=true)
-		if nanogptAPIKey != "" && os.Getenv("NANOGPT_SUB_DISABLED") != "true" {
+		// NanoGPT subscription (55K tokens/week cap)
+		// Disable via NANOGPT_DISABLED=true (kills both sub+paid) or NANOGPT_SUB_DISABLED=true (sub only)
+		if nanogptAPIKey != "" && os.Getenv("NANOGPT_DISABLED") != "true" && os.Getenv("NANOGPT_SUB_DISABLED") != "true" {
 			providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "subscription"))
 		}
 
