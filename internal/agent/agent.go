@@ -406,8 +406,12 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			"args_summary": formatToolCallSummary(name, args),
 		})
 
+		// Per-tool-call timeout as a safety net. Even if the bash tool's internal
+		// timeout fails, the agent won't hang forever on a single tool call.
+		toolCtx, toolCancel := context.WithTimeout(ctx, 5*time.Minute)
 		toolStart := time.Now()
-		result, execErr := a.registry.ExecuteChecked(ctx, name, args, a.config.WorkDir, a.permissions)
+		result, execErr := a.registry.ExecuteChecked(toolCtx, name, args, a.config.WorkDir, a.permissions)
+		toolCancel()
 		toolDuration := time.Since(toolStart)
 
 		if a.trace != nil {

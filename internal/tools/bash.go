@@ -70,7 +70,9 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]interface{}, wor
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	// Use exec.Command (NOT exec.CommandContext) — we handle timeout ourselves
+	// because CommandContext only kills the parent process, not the process group.
+	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = workDir
 	cmd.Env = filteredEnv()
 	// Set process group so we can kill the entire tree on timeout
@@ -80,44 +82,73 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]interface{}, wor
 	cmd.Stdout = &limitWriter{w: &stdout, max: maxOutputBytes}
 	cmd.Stderr = &limitWriter{w: &stderr, max: maxOutputBytes}
 
-	err := cmd.Run()
+	// Start the process (non-blocking). cmd.Run() would block forever if a
+	// child process hangs, making the timeout unreachable.
+	if err := cmd.Start(); err != nil {
+		return &ToolResult{Output: "", Error: err.Error(), ExitCode: -1}, nil
+	}
 
-	exitCode := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else if ctx.Err() != nil {
-			// Kill the process group on timeout or cancellation
-			if cmd.Process != nil {
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	// Wait for process completion in a goroutine
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	// Select: process finishes naturally OR context times out
+	select {
+	case err := <-done:
+		// Process finished — check result
+		output := combineOutput(stdout.String(), stderr.String())
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				code := exitErr.ExitCode()
+				return &ToolResult{
+					Output:   output,
+					Error:    fmt.Sprintf("exit code %d", code),
+					ExitCode: code,
+				}, nil
 			}
-			msg := "command cancelled"
-			if ctx.Err() == context.DeadlineExceeded {
-				msg = fmt.Sprintf("command timed out after %s", timeout)
-			}
-			return &ToolResult{
-				Output:   stdout.String(),
-				Error:    msg,
-				ExitCode: -1,
-			}, nil
-		} else {
-			return &ToolResult{Error: err.Error(), ExitCode: -1}, nil
+			return &ToolResult{Output: output, Error: err.Error(), ExitCode: -1}, nil
 		}
-	}
+		return &ToolResult{Output: output, ExitCode: 0}, nil
 
-	output := stdout.String()
-	if errStr := stderr.String(); errStr != "" {
-		if output != "" {
-			output += "\n"
+	case <-ctx.Done():
+		// Timeout or cancellation — kill the entire process group.
+		// Kill the process via both methods:
+		// 1. syscall.Kill(-pgid, SIGKILL) kills the entire process group
+		// 2. cmd.Process.Kill() closes the process's stdin, which unblocks
+		//    cmd.Wait()'s internal pipe-copy goroutines
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = cmd.Process.Kill()
 		}
-		output += errStr
+		// Wait briefly for cmd.Wait() to return after kill.
+		// If it doesn't return (pipe goroutines stuck), move on anyway.
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+		}
+		msg := "command cancelled"
+		if ctx.Err() == context.DeadlineExceeded {
+			msg = fmt.Sprintf("command timed out after %s", timeout)
+		}
+		return &ToolResult{
+			Output:   combineOutput(stdout.String(), stderr.String()),
+			Error:    msg,
+			ExitCode: -1,
+		}, nil
 	}
+}
 
-	result := &ToolResult{Output: output, ExitCode: exitCode}
-	if exitCode != 0 {
-		result.Error = fmt.Sprintf("exit code %d", exitCode)
+// combineOutput merges stdout and stderr into a single string.
+func combineOutput(stdout, stderr string) string {
+	if stderr == "" {
+		return stdout
 	}
-	return result, nil
+	if stdout == "" {
+		return stderr
+	}
+	return stdout + "\n" + stderr
 }
 
 // limitWriter wraps a writer and stops writing after max bytes.
