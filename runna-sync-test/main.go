@@ -1239,9 +1239,13 @@ func main() {
 	}
 
 	switch cmd {
+	case "once":
+		// One-shot sync (for testing / manual runs)
+		fmt.Printf("Config: %s, weight=%.1fkg, FTP=%.0fw (%.1fmin 5K)\n",
+			cfg.AthleteID, athleteWeightKg, runFTP, cfg.TargetFiveKMin)
+		runSync()
+		return
 	case "update-pace":
-		// Mode 1+2: pace→pace and pace→power
-		// Analyzes recent runs, updates threshold pace AND FTP from best pace
 		fmt.Printf("Config: %s, weight=%.1fkg, current FTP=%.0fw\n", cfg.AthleteID, athleteWeightKg, runFTP)
 		lookback := 30
 		if len(os.Args) > 2 {
@@ -1250,12 +1254,10 @@ func main() {
 			}
 		}
 		cmdUpdateFromPace(lookback)
-		// After updating, re-sync workouts with new targets
 		fmt.Println("\nRe-syncing workouts with updated targets...")
-		cmd = "sync"
+		runSync()
+		return
 	case "update-power":
-		// Mode 3: power→power
-		// Reads actual Stryd power data, updates FTP from measured power
 		fmt.Printf("Config: %s, weight=%.1fkg, current FTP=%.0fw\n", cfg.AthleteID, athleteWeightKg, runFTP)
 		lookback := 30
 		if len(os.Args) > 2 {
@@ -1265,49 +1267,91 @@ func main() {
 		}
 		cmdUpdateFromPower(lookback)
 		fmt.Println("\nRe-syncing workouts with updated targets...")
-		cmd = "sync"
+		runSync()
+		return
 	case "sync":
-		fmt.Printf("Config: %s, weight=%.1fkg, FTP=%.0fw (%.1fmin 5K)\n",
-			cfg.AthleteID, athleteWeightKg, runFTP, cfg.TargetFiveKMin)
+		// Default: run forever, poll for changes
 	default:
-		fmt.Fprintf(os.Stderr, "Usage: runna-sync [sync|update-pace|update-power] [days]\n")
-		fmt.Fprintf(os.Stderr, "  sync          Sync Runna workouts to Intervals.icu (default)\n")
-		fmt.Fprintf(os.Stderr, "  update-pace   Update FTP+pace from recent run paces, then sync\n")
-		fmt.Fprintf(os.Stderr, "  update-power  Update FTP from Stryd power data, then sync\n")
+		fmt.Fprintf(os.Stderr, "Usage: runna-sync [sync|once|update-pace|update-power]\n")
+		fmt.Fprintf(os.Stderr, "  sync          Run continuously, poll iCal every hour (default)\n")
+		fmt.Fprintf(os.Stderr, "  once          One-shot sync and exit\n")
+		fmt.Fprintf(os.Stderr, "  update-pace   Update FTP from recent paces, sync, and exit\n")
+		fmt.Fprintf(os.Stderr, "  update-power  Update FTP from Stryd power, sync, and exit\n")
 		os.Exit(1)
 	}
 
-	if cmd != "sync" {
+	// ---- Continuous mode: run forever, sync on change ----
+	pollInterval := 1 * time.Hour
+	if v := os.Getenv("POLL_INTERVAL_MINUTES"); v != "" {
+		if mins, err := strconv.Atoi(v); err == nil && mins > 0 {
+			pollInterval = time.Duration(mins) * time.Minute
+		}
+	}
+
+	fmt.Printf("Config: %s, weight=%.1fkg, FTP=%.0fw (%.1fmin 5K)\n",
+		cfg.AthleteID, athleteWeightKg, runFTP, cfg.TargetFiveKMin)
+	fmt.Printf("Running continuously, polling every %s\n", pollInterval)
+	fmt.Println("Press Ctrl+C to stop\n")
+
+	// Track last iCal content to detect changes
+	var lastICalHash string
+
+	for {
+		icalContent, err := fetchICal(RunnaICalURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[%s] Error fetching iCal: %v\n", time.Now().Format("15:04:05"), err)
+		} else {
+			// Simple hash to detect changes
+			currentHash := fmt.Sprintf("%d", len(icalContent))
+			for i := 0; i < len(icalContent) && i < 1000; i++ {
+				currentHash += string(icalContent[i])
+			}
+
+			if currentHash != lastICalHash {
+				if lastICalHash == "" {
+					fmt.Printf("[%s] Initial sync...\n", time.Now().Format("15:04:05"))
+				} else {
+					fmt.Printf("[%s] iCal feed changed, re-syncing...\n", time.Now().Format("15:04:05"))
+				}
+				lastICalHash = currentHash
+				runSync()
+			} else {
+				fmt.Printf("[%s] No changes detected\n", time.Now().Format("15:04:05"))
+			}
+		}
+
+		// Also check for new activities and update FTP weekly (every Sunday)
+		if time.Now().Weekday() == time.Sunday && time.Now().Hour() == 6 {
+			fmt.Printf("[%s] Weekly FTP update from pace data...\n", time.Now().Format("15:04:05"))
+			cmdUpdateFromPace(30)
+			runSync()
+		}
+
+		time.Sleep(pollInterval)
+	}
+}
+
+// runSync performs a single sync cycle: fetch iCal → parse → upsert workouts.
+func runSync() {
+	if cfg.RunnaICalURL == "" {
+		fmt.Fprintln(os.Stderr, "Error: RUNNA_ICAL_URL environment variable is required for sync")
 		return
 	}
 
-	if cfg.RunnaICalURL == "" {
-		fmt.Fprintln(os.Stderr, "Error: RUNNA_ICAL_URL environment variable is required for sync")
-		os.Exit(1)
-	}
-
-	syncDays := cfg.SyncDays
-	if len(os.Args) > 1 {
-		if days, err := strconv.Atoi(os.Args[len(os.Args)-1]); err == nil && days > 0 {
-			syncDays = days
-		}
-	}
-	
 	fmt.Printf("Fetching Runna training plan from iCal...\n")
-	
+
 	icalContent, err := fetchICal(RunnaICalURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error fetching iCal: %v\n", err)
-		os.Exit(1)
+		return
 	}
-	
+
 	events := ParseICal(icalContent)
 	fmt.Printf("Found %d events in iCal feed\n", len(events))
-	
+
 	now := time.Now()
-	// Use start of today so today's workouts are included
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	endDate := today.AddDate(0, 0, syncDays)
+	endDate := today.AddDate(0, 0, cfg.SyncDays)
 
 	var filteredEvents []iCalEvent
 	for _, event := range events {
@@ -1315,16 +1359,15 @@ func main() {
 			filteredEvents = append(filteredEvents, event)
 		}
 	}
-	
+
 	fmt.Printf("Filtered to %d events in date range (%s to %s)\n",
-		len(filteredEvents), now.Format("2006-01-02"), endDate.Format("2006-01-02"))
-	
+		len(filteredEvents), today.Format("2006-01-02"), endDate.Format("2006-01-02"))
+
 	if len(filteredEvents) == 0 {
 		fmt.Println("No upcoming workouts to sync")
 		return
 	}
 
-	// Fetch existing events for upsert matching
 	fmt.Println("Checking existing workouts...")
 	existing, err := fetchExistingEvents(today, endDate)
 	if err != nil {
@@ -1345,10 +1388,8 @@ func main() {
 		steps := parseWorkoutDescription(event.Description)
 		fmt.Printf("  Parsed %d steps\n", len(steps))
 
-		// Check if a workout already exists on this date (one per day max)
 		key := event.StartDate.Format("2006-01-02")
 		if existingID, ok := existing[key]; ok {
-			// Update existing workout in place
 			if err := updateWorkout(existingID, steps); err != nil {
 				fmt.Fprintf(os.Stderr, "  Update failed: %v\n", err)
 				continue
@@ -1356,7 +1397,6 @@ func main() {
 			fmt.Printf("  Updated existing (event ID: %s)\n", existingID)
 			updated++
 		} else {
-			// Create new workout
 			eventID, err := uploadWorkout(event, steps)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "  Upload failed: %v\n", err)
