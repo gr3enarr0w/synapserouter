@@ -59,18 +59,31 @@ func (a *Agent) SpawnChild(cfg SpawnConfig) *Agent {
 		sysPrompt = a.buildChildSystemPrompt(cfg.Role, workDir)
 	}
 
+	// Inherit escalation chain so sub-agents use the same provider ordering.
+	// Without this, sub-agents fall through to default routing which may
+	// pick providers (gemini, codex) that should only be reached via escalation.
+	escalationChain := a.config.EscalationChain
+
 	childConfig := Config{
-		Model:          model,
-		SystemPrompt:   sysPrompt,
-		MaxTurns:       maxTurns,
-		WorkDir:        workDir,
-		TargetProvider: cfg.Provider,
-		Skills:         a.config.Skills, // inherit parent's skill registry for dynamic matching
-		EventBus:       a.config.EventBus,
+		Model:           model,
+		SystemPrompt:    sysPrompt,
+		MaxTurns:        maxTurns,
+		WorkDir:         workDir,
+		TargetProvider:  cfg.Provider,
+		EscalationChain: escalationChain,
+		Skills:          a.config.Skills, // inherit parent's skill registry for dynamic matching
+		EventBus:        a.config.EventBus,
 	}
 
 	child := New(a.executor, registry, a.renderer, childConfig)
 	child.parentID = a.sessionID
+
+	// Sub-agents start at the parent's current escalation level (or higher).
+	// This prevents reviewers from using Level 0 small models when the parent
+	// has already escalated past them.
+	if len(escalationChain) > 0 && a.providerIdx > 0 {
+		child.setMinProviderLevel(a.providerIdx)
+	}
 
 	if cfg.Budget != nil {
 		child.budget = NewBudgetTracker(*cfg.Budget)
@@ -198,13 +211,20 @@ type DelegateResult struct {
 }
 
 // buildChildSystemPrompt creates a system prompt for a child agent.
+// Uses embedded child-agent.md for base instructions, then loads role-specific
+// instructions from .claude/agents/{role}.md if available.
 // Skills are NOT injected here — they go in the task prompt instead,
 // where they can be tailored per role (planner vs coder vs reviewer).
-// This avoids double-injecting the same skill content.
 func (a *Agent) buildChildSystemPrompt(role, workDir string) string {
-	return fmt.Sprintf(`You are a %s agent working in: %s
+	base := LoadPrompt("child-agent.md")
+	if base == "" {
+		base = "You have been delegated a specific task. Focus on completing it."
+	}
+	prompt := fmt.Sprintf("You are a %s agent working in: %s\n\n%s", role, workDir, base)
 
-You have been delegated a specific task by a parent agent. Focus exclusively on completing the delegated task.
-Use the available tools to accomplish your goal. Be concise and return actionable results.
-When your task includes a SKILL REFERENCE section, follow those patterns and formats exactly.`, role, workDir)
+	// Load role-specific instructions from .claude/agents/{role}.md
+	if roleInstr := LoadRoleInstructions(workDir, role); roleInstr != "" {
+		prompt += "\n\n# Role Instructions\n" + roleInstr
+	}
+	return prompt
 }

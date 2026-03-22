@@ -74,6 +74,9 @@ type Agent struct {
 	cachedSystemPrompt string // built once, reused
 	cachedSkillContext string // computed once from originalRequest, injected into all sub-agents
 	skillContextOnce   sync.Once
+	noToolTurns        int // consecutive turns without tool calls (stall detection)
+	phaseRetries       int // consecutive quality gate rejections in current phase
+	cachedPromptLevel  int // provider level when system prompt was cached (-1 = uncached)
 
 	// Event bus for real-time observability
 	bus *EventBus
@@ -82,14 +85,15 @@ type Agent struct {
 // New creates an agent with the given executor, tool registry, and config.
 func New(executor ChatExecutor, registry *tools.Registry, renderer *Renderer, config Config) *Agent {
 	return &Agent{
-		executor:     executor,
-		registry:     registry,
-		permissions:  tools.NewPermissionChecker(tools.ModeAutoApprove),
-		conversation: NewConversation(),
-		renderer:     renderer,
-		config:       config,
-		sessionID:    fmt.Sprintf("agent-%d", uniqueID()),
-		bus:          config.EventBus,
+		executor:          executor,
+		registry:          registry,
+		permissions:       tools.NewPermissionChecker(tools.ModeAutoApprove),
+		conversation:      NewConversation(),
+		renderer:          renderer,
+		config:            config,
+		sessionID:         fmt.Sprintf("agent-%d", uniqueID()),
+		bus:               config.EventBus,
+		cachedPromptLevel: -1, // force rebuild on first call
 	}
 }
 
@@ -216,6 +220,20 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 				Content: fmt.Sprintf("The planning phase is complete. Here is the merged plan and acceptance criteria:\n\n%s\n\nNow proceed to implement. %s",
 					parallelResult, a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria)),
 			})
+		} else {
+			// No parallel plan phase — inject the first phase prompt so the
+			// pipeline actively steers the agent from turn 1, not just when
+			// the agent stops making tool calls.
+			phasePrompt := a.pipeline.PhasePrompt(0, a.acceptanceCriteria)
+			if phasePrompt != "" {
+				log.Printf("[Agent] pipeline: injecting phase 1/%d prompt: %s",
+					len(a.pipeline.Phases), firstPhase.Name)
+				a.conversation.Add(providers.Message{
+					Role:    "user",
+					Content: fmt.Sprintf("You are working in phases. Current phase: %s\n\n%s\n\nComplete this phase using tools, then say %s_COMPLETE before moving on.",
+						firstPhase.Name, phasePrompt, strings.ToUpper(strings.ReplaceAll(firstPhase.Name, "-", "_"))),
+				})
+			}
 		}
 	}
 
@@ -227,6 +245,10 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		turns := len(a.conversation.Messages()) / 2 // rough estimate
 		a.metrics.RecordRequest(time.Since(start), 0, turns, err != nil)
 	}
+
+	// Write project state file (synroute.md) — the agent's CLAUDE.md equivalent.
+	// Written regardless of success/failure so the next run knows what happened.
+	a.writeSynrouteMD()
 
 	if err != nil {
 		return "", err
@@ -325,9 +347,25 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		}
 		a.conversation.Add(msg)
 
-		// No tool calls → pipeline decides next step
+		// No tool calls → stall detection + pipeline advancement
 		if len(msg.ToolCalls) == 0 {
-			if a.config.AutoOrchestrate && a.toolCallCount >= 3 {
+			a.noToolTurns++
+			if a.config.AutoOrchestrate {
+				// Stall detection: if model hasn't made tool calls in 3 consecutive turns,
+				// escalate to a bigger model regardless of prior tool call history.
+				if a.noToolTurns >= 3 {
+					phaseName := "unknown"
+					if a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
+						phaseName = a.pipeline.Phases[a.pipelinePhase].Name
+					}
+					log.Printf("[Agent] stall detected in phase %s: %d turns without tools at level %d",
+						phaseName, a.noToolTurns, a.providerIdx)
+					a.escalateProvider()
+					a.noToolTurns = 0
+					a.conversation.Add(forceToolsMessage(phaseName))
+					continue
+				}
+				// Try to advance pipeline (plan phase may produce text-only output)
 				if a.advancePipeline(msg.Content) {
 					continue
 				}
@@ -335,10 +373,20 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			return msg.Content, nil
 		}
 
-		// Execute tool calls
+		// Execute tool calls — reset stall counter on success
+		a.noToolTurns = 0
 		a.toolCallCount += len(msg.ToolCalls)
 		a.phaseToolCalls += len(msg.ToolCalls)
 		a.executeToolCalls(ctx, msg.ToolCalls)
+
+		// Check for phase signals in the LLM's text content even when tool calls
+		// are present. Models often say "EDA_COMPLETE" or "IMPLEMENT_COMPLETE"
+		// alongside their tool calls — detect and advance the pipeline mid-work.
+		if a.config.AutoOrchestrate && msg.Content != "" {
+			if IsPassSignal(msg.Content) || IsFailSignal(msg.Content) {
+				a.advancePipeline(msg.Content)
+			}
+		}
 	}
 
 	return "", fmt.Errorf("agent exceeded max turns (%d)", a.config.MaxTurns)
@@ -430,11 +478,12 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 }
 
 func (a *Agent) buildMessages() []providers.Message {
-	// Build system prompt once and cache it
-	if a.cachedSystemPrompt == "" {
+	// Build system prompt and cache it. Invalidate when provider level changes
+	// so small models get simpler prompts and large models get full instructions.
+	if a.cachedSystemPrompt == "" || a.cachedPromptLevel != a.providerIdx {
 		sysPrompt := a.config.SystemPrompt
 		if sysPrompt == "" {
-			sysPrompt = defaultSystemPrompt(a.config.WorkDir)
+			sysPrompt = defaultSystemPrompt(a.config.WorkDir, a.providerIdx)
 		}
 
 		// Inject matched skill instructions
@@ -442,7 +491,13 @@ func (a *Agent) buildMessages() []providers.Message {
 			sysPrompt += "\n\n" + skillCtx
 		}
 
+		// Inject project-level instructions (CLAUDE.md / AGENTS.md from working directory)
+		if projectInstr := LoadProjectInstructions(a.config.WorkDir); projectInstr != "" {
+			sysPrompt += "\n\n# Project Instructions\n" + projectInstr
+		}
+
 		a.cachedSystemPrompt = sysPrompt
+		a.cachedPromptLevel = a.providerIdx
 	}
 
 	msgs := []providers.Message{{
@@ -555,17 +610,55 @@ func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query strin
 	return b.String()
 }
 
-func defaultSystemPrompt(workDir string) string {
+// toolBlock is the canonical tool reference shared across all prompt levels.
+const toolBlock = `AVAILABLE TOOLS (use exact names):
+- bash: Run shell commands. Args: command (string).
+- file_read: Read file. Args: path (string), offset (int, optional), limit (int, optional).
+- file_write: Create/overwrite file. Args: path (string), content (string).
+- file_edit: Edit text in file. Args: path (string), old_text (string), new_text (string).
+- grep: Search files. Args: pattern (string), path (string, optional), include (string, optional).
+- glob: Find files. Args: pattern (string), path (string, optional).
+- git: Git ops. Args: subcommand (string), args ([]string).
+
+DO NOT call: str_replace_editor, read_file, write_file, execute_command, list_files,
+search_files, browser, computer, text_editor, or any unlisted tool.
+
+EXECUTION RULES:
+- Use bash ONLY for: mkdir, pip/npm install, quick smoke tests (< 10 seconds).
+- Do NOT run full training, data processing, or long computations via bash.
+- Do NOT use "python -c" or "node -e" for inline code — write it to a file with file_write first.
+- Build the PROGRAM. Run it once briefly to verify it starts. Then deliver.
+- If a command takes more than 10 seconds, it is too long — the user will run it themselves.`
+
+func defaultSystemPrompt(workDir string, providerLevel int) string {
+	// Level 0 (small models ~20-30B): shorter, more forceful prompt focused on tool calling
+	if providerLevel == 0 {
+		return fmt.Sprintf(`You are a coding assistant working in: %s
+
+YOU MUST USE TOOLS TO COMPLETE TASKS. Do not describe what you would do — actually do it by calling tools.
+
+%s
+
+WORKFLOW — start immediately with tool calls:
+1. bash: create directories (mkdir -p src)
+2. file_write: create source files with full content
+3. bash: install dependencies and run code
+4. file_read: inspect output and fix issues
+
+Do NOT output plans, descriptions, or JSON without tool calls. Every response must include at least one tool call.`, workDir, toolBlock)
+	}
+
+	// Level 1+ (larger models ~120B+): full prompt with methodology
 	return fmt.Sprintf(`You are a coding assistant that BUILDS tools and programs. You are working in: %s
 
-TOOL BUILDER, NOT TOOL RUNNER:
-- Your job is to BUILD programs and tools — not to DO the work yourself.
+TOOL BUILDER (DEFAULT MODE):
+- By default, BUILD programs and tools — do not do the work yourself.
 - When a task involves operations (API calls, data processing, sync, transforms):
   write a PROGRAM that does it. Do not do it manually with bash/curl.
-- Use bash/curl ONLY for research (testing APIs, inspecting responses) and
-  verification (running the built tool once to check it works).
-- The deliverable is ALWAYS a runnable program, not a series of manual operations.
-- After building: compile, test, run once to verify, deliver.
+- The user CAN ask you to run, monitor, or execute programs. When asked, do so.
+- Without explicit instruction to run: build it, verify it starts briefly, deliver it.
+- Use bash/curl for research (testing APIs, inspecting responses) and
+  quick verification (running the built tool once to check it works).
 
 RESEARCH BEFORE CODING:
 - When working with an unfamiliar API, library, or format: read docs, test with curl,
@@ -578,21 +671,69 @@ PRODUCTION QUALITY:
 - Show math for calculated values. Never approximate when exact values are available.
 - Document assumptions. Flag ambiguous decisions for review.
 
-AVAILABLE TOOLS (use exact argument names):
-- bash: Run shell commands. Args: command (string, required), timeout (int, ms, optional).
-  Use for: curl, compilation, running programs, system commands.
-- file_read: Read file contents. Args: path (string, required), offset (int, line number), limit (int, max lines).
-  Use for: reading source code, configs, logs. Prefer over bash+cat.
-- file_write: Create or overwrite a file. Args: path (string, required), content (string, required).
-  Use for: creating new files. Writes entire file content.
-- file_edit: Edit specific text in a file. Args: path (string, required), old_text (string), new_text (string).
-  Use for: modifying existing files. Prefer over file_write for small changes.
-- grep: Search file contents recursively. Args: pattern (string, required), path (string), include (glob filter).
-  Use for: finding code, imports, function definitions.
-- glob: Find files matching a pattern. Args: pattern (string, required), path (string, base directory).
-  Use for: discovering files, checking if files exist.
-- git: Git operations. Args: subcommand (string, required), args ([]string).
-  Use for: status, diff, log, add, commit. Blocked: push --force, branch -D.`, workDir)
+%s`, workDir, toolBlock)
+}
+
+// forceToolsMessage returns a phase-appropriate message demanding tool calls.
+// Reads phase-specific messages from the embedded force-tools.md file.
+func forceToolsMessage(phaseName string) providers.Message {
+	return providers.Message{
+		Role:    "user",
+		Content: ParseForceToolsPrompt(phaseName),
+	}
+}
+
+// writeSynrouteMD writes the agent's project state to synroute.md in the working
+// directory. This is the agent's equivalent of CLAUDE.md — created and updated
+// each run so subsequent runs know what was built, what passed, and what to fix.
+func (a *Agent) writeSynrouteMD() {
+	if a.config.WorkDir == "" {
+		return
+	}
+
+	path := filepath.Join(a.config.WorkDir, "synroute.md")
+
+	var buf strings.Builder
+	buf.WriteString("# synroute.md — Project State\n\n")
+
+	// Status
+	buf.WriteString("## Status\n")
+	if a.pipeline != nil {
+		phaseName := "complete"
+		phaseNum := a.pipelinePhase + 1
+		total := len(a.pipeline.Phases)
+		if a.pipelinePhase < total {
+			phaseName = a.pipeline.Phases[a.pipelinePhase].Name
+		}
+		buf.WriteString(fmt.Sprintf("- Pipeline: %s\n", a.pipeline.Name))
+		buf.WriteString(fmt.Sprintf("- Phase: %s (%d/%d)\n", phaseName, phaseNum, total))
+	}
+	buf.WriteString(fmt.Sprintf("- Last run: %s\n", time.Now().Format("2006-01-02 15:04")))
+	buf.WriteString(fmt.Sprintf("- Tool calls: %d\n", a.toolCallCount))
+	buf.WriteString(fmt.Sprintf("- Provider level: %d\n", a.providerIdx))
+	buf.WriteString(fmt.Sprintf("- Escalation cycles: %d\n\n", a.pipelineCycles))
+
+	// Acceptance criteria (if generated during plan/EDA phase)
+	if a.acceptanceCriteria != "" {
+		buf.WriteString("## Acceptance Criteria\n")
+		buf.WriteString(a.acceptanceCriteria)
+		buf.WriteString("\n\n")
+	}
+
+	// Original request (truncated for readability)
+	if a.originalRequest != "" {
+		req := a.originalRequest
+		if len(req) > 500 {
+			req = req[:500] + "\n...(truncated)"
+		}
+		buf.WriteString("## Original Request\n")
+		buf.WriteString(req)
+		buf.WriteString("\n")
+	}
+
+	if err := os.WriteFile(path, []byte(buf.String()), 0644); err != nil {
+		log.Printf("[Agent] warning: could not write synroute.md: %v", err)
+	}
 }
 
 // executeForCurrentProvider routes the LLM call to the current provider in the
@@ -661,20 +802,40 @@ func (a *Agent) advancePipeline(content string) bool {
 
 	// Quality gate: reject phase transition if minimum tool calls not met
 	if shouldAdvance && currentPhase.MinToolCalls > 0 && a.phaseToolCalls < currentPhase.MinToolCalls {
-		log.Printf("[Agent] quality gate: phase %s needs %d tool calls, has %d — rejecting",
-			currentPhase.Name, currentPhase.MinToolCalls, a.phaseToolCalls)
-		a.emit(EventQualityGate, "", map[string]any{
-			"phase":    currentPhase.Name,
-			"required": currentPhase.MinToolCalls,
-			"actual":   a.phaseToolCalls,
-			"rejected": true,
-		})
-		a.conversation.Add(providers.Message{
-			Role: "user",
-			Content: fmt.Sprintf("You claimed phase '%s' is complete, but you only made %d tool calls (minimum %d required). You MUST use tools to gather evidence — fetch real data, inspect actual output, run tests. Do not state opinions without evidence. Use tools now, then re-assess.",
-				currentPhase.Name, a.phaseToolCalls, currentPhase.MinToolCalls),
-		})
-		return true
+		a.phaseRetries++
+
+		// After 5 retries: escalate provider and try again
+		if a.phaseRetries == 5 {
+			log.Printf("[Agent] phase %s stuck after %d retries at level %d — escalating",
+				currentPhase.Name, a.phaseRetries, a.providerIdx)
+			a.escalateProvider()
+			a.conversation.Add(forceToolsMessage(currentPhase.Name))
+			return true
+		}
+
+		// After 10 retries: skip phase entirely (deadlock prevention)
+		if a.phaseRetries >= 10 {
+			log.Printf("[Agent] phase %s deadlocked after %d retries — skipping",
+				currentPhase.Name, a.phaseRetries)
+			a.phaseRetries = 0
+			// Fall through to normal advance below
+		} else {
+			log.Printf("[Agent] quality gate: phase %s needs %d tool calls, has %d (retry %d) — rejecting",
+				currentPhase.Name, currentPhase.MinToolCalls, a.phaseToolCalls, a.phaseRetries)
+			a.emit(EventQualityGate, "", map[string]any{
+				"phase":    currentPhase.Name,
+				"required": currentPhase.MinToolCalls,
+				"actual":   a.phaseToolCalls,
+				"rejected": true,
+				"retry":    a.phaseRetries,
+			})
+			a.conversation.Add(providers.Message{
+				Role: "user",
+				Content: fmt.Sprintf("You claimed phase '%s' is complete, but you only made %d tool calls (minimum %d required). You MUST use tools to gather evidence — fetch real data, inspect actual output, run tests. Do not state opinions without evidence. Use tools now, then re-assess.",
+					currentPhase.Name, a.phaseToolCalls, currentPhase.MinToolCalls),
+			})
+			return true
+		}
 	}
 
 	// Check if current phase passed or failed
@@ -687,6 +848,7 @@ func (a *Agent) advancePipeline(content string) bool {
 		// Advance to next phase
 		a.pipelinePhase++
 		a.phaseToolCalls = 0 // reset for new phase
+		a.phaseRetries = 0
 		if a.pipelinePhase >= len(a.pipeline.Phases) {
 			log.Printf("[Agent] pipeline complete: all %d phases passed", len(a.pipeline.Phases))
 			return false
@@ -709,6 +871,9 @@ func (a *Agent) advancePipeline(content string) bool {
 
 		log.Printf("[Agent] pipeline: advancing to phase %d/%d: %s",
 			a.pipelinePhase+1, len(a.pipeline.Phases), nextPhase.Name)
+
+		// Update project state file on each phase transition
+		a.writeSynrouteMD()
 
 		a.emit(EventPhaseComplete, "", map[string]any{
 			"phase_name": currentPhase.Name,

@@ -147,6 +147,12 @@ func (vm *VectorMemory) RetrieveRecent(sessionID string, limit int, skipContent 
 // 1. Always includes the most recent N messages for immediate continuity.
 // 2. Supplement with semantic search results (vector or lexical).
 func (vm *VectorMemory) RetrieveRelevant(query, sessionID string, maxTokens int) ([]Message, error) {
+	// Cap memory injection to prevent context overflow.
+	// Memory should never dominate the context window — 8K max, default 4K.
+	if maxTokens <= 0 || maxTokens > 8192 {
+		maxTokens = 4096
+	}
+
 	// 1. Always get most recent context (crucial for handoffs and direct follow-ups)
 	recent, err := vm.RetrieveRecent(sessionID, 4, query)
 	if err != nil {
@@ -160,13 +166,17 @@ func (vm *VectorMemory) RetrieveRelevant(query, sessionID string, maxTokens int)
 		recentTokens += EstimateTokens(msg.Content)
 	}
 
-	// 2. Get semantic context
-	var semantic []Message
-	if vm.embedder != nil {
-		semantic, _ = vm.retrieveByVectorSimilarity(query, sessionID, maxTokens-recentTokens)
+	// 2. Get semantic context (clamp budget to avoid negative limits)
+	semanticBudget := maxTokens - recentTokens
+	if semanticBudget < 0 {
+		semanticBudget = 0
 	}
-	if len(semantic) == 0 {
-		semantic, _ = vm.retrieveByLexicalScore(query, sessionID, maxTokens-recentTokens)
+	var semantic []Message
+	if semanticBudget > 0 && vm.embedder != nil {
+		semantic, _ = vm.retrieveByVectorSimilarity(query, sessionID, semanticBudget)
+	}
+	if len(semantic) == 0 && semanticBudget > 0 {
+		semantic, _ = vm.retrieveByLexicalScore(query, sessionID, semanticBudget)
 	}
 
 	// 3. Combine and deduplicate

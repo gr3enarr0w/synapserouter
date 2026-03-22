@@ -237,8 +237,8 @@ func (p *Pipeline) PhasePrompt(phaseIdx int, criteria string) string {
 	if criteria != "" {
 		return fmt.Sprintf(phase.Prompt, criteria)
 	}
-	// Remove %s placeholder if no criteria yet
-	return phase.Prompt
+	// Replace %s placeholder with descriptive text when no criteria available yet
+	return strings.ReplaceAll(phase.Prompt, "%s", "(criteria will be defined during earlier phases)")
 }
 
 // IsPassSignal checks if the LLM response indicates phase completion.

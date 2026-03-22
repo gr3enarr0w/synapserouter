@@ -13,6 +13,7 @@ import (
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/agent"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/app"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/environment"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcpserver"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/worktree"
@@ -330,6 +331,7 @@ func cmdChat(args []string) {
 	fs := flag.NewFlagSet("chat", flag.ExitOnError)
 	model := fs.String("model", "auto", "Model to use")
 	message := fs.String("message", "", "One-shot message (non-interactive)")
+	specFile := fs.String("spec-file", "", "Read spec from file and use as message (prepends 'Implement the following specification:')")
 	system := fs.String("system", "", "Custom system prompt")
 	project := fs.String("project", "", "Project name — creates ~/Development/<name>/ and works there")
 	useWorktree := fs.Bool("worktree", false, "Run in isolated git worktree")
@@ -425,6 +427,28 @@ func cmdChat(args []string) {
 		// Start cleanup goroutine
 		stopCleaner := worktree.StartCleaner(ctx, wtMgr, worktree.DefaultConfig().CleanupInterval)
 		defer stopCleaner()
+	}
+
+	// If --spec-file provided, read file and compose message.
+	// Detect if the working directory already has code from a previous run —
+	// if so, switch to review/fix mode instead of rebuilding from scratch.
+	if *specFile != "" && *message == "" {
+		specContent, err := os.ReadFile(*specFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading spec file: %v\n", err)
+			os.Exit(1)
+		}
+		var composed string
+		if hasExistingProject(cwd) {
+			composed = "Review and improve the existing implementation against this specification. " +
+				"Inspect the current code with file_read, run tests with bash, fix any issues, " +
+				"and fill in anything missing. Do NOT rewrite files that already work correctly.\n\n" +
+				string(specContent)
+			fmt.Fprintf(os.Stderr, "Existing project detected — running in review/fix mode\n")
+		} else {
+			composed = "Implement the following specification:\n\n" + string(specContent)
+		}
+		message = &composed
 	}
 
 	if *message != "" {
@@ -546,4 +570,27 @@ func cmdMCPServe(args []string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// hasExistingProject checks if a directory already contains source code from
+// a previous build. Used by --spec-file to switch between "build from scratch"
+// and "review/fix existing" modes.
+func hasExistingProject(dir string) bool {
+	// Check for language config files (go.mod, package.json, Cargo.toml, etc.)
+	if env := environment.Detect(dir); env != nil && env.Language != "" {
+		return true
+	}
+	// Check for source files in root and one level deep
+	extensions := []string{"*.go", "*.py", "*.rs", "*.ts", "*.js", "*.java", "*.cs", "*.rb"}
+	for _, ext := range extensions {
+		matches, _ := filepath.Glob(filepath.Join(dir, ext))
+		if len(matches) > 0 {
+			return true
+		}
+		matches, _ = filepath.Glob(filepath.Join(dir, "*", ext))
+		if len(matches) > 0 {
+			return true
+		}
+	}
+	return false
 }
