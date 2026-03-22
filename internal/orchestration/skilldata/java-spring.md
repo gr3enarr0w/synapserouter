@@ -12,6 +12,10 @@ role: coder
 phase: analyze
 mcp_tools:
   - "context7.query-docs"
+verify:
+  - name: "README exists"
+    command: "test -f README.md && echo 'OK' || echo 'MISSING'"
+    expect_not: "MISSING"
 ---
 # Skill: Java Spring Boot
 

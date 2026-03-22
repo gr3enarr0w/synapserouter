@@ -38,6 +38,9 @@ verify:
   - name: "xml attribute casing"
     command: "grep -rn 'xml:\".*,attr' --include='*.go' | head -20"
     manual: "Verify XML attribute names match the target schema casing. ZWO uses PascalCase (Duration, PowerLow, PowerHigh). Check xml struct tags match exactly."
+  - name: "README exists"
+    command: "test -f README.md && echo 'OK' || echo 'MISSING'"
+    expect_not: "MISSING"
 ---
 # Skill: Go Patterns
 

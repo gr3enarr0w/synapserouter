@@ -39,6 +39,10 @@ verify:
   - name: "no hardcoded paths"
     command: "grep -rn \"'/home/\\|'C:\\\\\\|'/Users/\" --include='*.py' | head -5 || echo 'OK'"
     expect: "OK"
+  - name: "dependency file exists"
+    command: "ls requirements.txt pyproject.toml setup.py 2>/dev/null | head -1 || echo 'MISSING'"
+    expect_not: "MISSING"
+    manual: "ML projects must have requirements.txt with pinned versions (pandas, scikit-learn, numpy, etc.)"
 ---
 # Skill: ML Patterns
 

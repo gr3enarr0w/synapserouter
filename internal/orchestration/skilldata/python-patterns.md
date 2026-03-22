@@ -10,6 +10,14 @@ role: coder
 phase: analyze
 mcp_tools:
   - "context7.query-docs"
+verify:
+  - name: "dependency file exists"
+    command: "ls requirements.txt pyproject.toml setup.py Pipfile 2>/dev/null | head -1 || echo 'MISSING'"
+    expect_not: "MISSING"
+    manual: "Project must have requirements.txt, pyproject.toml, or equivalent dependency file"
+  - name: "README exists"
+    command: "ls README.md README.rst README 2>/dev/null | head -1 || echo 'MISSING'"
+    expect_not: "MISSING"
 ---
 # Skill: Python Patterns
 

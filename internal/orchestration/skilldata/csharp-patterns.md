@@ -29,6 +29,9 @@ verify:
     command: "grep -rn 'new.*Stream\\|new.*Connection\\|new.*Client' --include='*.cs' | grep -v 'using\\|await using\\|IDisposable\\|_test' | head -5 || echo 'OK'"
     expect: "OK"
     manual: "All IDisposable resources should be wrapped in using statements or await using for async disposables"
+  - name: "README exists"
+    command: "test -f README.md && echo 'OK' || echo 'MISSING'"
+    expect_not: "MISSING"
 ---
 # Skill: C# / .NET Patterns
 

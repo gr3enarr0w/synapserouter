@@ -9,6 +9,13 @@ role: coder
 phase: analyze
 mcp_tools:
   - "context7.query-docs"
+verify:
+  - name: "Cargo.lock exists"
+    command: "test -f Cargo.lock && echo 'OK' || echo 'MISSING'"
+    expect_not: "MISSING"
+  - name: "README exists"
+    command: "test -f README.md && echo 'OK' || echo 'MISSING'"
+    expect_not: "MISSING"
 ---
 # Skill: Rust Patterns
 
