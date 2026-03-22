@@ -1,8 +1,9 @@
 # Unraid Setup: runna-sync
 
-## Quick Start
+## Install as Unraid App
 
-1. Copy the image to your Unraid server:
+### Step 1: Load the image
+
 ```bash
 # Build on your Mac
 cd runna-sync-test
@@ -16,79 +17,78 @@ scp runna-sync.tar.gz root@unraid:/tmp/
 docker load < /tmp/runna-sync.tar.gz
 ```
 
-2. Create env file on Unraid:
+### Step 2: Install the app template
+
 ```bash
-mkdir -p /mnt/user/appdata/runna-sync
-cat > /mnt/user/appdata/runna-sync/.env << 'EOF'
-RUNNA_ICAL_URL=https://cal.runna.com/da8a632a9763fe4b9e0434ed1ace5a95.ics
-INTERVALS_ATHLETE_ID=i247251
-INTERVALS_API_TOKEN=6muslqlak3bt7zncc1wyratld
-ATHLETE_WEIGHT_KG=72.6
-TARGET_5K_MINUTES=35
-SYNC_DAYS=14
-POLL_INTERVAL_MINUTES=60
-EOF
+# On Unraid — copy the template to Community Apps private folder
+mkdir -p /boot/config/plugins/community.applications/private/runna-sync
 ```
 
-3. Run the container:
+Copy `unraid-template.xml` to that folder as `runna-sync.xml`:
 ```bash
-docker run -d \
-  --name runna-sync \
-  --restart unless-stopped \
-  --env-file /mnt/user/appdata/runna-sync/.env \
-  runna-sync
+scp unraid-template.xml root@unraid:/boot/config/plugins/community.applications/private/runna-sync/runna-sync.xml
 ```
 
-## That's it
+### Step 3: Install from Unraid UI
 
-The container runs continuously:
-- Polls Runna iCal feed every hour
+1. Open Unraid web UI
+2. Go to **Apps** tab
+3. Click **Private** on the left sidebar
+4. You'll see **runna-sync** — click **Install**
+5. Fill in your settings:
+   - **Runna iCal URL**: Your feed URL from Runna app settings
+   - **Intervals.icu Athlete ID**: Your ID (e.g., `i247251`)
+   - **Intervals.icu API Token**: From Intervals.icu Settings → Developer Settings
+   - **Weight**: Your weight in kg
+   - **Target 5K**: Your 5K target time in minutes
+6. Click **Apply**
+
+The app starts automatically and runs continuously.
+
+## What It Does
+
+- Polls Runna iCal feed every hour (configurable)
 - Only syncs when workouts change
-- Updates existing workouts in place (never duplicates)
-- Auto-updates FTP from pace data every Sunday at 6am
-- Pushes pace + power targets to Intervals.icu → Garmin
+- Updates existing workouts in place (never creates duplicates)
+- Pushes pace (sec/km) + power (watts) targets to each workout step
+- Auto-updates FTP from your pace data every Sunday at 6am
+- Intervals.icu auto-pushes to Garmin Connect → your watch
 
 ## Logs
 
+In Unraid UI: click the runna-sync icon → **Logs**
+
+Or via terminal:
 ```bash
-docker logs runna-sync
-docker logs -f runna-sync  # follow
+docker logs -f runna-sync
 ```
 
 ## Manual Commands
 
+Click the runna-sync icon → **Console**, then:
 ```bash
 # Force a sync now
-docker exec runna-sync /runna-sync once
+/runna-sync once
 
 # Update FTP from last 30 days of runs
-docker exec runna-sync /runna-sync update-pace 30
+/runna-sync update-pace 30
 
 # Update FTP from Stryd power data
-docker exec runna-sync /runna-sync update-power 30
+/runna-sync update-power 30
 ```
-
-## Unraid Community Applications (optional)
-
-To add via Unraid's Docker tab manually:
-- **Repository:** `runna-sync` (local image)
-- **Network:** bridge
-- **Extra Parameters:** `--restart unless-stopped`
-- **Post Arguments:** (leave empty — defaults to continuous sync)
-- Add env vars from the list above
 
 ## Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `RUNNA_ICAL_URL` | Yes | — | Your Runna iCal feed URL |
-| `INTERVALS_ATHLETE_ID` | Yes | — | Intervals.icu athlete ID (e.g., i247251) |
-| `INTERVALS_API_TOKEN` | Yes | — | API token from Intervals.icu Developer Settings |
-| `ATHLETE_WEIGHT_KG` | No | 72.6 | Your weight in kg |
-| `TARGET_5K_MINUTES` | No | 35 | Target 5K time for FTP calculation |
-| `SYNC_DAYS` | No | 14 | How many days ahead to sync |
-| `POLL_INTERVAL_MINUTES` | No | 60 | How often to check for changes |
+| `INTERVALS_ATHLETE_ID` | Yes | — | Intervals.icu athlete ID |
+| `INTERVALS_API_TOKEN` | Yes | — | API token (masked in UI) |
+| `ATHLETE_WEIGHT_KG` | No | 72.6 | Weight in kg |
+| `TARGET_5K_MINUTES` | No | 35 | Target 5K time for FTP |
+| `SYNC_DAYS` | No | 14 | Days ahead to sync |
+| `POLL_INTERVAL_MINUTES` | No | 60 | Poll frequency in minutes |
 
 ## Image Size
 
-6 MB total (scratch base, no OS).
+6 MB (scratch base, static Go binary + CA certs only).
