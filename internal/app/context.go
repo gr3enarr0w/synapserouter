@@ -106,8 +106,6 @@ func (ac *AppContext) Close() {
 func initializeProviders(profile string) []providers.Provider {
 	var providerList []providers.Provider
 
-	nanogptAPIKey := os.Getenv("NANOGPT_API_KEY")
-
 	switch profile {
 	case "work":
 		providerList = append(providerList, initializeWorkProviders()...)
@@ -159,20 +157,8 @@ func initializeProviders(profile string) []providers.Provider {
 			}
 		}
 
-		// NanoGPT subscription (55K tokens/week cap)
-		// Disable via NANOGPT_DISABLED=true (kills both sub+paid) or NANOGPT_SUB_DISABLED=true (sub only)
-		if nanogptAPIKey != "" && os.Getenv("NANOGPT_DISABLED") != "true" && os.Getenv("NANOGPT_SUB_DISABLED") != "true" {
-			providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "subscription"))
-		}
-
 		// Subscription providers (gemini, codex, claude-code)
 		providerList = append(providerList, initializePersonalProviders()...)
-	}
-
-	// NanoGPT paid (last — costs money, only used as fallback, personal only)
-	// Disable via NANOGPT_DISABLED=true to prevent all NanoGPT API calls
-	if nanogptAPIKey != "" && profile != "work" && os.Getenv("NANOGPT_DISABLED") != "true" {
-		providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "paid"))
 	}
 
 	return providerList
@@ -256,11 +242,6 @@ func buildEscalationChain(profile string) []agent.EscalationLevel {
 				chain = append(chain, agent.EscalationLevel{Providers: []string{p.Name()}})
 			}
 		}
-	}
-
-	// NanoGPT paid — last resort
-	if os.Getenv("NANOGPT_API_KEY") != "" && profile != "work" {
-		chain = append(chain, agent.EscalationLevel{Providers: []string{"nanogpt-paid"}})
 	}
 
 	var names []string

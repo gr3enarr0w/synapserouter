@@ -84,7 +84,6 @@ Examples:
   synroute eval import-all --dir ~/eval-benchmarks
   synroute eval exercises --language go --json
   synroute eval run --language go --count 10 --two-pass
-  synroute eval run --provider nanogpt-sub --count 20
   synroute eval results --run-id eval-abc123 --json
   synroute eval compare --run-a eval-abc --run-b eval-def`)
 }

@@ -1072,7 +1072,7 @@ func availableModels() []map[string]interface{} {
 		}
 	}
 
-	// Merge in models from all registered providers (Vertex, NanoGPT, etc.)
+	// Merge in models from all registered providers (Vertex, Ollama, etc.)
 	for _, p := range providerList {
 		if lm, ok := p.(interface{ ListModels() []map[string]interface{} }); ok {
 			for _, m := range lm.ListModels() {
@@ -1108,8 +1108,6 @@ func modelOwnerAndContext(providerName string) (string, int) {
 		return "qwen", 131072
 	case "ollama-cloud":
 		return "ollama-cloud", 128000
-	case "nanogpt":
-		return "nanogpt", 2000000
 	default:
 		return providerName, 128000
 	}

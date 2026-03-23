@@ -425,7 +425,7 @@ func buildAgentPrompt(ex Exercise) string {
 // Skips the current provider and returns the rest of the chain in escalation order.
 func escalationProviders(current string) []string {
 	// Escalation order: free subscriptions first, then paid
-	chain := []string{"gemini", "claude-code", "codex", "nanogpt-paid"}
+	chain := []string{"gemini", "claude-code", "codex"}
 	var result []string
 	for _, p := range chain {
 		if p != current {

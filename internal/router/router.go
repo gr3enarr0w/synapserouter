@@ -859,10 +859,6 @@ func rateLimitCooldown(providerName string, err error) time.Duration {
 		return 30 * time.Second
 	case "claude-code":
 		return 60 * time.Second
-	case "nanogpt-sub":
-		return 30 * time.Second
-	case "nanogpt-paid":
-		return 2 * time.Minute
 	default:
 		return 2 * time.Minute
 	}

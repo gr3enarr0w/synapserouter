@@ -321,18 +321,10 @@ func initializeProviders() []providers.Provider {
 
 	var providerList []providers.Provider
 
-	nanogptAPIKey := os.Getenv("NANOGPT_API_KEY")
-
 	switch profile {
 	case "work":
 		providerList = append(providerList, initializeWorkProviders()...)
 	default:
-		// NanoGPT subscription (first — free, zero-cost models, personal only)
-		if nanogptAPIKey != "" {
-			providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "subscription"))
-			log.Println("✓ nanogpt-sub provider initialized")
-		}
-
 		providerList = append(providerList, initializePersonalProviders()...)
 	}
 
@@ -380,12 +372,6 @@ func initializeProviders() []providers.Provider {
 				log.Printf("✓ ollama-cloud provider initialized (model=%s)", ollamaModel)
 			}
 		}
-	}
-
-	// NanoGPT paid (last — costs money, only used as fallback, personal only)
-	if nanogptAPIKey != "" && profile != "work" {
-		providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "paid"))
-		log.Println("✓ nanogpt-paid provider initialized")
 	}
 
 	log.Printf("Initialized %d providers", len(providerList))
@@ -578,8 +564,6 @@ func applyQuotaOverrides(db *sql.DB) error {
 		{provider: "gemini", dailyEnv: "GEMINI_DAILY_LIMIT", defaultDaily: 500000, defaultMonthly: 15000000, tier: "pro"},
 		{provider: "qwen", dailyEnv: "QWEN_DAILY_LIMIT", defaultDaily: 500000, defaultMonthly: 15000000, tier: "pro"},
 		{provider: "ollama-cloud", dailyEnv: "OLLAMA_CLOUD_DAILY_LIMIT", defaultDaily: 1000000, defaultMonthly: 30000000, tier: "pro"},
-		{provider: "nanogpt-sub", monthlyEnv: "NANOGPT_SUB_MONTHLY_QUOTA", defaultDaily: 2000000, defaultMonthly: 60000000, tier: "subscription"},
-		{provider: "nanogpt-paid", monthlyEnv: "NANOGPT_PAID_MONTHLY_QUOTA", defaultDaily: 100000, defaultMonthly: 3000000, tier: "api"},
 	}
 
 	for _, override := range overrides {
@@ -1317,8 +1301,6 @@ func providerConfigured(name string) bool {
 		return envFirst("SYNROUTE_QWEN_API_KEY", "SYNROUTE_QWEN_API_KEYS", "SYNROUTE_QWEN_SESSION_TOKEN", "SYNROUTE_QWEN_SESSION_TOKENS") != ""
 	case "ollama-cloud":
 		return strings.TrimSpace(os.Getenv("OLLAMA_API_KEY")) != ""
-	case "nanogpt":
-		return strings.TrimSpace(os.Getenv("NANOGPT_API_KEY")) != ""
 	default:
 		return true
 	}
@@ -1361,12 +1343,10 @@ func providerNotes(name string, healthy bool) string {
 			return "Ollama Cloud API reachable"
 		}
 		return "Check OLLAMA_API_KEY and OLLAMA_BASE_URL"
-	case "nanogpt":
-		if healthy {
-			return "NanoGPT API reachable"
-		}
-		return "Check NANOGPT_API_KEY and NANOGPT_BASE_URL"
 	default:
-		return ""
+		if healthy {
+			return name + " available"
+		}
+		return name + " not reachable"
 	}
 }
