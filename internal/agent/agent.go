@@ -844,6 +844,27 @@ func (a *Agent) advancePipeline(content string) bool {
 
 	// Check if current phase passed or failed
 	if shouldAdvance {
+		// Programmatic verification gate — the LLM claims PASS,
+		// now prove it with actual build/test/verify exit codes.
+		// Exit codes can't be hallucinated.
+		allPassed, verifyResults := a.RunVerificationGate(currentPhase.Name)
+		if !allPassed {
+			a.phaseRetries++
+			log.Printf("[Agent] verification gate FAILED for phase %s (retry %d)",
+				currentPhase.Name, a.phaseRetries)
+			a.emit(EventQualityGate, "", map[string]any{
+				"phase":        currentPhase.Name,
+				"gate":         "verification",
+				"checks_total": len(verifyResults),
+				"checks_failed": countVerifyFailed(verifyResults),
+			})
+			a.conversation.Add(providers.Message{
+				Role:    "user",
+				Content: FormatVerifyFailures(verifyResults),
+			})
+			return true // agent must fix before phase can advance
+		}
+
 		// Store acceptance criteria if this phase produces them
 		if currentPhase.StoreAs == "criteria" {
 			a.acceptanceCriteria = content
