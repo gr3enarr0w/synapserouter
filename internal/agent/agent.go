@@ -76,6 +76,8 @@ type Agent struct {
 	skillContextOnce   sync.Once
 	noToolTurns        int // consecutive turns without tool calls (stall detection)
 	phaseRetries       int // consecutive quality gate rejections in current phase
+	lastGateScore      int // verification gate passed count from previous retry (plateau detection)
+	plateauCount       int // consecutive retries with no score improvement
 	cachedPromptLevel  int // provider level when system prompt was cached (-1 = uncached)
 
 	// Event bus for real-time observability
@@ -849,20 +851,48 @@ func (a *Agent) advancePipeline(content string) bool {
 		// Exit codes can't be hallucinated.
 		allPassed, verifyResults := a.RunVerificationGate(currentPhase.Name)
 		if !allPassed {
+			score := countVerifyPassed(verifyResults)
+			total := len(verifyResults)
 			a.phaseRetries++
-			log.Printf("[Agent] verification gate FAILED for phase %s (retry %d)",
-				currentPhase.Name, a.phaseRetries)
+
+			// Plateau detection: track whether score is improving
+			if score > a.lastGateScore {
+				a.plateauCount = 0 // progress — reset plateau counter
+			} else {
+				a.plateauCount++
+			}
+			a.lastGateScore = score
+
+			log.Printf("[Agent] verification gate FAILED for phase %s: %d/%d passed (retry %d, plateau %d)",
+				currentPhase.Name, score, total, a.phaseRetries, a.plateauCount)
 			a.emit(EventQualityGate, "", map[string]any{
-				"phase":        currentPhase.Name,
-				"gate":         "verification",
-				"checks_total": len(verifyResults),
+				"phase":         currentPhase.Name,
+				"gate":          "verification",
+				"checks_total":  total,
+				"checks_passed": score,
 				"checks_failed": countVerifyFailed(verifyResults),
+				"plateau":       a.plateauCount,
 			})
-			a.conversation.Add(providers.Message{
-				Role:    "user",
-				Content: FormatVerifyFailures(verifyResults),
-			})
-			return true // agent must fix before phase can advance
+
+			// Plateau for 2+ retries: escalate to bigger model
+			if a.plateauCount == 2 {
+				log.Printf("[Agent] verification plateau at %d/%d for %d retries — escalating",
+					score, total, a.plateauCount)
+				a.escalateProvider()
+			}
+
+			// Deadlock: plateau 4+ retries or hard cap at 10 total — skip phase
+			if a.plateauCount >= 4 || a.phaseRetries >= 10 {
+				log.Printf("[Agent] verification deadlock (plateau %d, retries %d) — skipping phase %s",
+					a.plateauCount, a.phaseRetries, currentPhase.Name)
+				// Fall through to advance below
+			} else {
+				a.conversation.Add(providers.Message{
+					Role:    "user",
+					Content: FormatVerifyFailures(verifyResults),
+				})
+				return true // agent must fix before phase can advance
+			}
 		}
 
 		// Store acceptance criteria if this phase produces them
@@ -872,8 +902,10 @@ func (a *Agent) advancePipeline(content string) bool {
 
 		// Advance to next phase
 		a.pipelinePhase++
-		a.phaseToolCalls = 0 // reset for new phase
-		a.phaseRetries = 0
+		a.phaseToolCalls = 0  // reset for new phase
+		a.phaseRetries = 0    // reset retry counter
+		a.lastGateScore = 0   // reset plateau tracking
+		a.plateauCount = 0
 		if a.pipelinePhase >= len(a.pipeline.Phases) {
 			log.Printf("[Agent] pipeline complete: all %d phases passed", len(a.pipeline.Phases))
 			return false

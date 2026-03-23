@@ -9,6 +9,7 @@ triggers:
   - "incremental model"
 role: coder
 phase: analyze
+language: sql
 mcp_tools:
   - "context7.query-docs"
 ---

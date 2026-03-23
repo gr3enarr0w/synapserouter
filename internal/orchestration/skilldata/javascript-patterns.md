@@ -15,6 +15,7 @@ triggers:
   - "nextjs"
 role: coder
 phase: analyze
+language: javascript
 mcp_tools:
   - "context7.query-docs"
 verify:

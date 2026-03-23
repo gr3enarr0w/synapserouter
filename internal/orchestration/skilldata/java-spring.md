@@ -10,6 +10,7 @@ triggers:
   - "gradle"
 role: coder
 phase: analyze
+language: java
 mcp_tools:
   - "context7.query-docs"
 verify:

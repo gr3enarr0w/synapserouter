@@ -10,6 +10,7 @@ triggers:
   - "pyproject.toml"
 role: coder
 phase: implement
+language: python
 ---
 # Skill: Python Virtual Environments
 

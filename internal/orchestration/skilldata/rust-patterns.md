@@ -7,6 +7,7 @@ triggers:
   - "cargo"
 role: coder
 phase: analyze
+language: rust
 mcp_tools:
   - "context7.query-docs"
 verify:

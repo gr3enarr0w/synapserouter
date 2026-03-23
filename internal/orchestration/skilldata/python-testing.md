@@ -8,6 +8,7 @@ triggers:
   - "coverage"
 role: tester
 phase: verify
+language: python
 mcp_tools:
   - "context7.query-docs"
 depends_on:

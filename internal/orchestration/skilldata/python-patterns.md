@@ -8,6 +8,7 @@ triggers:
   - "pytest"
 role: coder
 phase: analyze
+language: python
 mcp_tools:
   - "context7.query-docs"
 verify:

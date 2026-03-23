@@ -7,6 +7,7 @@ triggers:
   - ".go"
 role: coder
 phase: analyze
+language: go
 mcp_tools:
   - "context7.query-docs"
 verify:

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -379,6 +381,17 @@ func cmdChat(args []string) {
 		}
 		cwd = projectDir
 		fmt.Fprintf(os.Stderr, "Working in project: %s\n", projectDir)
+	}
+
+	// Set up timestamped log file — each run gets its own file, no overwriting
+	logDir := filepath.Join(cwd, ".synroute", "logs")
+	os.MkdirAll(logDir, 0755)
+	logTimestamp := time.Now().Format("2006-01-02T15-04-05")
+	logPath := filepath.Join(logDir, fmt.Sprintf("run-%s.log", logTimestamp))
+	if logFile, err := os.Create(logPath); err == nil {
+		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
+		defer logFile.Close()
+		fmt.Fprintf(os.Stderr, "Log: %s\n", logPath)
 	}
 
 	config := agent.DefaultConfig()

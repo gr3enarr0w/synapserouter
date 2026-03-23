@@ -8,6 +8,7 @@ triggers:
   - "zero-copy clone"
 role: coder
 phase: analyze
+language: sql
 ---
 # Skill: Snowflake Query
 

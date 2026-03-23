@@ -128,6 +128,12 @@ func (a *Agent) runSkillVerifyCommands() []VerifyResult {
 	var results []VerifyResult
 
 	for _, skill := range matched {
+		// Skip language-specific skills that don't match project language.
+		// Only filters when both skill.Language and ProjectLanguage are known.
+		if skill.Language != "" && a.config.ProjectLanguage != "" &&
+			skill.Language != a.config.ProjectLanguage {
+			continue
+		}
 		for _, vc := range skill.Verify {
 			if vc.Command == "" || vc.Manual != "" {
 				continue // Skip manual-only checks
@@ -182,6 +188,17 @@ func FormatVerifyFailures(results []VerifyResult) string {
 
 	b.WriteString("\nFix these issues and try again. The phase cannot advance until all verification checks pass.")
 	return b.String()
+}
+
+// countVerifyPassed counts the number of passed verification results.
+func countVerifyPassed(results []VerifyResult) int {
+	n := 0
+	for _, r := range results {
+		if r.Passed {
+			n++
+		}
+	}
+	return n
 }
 
 // countVerifyFailed counts the number of failed verification results.

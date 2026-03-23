@@ -13,6 +13,7 @@ triggers:
   - "entity framework"
 role: coder
 phase: analyze
+language: csharp
 mcp_tools:
   - "context7.query-docs"
 verify:

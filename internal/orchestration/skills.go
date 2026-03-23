@@ -20,6 +20,7 @@ type Skill struct {
 	MCPTools     []string        `json:"mcp_tools,omitempty" yaml:"mcp_tools"`
 	DependsOn    []string        `json:"depends_on,omitempty" yaml:"depends_on"`
 	Phase        string          `json:"phase" yaml:"phase"`
+	Language     string          `json:"language,omitempty" yaml:"language"`
 	Instructions string          `json:"instructions,omitempty" yaml:"-"`
 	Verify       []VerifyCommand `json:"verify,omitempty" yaml:"verify"`
 }
