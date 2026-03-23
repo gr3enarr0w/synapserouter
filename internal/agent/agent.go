@@ -188,7 +188,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		for i, s := range matched {
 			skillNames[i] = s.Name
 		}
-		a.pipeline = DetectPipelineType(skillNames)
+		a.pipeline = DetectPipelineType(skillNames, a.config.ProjectLanguage)
 		a.pipelinePhase = 0
 		a.initializeImplementPhase()
 		log.Printf("[Agent] pipeline: %s (%d phases)", a.pipeline.Name, len(a.pipeline.Phases))
@@ -787,7 +787,7 @@ func (a *Agent) advancePipeline(content string) bool {
 		for i, s := range matched {
 			skillNames[i] = s.Name
 		}
-		a.pipeline = DetectPipelineType(skillNames)
+		a.pipeline = DetectPipelineType(skillNames, a.config.ProjectLanguage)
 		a.pipelinePhase = 0
 		log.Printf("[Agent] pipeline: %s (%d phases)", a.pipeline.Name, len(a.pipeline.Phases))
 	}

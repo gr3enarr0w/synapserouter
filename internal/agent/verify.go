@@ -28,6 +28,21 @@ func (a *Agent) RunVerificationGate(phaseName string) (bool, []VerifyResult) {
 
 	env := environment.Detect(a.config.WorkDir)
 
+	// If a project language is declared (from spec), use it instead of auto-detection.
+	// This prevents wrong-language detection when the agent creates config files
+	// for the wrong language (e.g., go.mod in a SQL project).
+	if a.config.ProjectLanguage != "" && env != nil && env.Language != a.config.ProjectLanguage {
+		log.Printf("[Verify] detected %s but project declares %s — using declared language",
+			env.Language, a.config.ProjectLanguage)
+		env.Language = a.config.ProjectLanguage
+	}
+	if a.config.ProjectLanguage != "" && env == nil {
+		env = &environment.ProjectEnv{
+			Language: a.config.ProjectLanguage,
+			EnvVars:  make(map[string]string),
+		}
+	}
+
 	// Layer 1: Build check
 	if shouldRunBuild(phaseName) && env != nil {
 		if buildCmd := environment.BuildCommand(env); buildCmd != "" {

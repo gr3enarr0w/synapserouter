@@ -3,7 +3,9 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +133,53 @@ func TestBashContextCancellation(t *testing.T) {
 	}
 	if elapsed > 10*time.Second {
 		t.Errorf("cancellation took too long: %v", elapsed)
+	}
+}
+
+func TestBashRejectsInlineCode(t *testing.T) {
+	tool := &BashTool{}
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"python -c", `python -c "print('hello')"`},
+		{"python3 -c", `python3 -c "import sys; print(sys.version)"`},
+		{"node -e", `node -e "console.log('hi')"`},
+		{"ruby -e", `ruby -e "puts 'hi'"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tool.Execute(context.Background(), map[string]interface{}{
+				"command": tt.command,
+			}, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.ExitCode != -1 {
+				t.Errorf("expected exit -1 for inline code, got %d", result.ExitCode)
+			}
+			if !strings.Contains(result.Error, "rejected") {
+				t.Errorf("expected rejection error, got %q", result.Error)
+			}
+		})
+	}
+}
+
+func TestBashAllowsPythonFileExecution(t *testing.T) {
+	// Running a .py file should NOT be blocked — only python -c
+	tool := &BashTool{}
+	dir := t.TempDir()
+	// Create a test Python file
+	os.WriteFile(filepath.Join(dir, "test.py"), []byte("print('hello')"), 0644)
+	result, err := tool.Execute(context.Background(), map[string]interface{}{
+		"command": "python3 test.py",
+	}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Should succeed (if python3 is installed) or fail normally, but NOT be rejected
+	if strings.Contains(result.Error, "rejected") {
+		t.Error("python3 test.py should not be rejected")
 	}
 }
 

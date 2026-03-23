@@ -21,6 +21,18 @@ const (
 // bashSemaphore limits concurrent shell executions.
 var bashSemaphore = make(chan struct{}, maxConcurrentBash)
 
+// forbiddenInlinePatterns are inline code execution patterns that the agent
+// should not use. Instead, it should write code to files with file_write and
+// then run the files. Same enforcement pattern as git tool blocking --force.
+var forbiddenInlinePatterns = []string{
+	"python -c ",
+	"python3 -c ",
+	"node -e ",
+	"ruby -e ",
+	"php -r ",
+	"perl -e ",
+}
+
 // BashTool executes shell commands via sh -c.
 type BashTool struct{}
 
@@ -49,6 +61,18 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]interface{}, wor
 	command, _ := args["command"].(string)
 	if command == "" {
 		return &ToolResult{Error: "command is required"}, nil
+	}
+
+	// Reject inline code patterns — agent should write files, not run inline code.
+	// Same pattern as git tool blocking dangerous flags.
+	for _, pattern := range forbiddenInlinePatterns {
+		if strings.Contains(command, pattern) {
+			return &ToolResult{
+				Error: fmt.Sprintf("inline code (%s) rejected — write code to a file with file_write first, then run the file with bash",
+					pattern),
+				ExitCode: -1,
+			}, nil
+		}
 	}
 
 	timeout := defaultBashTimeout

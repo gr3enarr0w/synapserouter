@@ -38,6 +38,9 @@ type Config struct {
 	EventBus  *EventBus // Real-time event bus (nil = no events)
 	Verbosity int       // 0=compact, 1=normal, 2=verbose
 
+	// Project context
+	ProjectLanguage string // Declared language from spec or detection (overrides Detect())
+
 	// State persistence
 	DB        *sql.DB // SQLite database for session persistence
 	Resume    bool    // Resume most recent session on startup

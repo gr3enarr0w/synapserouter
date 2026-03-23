@@ -8,7 +8,26 @@ import (
 	"strings"
 )
 
-// configFiles maps language identifiers to their config file patterns.
+// langConfigEntry pairs a language with its config file patterns.
+// Ordered by specificity — more specific languages first.
+type langConfigEntry struct {
+	Language string
+	Files    []string
+}
+
+// configFileOrder defines language detection priority. Order matters:
+// more specific/less common config files first, generic ones last.
+var configFileOrder = []langConfigEntry{
+	{"rust", []string{"Cargo.toml"}},
+	{"go", []string{"go.mod"}},
+	{"java", []string{"pom.xml", "build.gradle", "build.gradle.kts"}},
+	{"ruby", []string{"Gemfile"}},
+	{"cpp", []string{"CMakeLists.txt"}},
+	{"javascript", []string{"package.json"}},
+	{"python", []string{"pyproject.toml", "requirements.txt", "setup.py", "Pipfile"}},
+}
+
+// configFiles kept for backward compatibility with DetectAll().
 var configFiles = map[string][]string{
 	"go":         {"go.mod"},
 	"python":     {"pyproject.toml", "requirements.txt", "setup.py", "Pipfile"},
@@ -21,14 +40,17 @@ var configFiles = map[string][]string{
 
 // Detect scans the working directory for project config files and returns
 // a ProjectEnv describing the detected language and version.
+// Uses deterministic priority order (not random map iteration).
+// Also detects SQL projects by scanning for .sql files.
 // Returns nil if no recognized project files are found.
 func Detect(workDir string) *ProjectEnv {
-	for lang, files := range configFiles {
-		for _, file := range files {
+	// Check config files in priority order (deterministic, not random)
+	for _, entry := range configFileOrder {
+		for _, file := range entry.Files {
 			path := filepath.Join(workDir, file)
 			if _, err := os.Stat(path); err == nil {
 				env := &ProjectEnv{
-					Language:    lang,
+					Language:    entry.Language,
 					PackageFile: file,
 					EnvVars:     make(map[string]string),
 				}
@@ -37,7 +59,31 @@ func Detect(workDir string) *ProjectEnv {
 			}
 		}
 	}
+
+	// Fallback: detect SQL projects by scanning for .sql files
+	if hasSQLFiles(workDir) {
+		return &ProjectEnv{
+			Language: "sql",
+			EnvVars:  make(map[string]string),
+		}
+	}
+
 	return nil
+}
+
+// hasSQLFiles checks if the directory contains .sql files (in root or sql/ subdir).
+func hasSQLFiles(workDir string) bool {
+	patterns := []string{
+		filepath.Join(workDir, "*.sql"),
+		filepath.Join(workDir, "sql", "*.sql"),
+	}
+	for _, pattern := range patterns {
+		matches, _ := filepath.Glob(pattern)
+		if len(matches) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // DetectAll returns all detected project environments in the directory.
