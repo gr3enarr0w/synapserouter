@@ -183,13 +183,13 @@ func (r *Router) ChatCompletionForProvider(
 			}
 
 			// Inject retrieved memory into request (prepend to provide context)
-			// Filter out tool-role messages — they lack ToolCallID/Name after
-			// retrieval which causes Gemini 400s (function_response.name missing).
+			// Filter out: tool-role messages (orphaned without tool_call_id),
+			// empty messages (corrupted assistant messages that lost tool_calls).
 			if len(retrievedMessages) > 0 {
 				priorMessages := make([]providers.Message, 0, len(retrievedMessages)+len(req.Messages))
 				for _, msg := range retrievedMessages {
-					if msg.Role == "tool" {
-						continue // orphaned tool results can't be reconstructed
+					if msg.Role == "tool" || msg.Content == "" {
+						continue
 					}
 					priorMessages = append(priorMessages, providers.Message{
 						Role:    msg.Role,
@@ -221,18 +221,30 @@ func (r *Router) ChatCompletionForProvider(
 	// Skill-aware preprocessing: analyze conversation and inject skill context
 	r.PreprocessRequest(&req)
 
-	// Store the NEW messages
+	// Store the NEW messages — synthesize content for tool-call-only assistant messages
+	// so memory preserves what the agent did without storing empty messages that corrupt conversations.
 	if sessionID != "" && !req.SkipMemory {
-		// Normal case: store everything after retrieved memory
 		originalMsgCount := len(req.Messages) - len(retrievedMessages)
 		if originalMsgCount > 0 {
 			msgsToStore := req.Messages[len(retrievedMessages):]
-			msgs := make([]memory.Message, len(msgsToStore))
-			for i, m := range msgsToStore {
-				msgs[i] = memory.Message{Role: m.Role, Content: m.Content}
+			var msgs []memory.Message
+			for _, m := range msgsToStore {
+				if m.Role == "tool" {
+					continue // orphaned without tool_call_id context
+				}
+				content := m.Content
+				if content == "" && len(m.ToolCalls) > 0 {
+					content = summarizeToolCalls(m.ToolCalls)
+				}
+				if content == "" {
+					continue
+				}
+				msgs = append(msgs, memory.Message{Role: m.Role, Content: content})
 			}
-			if err := r.vectorMemory.StoreMessages(msgs, sessionID); err != nil {
-				log.Printf("[Router] Warning: failed to store messages: %v", err)
+			if len(msgs) > 0 {
+				if err := r.vectorMemory.StoreMessages(msgs, sessionID); err != nil {
+					log.Printf("[Router] Warning: failed to store messages: %v", err)
+				}
 			}
 		}
 	}
@@ -423,12 +435,12 @@ func (r *Router) ChatCompletionWithDebug(
 			}
 
 			// Inject retrieved memory into request
-			// Filter out tool-role messages — they lack ToolCallID/Name after
-			// retrieval which causes Gemini 400s (function_response.name missing).
+			// Filter out: tool-role messages (orphaned without tool_call_id),
+			// empty messages (corrupted assistant messages that lost tool_calls).
 			if len(retrievedMessages) > 0 {
 				priorMessages := make([]providers.Message, 0, len(retrievedMessages)+len(req.Messages))
 				for _, msg := range retrievedMessages {
-					if msg.Role == "tool" {
+					if msg.Role == "tool" || msg.Content == "" {
 						continue
 					}
 					priorMessages = append(priorMessages, providers.Message{
@@ -461,18 +473,29 @@ func (r *Router) ChatCompletionWithDebug(
 	// Skill-aware preprocessing: analyze conversation and inject skill context
 	r.PreprocessRequest(&req)
 
-	// 2. Store the NEW messages
+	// 2. Store the NEW messages — synthesize content for tool-call-only messages
 	if sessionID != "" && !req.SkipMemory {
-		// Normal case: store everything after retrieved memory
 		originalMsgCount := len(req.Messages) - len(retrievedMessages)
 		if originalMsgCount > 0 {
 			msgsToStore := req.Messages[len(retrievedMessages):]
-			msgs := make([]memory.Message, len(msgsToStore))
-			for i, m := range msgsToStore {
-				msgs[i] = memory.Message{Role: m.Role, Content: m.Content}
+			var msgs []memory.Message
+			for _, m := range msgsToStore {
+				if m.Role == "tool" {
+					continue
+				}
+				content := m.Content
+				if content == "" && len(m.ToolCalls) > 0 {
+					content = summarizeToolCalls(m.ToolCalls)
+				}
+				if content == "" {
+					continue
+				}
+				msgs = append(msgs, memory.Message{Role: m.Role, Content: content})
 			}
-			if err := r.vectorMemory.StoreMessages(msgs, sessionID); err != nil {
-				log.Printf("[Router] Warning: failed to store messages: %v", err)
+			if len(msgs) > 0 {
+				if err := r.vectorMemory.StoreMessages(msgs, sessionID); err != nil {
+					log.Printf("[Router] Warning: failed to store messages: %v", err)
+				}
 			}
 		}
 	}
@@ -890,6 +913,61 @@ func lastUserMessage(messages []providers.Message) string {
 		return ""
 	}
 	return messages[len(messages)-1].Content
+}
+
+// summarizeToolCalls creates a text summary of tool calls for memory storage.
+// When an assistant message has empty content but tool calls, this preserves
+// what the agent did (e.g., "[Tool calls: bash(npm install), file_write(src/app.ts)]").
+func summarizeToolCalls(toolCalls []map[string]interface{}) string {
+	var parts []string
+	for _, tc := range toolCalls {
+		fn, _ := tc["function"].(map[string]interface{})
+		name := ""
+		if fn != nil {
+			name, _ = fn["name"].(string)
+		}
+		if name == "" {
+			name, _ = tc["name"].(string)
+		}
+		if name == "" {
+			name = "unknown"
+		}
+
+		// Extract a brief args summary
+		argsSummary := ""
+		var argsRaw interface{}
+		if fn != nil {
+			argsRaw = fn["arguments"]
+		}
+		if argsRaw == nil {
+			argsRaw = tc["arguments"]
+		}
+		switch v := argsRaw.(type) {
+		case string:
+			if len(v) > 100 {
+				argsSummary = v[:100]
+			} else {
+				argsSummary = v
+			}
+		case map[string]interface{}:
+			// Extract first meaningful arg
+			for k, val := range v {
+				s := fmt.Sprintf("%v", val)
+				if len(s) > 80 {
+					s = s[:80]
+				}
+				argsSummary = k + "=" + s
+				break
+			}
+		}
+
+		if argsSummary != "" {
+			parts = append(parts, fmt.Sprintf("%s(%s)", name, argsSummary))
+		} else {
+			parts = append(parts, name)
+		}
+	}
+	return "[Tool calls: " + strings.Join(parts, ", ") + "]"
 }
 
 func stringifyError(err error) string {
