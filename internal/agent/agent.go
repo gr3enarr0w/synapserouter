@@ -82,6 +82,7 @@ type Agent struct {
 	plateauCount       int // consecutive retries with no score improvement
 	cachedPromptLevel  int      // provider level when system prompt was cached (-1 = uncached)
 	toolFingerprints   []string // sliding window of recent tool call fingerprints (loop detection)
+	loopWarningCount   int      // consecutive loop warnings without resolution (escalation trigger)
 
 	// Event bus for real-time observability
 	bus *EventBus
@@ -395,29 +396,41 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		a.executeToolCalls(ctx, msg.ToolCalls)
 
 		// Action repetition detection: fingerprint each tool call and detect loops.
-		// A looping agent repeats: same tool, same args, same result.
+		// Uses intent-based fingerprinting (path-only for file ops, normalized bash)
+		// plus a cumulative warning counter that escalates even when per-window
+		// repeat counts stay low (e.g., 7-file rotation keeps repeats at 3).
 		if a.config.AutoOrchestrate {
 			for _, tc := range msg.ToolCalls {
 				name, args := extractToolCallNameArgs(tc)
 				a.toolFingerprints = append(a.toolFingerprints, toolCallFingerprint(name, args))
 			}
-			if len(a.toolFingerprints) > 20 {
-				a.toolFingerprints = a.toolFingerprints[len(a.toolFingerprints)-20:]
+			if len(a.toolFingerprints) > 40 {
+				a.toolFingerprints = a.toolFingerprints[len(a.toolFingerprints)-40:]
 			}
-			if repeats := maxRepeatCount(a.toolFingerprints); repeats >= 3 {
-				if repeats >= 8 {
-					log.Printf("[Agent] action loop: same tool call %d times — skipping phase", repeats)
+
+			repeats := maxRepeatCount(a.toolFingerprints)
+			if repeats >= 3 {
+				a.loopWarningCount++
+				log.Printf("[Agent] loop warning #%d: same tool call %d times in window",
+					a.loopWarningCount, repeats)
+
+				if a.loopWarningCount >= 10 || repeats >= 8 {
+					log.Printf("[Agent] action loop: %d warnings, %d repeats — skipping phase",
+						a.loopWarningCount, repeats)
 					a.toolFingerprints = nil
+					a.loopWarningCount = 0
 					a.advancePipeline("PHASE_SKIPPED_LOOP")
-				} else if repeats >= 5 {
-					log.Printf("[Agent] action loop: same tool call %d times — escalating", repeats)
+				} else if a.loopWarningCount >= 5 || repeats >= 5 {
+					log.Printf("[Agent] action loop: %d warnings, %d repeats — escalating",
+						a.loopWarningCount, repeats)
 					a.escalateProvider()
 					a.toolFingerprints = nil
 					a.conversation.Add(loopDetectedMessage(repeats))
 				} else {
-					log.Printf("[Agent] action loop warning: same tool call %d times", repeats)
 					a.conversation.Add(loopDetectedMessage(repeats))
 				}
+			} else {
+				a.loopWarningCount = 0
 			}
 		}
 
@@ -953,7 +966,8 @@ func (a *Agent) advancePipeline(content string) bool {
 		a.phaseRetries = 0      // reset retry counter
 		a.lastGateScore = 0     // reset plateau tracking
 		a.plateauCount = 0
-		a.toolFingerprints = nil // reset loop detection
+		a.toolFingerprints = nil  // reset loop detection
+		a.loopWarningCount = 0
 		if a.pipelinePhase >= len(a.pipeline.Phases) {
 			log.Printf("[Agent] pipeline complete: all %d phases passed", len(a.pipeline.Phases))
 			return false
@@ -1495,12 +1509,57 @@ func extractToolCallNameArgs(tc map[string]interface{}) (string, map[string]inte
 	return name, args
 }
 
-// toolCallFingerprint returns a short hash of the tool name + arguments.
-// Used for action repetition detection — same fingerprint = same tool call.
+// toolIdentityKeys defines which argument keys constitute the "identity" of a tool call.
+// Only these keys are hashed for loop detection. Payload keys (file content, edit text)
+// are excluded so agents can't evade detection by varying file content.
+var toolIdentityKeys = map[string][]string{
+	"file_write": {"path"},
+	"file_edit":  {"path"},
+	"file_read":  {"path"},
+	"grep":       {"pattern", "path"},
+	"glob":       {"pattern", "path"},
+	"git":        {"subcommand"},
+}
+
+// toolCallFingerprint returns a short hash capturing the INTENT of a tool call.
+// For file tools, only the path is hashed (not content). For bash, the command
+// is normalized to first two tokens. For unknown tools, all args are hashed.
 func toolCallFingerprint(name string, args map[string]interface{}) string {
-	b, _ := json.Marshal(args)
-	h := sha256.Sum256([]byte(name + string(b)))
+	var data string
+
+	if name == "bash" {
+		cmd, _ := args["command"].(string)
+		data = name + "|" + normalizeBashCommand(cmd)
+	} else if keys, ok := toolIdentityKeys[name]; ok {
+		data = name
+		for _, k := range keys {
+			if v, exists := args[k]; exists {
+				data += "|" + fmt.Sprintf("%v", v)
+			}
+		}
+	} else {
+		b, _ := json.Marshal(args)
+		data = name + string(b)
+	}
+
+	h := sha256.Sum256([]byte(data))
 	return hex.EncodeToString(h[:8])
+}
+
+// normalizeBashCommand extracts the first two tokens of a shell command
+// (command + subcommand), ignoring flags and subsequent args.
+// "npm install --legacy-peer-deps" → "npm|install"
+// "go test -race ./..." → "go|test"
+func normalizeBashCommand(cmd string) string {
+	fields := strings.Fields(strings.TrimSpace(cmd))
+	if len(fields) == 0 {
+		return ""
+	}
+	result := fields[0]
+	if len(fields) > 1 && !strings.HasPrefix(fields[1], "-") {
+		result += "|" + fields[1]
+	}
+	return result
 }
 
 // maxRepeatCount returns the highest occurrence count of any fingerprint in the window.
