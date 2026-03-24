@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,7 +80,8 @@ type Agent struct {
 	phaseRetries       int // consecutive quality gate rejections in current phase
 	lastGateScore      int // verification gate passed count from previous retry (plateau detection)
 	plateauCount       int // consecutive retries with no score improvement
-	cachedPromptLevel  int // provider level when system prompt was cached (-1 = uncached)
+	cachedPromptLevel  int      // provider level when system prompt was cached (-1 = uncached)
+	toolFingerprints   []string // sliding window of recent tool call fingerprints (loop detection)
 
 	// Event bus for real-time observability
 	bus *EventBus
@@ -390,6 +393,33 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		a.toolCallCount += len(msg.ToolCalls)
 		a.phaseToolCalls += len(msg.ToolCalls)
 		a.executeToolCalls(ctx, msg.ToolCalls)
+
+		// Action repetition detection: fingerprint each tool call and detect loops.
+		// A looping agent repeats: same tool, same args, same result.
+		if a.config.AutoOrchestrate {
+			for _, tc := range msg.ToolCalls {
+				name, args := extractToolCallNameArgs(tc)
+				a.toolFingerprints = append(a.toolFingerprints, toolCallFingerprint(name, args))
+			}
+			if len(a.toolFingerprints) > 20 {
+				a.toolFingerprints = a.toolFingerprints[len(a.toolFingerprints)-20:]
+			}
+			if repeats := maxRepeatCount(a.toolFingerprints); repeats >= 3 {
+				if repeats >= 8 {
+					log.Printf("[Agent] action loop: same tool call %d times — skipping phase", repeats)
+					a.toolFingerprints = nil
+					a.advancePipeline("PHASE_SKIPPED_LOOP")
+				} else if repeats >= 5 {
+					log.Printf("[Agent] action loop: same tool call %d times — escalating", repeats)
+					a.escalateProvider()
+					a.toolFingerprints = nil
+					a.conversation.Add(loopDetectedMessage(repeats))
+				} else {
+					log.Printf("[Agent] action loop warning: same tool call %d times", repeats)
+					a.conversation.Add(loopDetectedMessage(repeats))
+				}
+			}
+		}
 
 		// Check for phase signals in the LLM's text content even when tool calls
 		// are present. Models often say "EDA_COMPLETE" or "IMPLEMENT_COMPLETE"
@@ -919,10 +949,11 @@ func (a *Agent) advancePipeline(content string) bool {
 
 		// Advance to next phase
 		a.pipelinePhase++
-		a.phaseToolCalls = 0  // reset for new phase
-		a.phaseRetries = 0    // reset retry counter
-		a.lastGateScore = 0   // reset plateau tracking
+		a.phaseToolCalls = 0    // reset for new phase
+		a.phaseRetries = 0      // reset retry counter
+		a.lastGateScore = 0     // reset plateau tracking
 		a.plateauCount = 0
+		a.toolFingerprints = nil // reset loop detection
 		if a.pipelinePhase >= len(a.pipeline.Phases) {
 			log.Printf("[Agent] pipeline complete: all %d phases passed", len(a.pipeline.Phases))
 			return false
@@ -1462,6 +1493,41 @@ func extractToolCallNameArgs(tc map[string]interface{}) (string, map[string]inte
 		args = make(map[string]interface{})
 	}
 	return name, args
+}
+
+// toolCallFingerprint returns a short hash of the tool name + arguments.
+// Used for action repetition detection — same fingerprint = same tool call.
+func toolCallFingerprint(name string, args map[string]interface{}) string {
+	b, _ := json.Marshal(args)
+	h := sha256.Sum256([]byte(name + string(b)))
+	return hex.EncodeToString(h[:8])
+}
+
+// maxRepeatCount returns the highest occurrence count of any fingerprint in the window.
+func maxRepeatCount(fps []string) int {
+	counts := make(map[string]int)
+	mx := 0
+	for _, fp := range fps {
+		counts[fp]++
+		if counts[fp] > mx {
+			mx = counts[fp]
+		}
+	}
+	return mx
+}
+
+// loopDetectedMessage returns a message telling the agent it's repeating itself.
+func loopDetectedMessage(repeats int) providers.Message {
+	return providers.Message{
+		Role: "user",
+		Content: fmt.Sprintf(`LOOP DETECTED: You have called the same tool with the same arguments %d times.
+This is NOT making progress. You MUST try a DIFFERENT approach:
+- If a command keeps failing, investigate WHY (read the error output carefully)
+- If a dependency won't install, try a different version or skip it
+- If a file won't compile, read the specific error and fix it
+- Do NOT retry the same command — it will produce the same result
+Change your approach NOW.`, repeats),
+	}
 }
 
 // runParallelPhase spawns N parallel sub-agents working concurrently.
