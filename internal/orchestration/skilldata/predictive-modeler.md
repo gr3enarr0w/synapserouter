@@ -10,6 +10,8 @@ triggers:
   - "model training"
 role: coder
 phase: implement
+language: python
+pipeline: data-science
 ---
 # Skill: Predictive Modeler (Global)
 

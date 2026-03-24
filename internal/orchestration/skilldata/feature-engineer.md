@@ -9,6 +9,8 @@ triggers:
   - "feature importance"
 role: coder
 phase: implement
+language: python
+pipeline: data-science
 ---
 # Skill: Feature Engineering
 

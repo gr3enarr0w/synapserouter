@@ -15,22 +15,21 @@ func SkillsForPhase(chain []orchestration.Skill, phase string) []orchestration.S
 	return filtered
 }
 
-// DetectPipelineType picks the right pipeline based on matched skills AND project language.
-// The data-science pipeline is only used for Python/R projects with ML skills.
-// All other languages (SQL, Go, Rust, Java, TypeScript, C#) use the software pipeline
-// even if data-science skills match (e.g., eda-explorer can be used for SQL analysis
-// but shouldn't trigger EDA→Model phases).
-func DetectPipelineType(skillNames []string, projectLanguage string) *Pipeline {
-	// Non-Python/R languages always use software pipeline
-	switch projectLanguage {
-	case "go", "rust", "java", "javascript", "typescript", "cpp", "ruby", "sql", "csharp":
-		return &DefaultPipeline
-	}
-
-	// For Python/R/unknown: check if ML skills are present
-	for _, name := range skillNames {
-		switch name {
-		case "eda-explorer", "feature-engineer", "predictive-modeler", "data-scrubber":
+// DetectPipelineType picks the right pipeline dynamically from matched skills.
+// Skills declare their pipeline type (e.g., "data-science") and language in frontmatter.
+// Language-specific skills are filtered by project language before checking pipeline type.
+// No hardcoded language or skill name lists — scales with new skills automatically.
+func DetectPipelineType(matched []orchestration.Skill, projectLanguage string) *Pipeline {
+	for _, skill := range matched {
+		if skill.Pipeline == "" {
+			continue
+		}
+		// Skip language-specific skills that don't match project language
+		if skill.Language != "" && projectLanguage != "" &&
+			skill.Language != projectLanguage {
+			continue
+		}
+		if skill.Pipeline == "data-science" {
 			return &DataSciencePipeline
 		}
 	}

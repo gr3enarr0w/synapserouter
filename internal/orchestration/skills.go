@@ -21,6 +21,7 @@ type Skill struct {
 	DependsOn    []string        `json:"depends_on,omitempty" yaml:"depends_on"`
 	Phase        string          `json:"phase" yaml:"phase"`
 	Language     string          `json:"language,omitempty" yaml:"language"`
+	Pipeline     string          `json:"pipeline,omitempty" yaml:"pipeline"`
 	Instructions string          `json:"instructions,omitempty" yaml:"-"`
 	Verify       []VerifyCommand `json:"verify,omitempty" yaml:"verify"`
 }

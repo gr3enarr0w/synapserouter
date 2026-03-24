@@ -10,6 +10,8 @@ triggers:
   - "statistical"
 role: analyst
 phase: analyze
+language: python
+pipeline: data-science
 ---
 # Skill: EDA Explorer (Global)
 

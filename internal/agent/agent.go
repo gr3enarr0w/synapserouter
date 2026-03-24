@@ -186,14 +186,16 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 	// This fires parallel planners BEFORE the main agent starts making tool calls
 	if a.config.AutoOrchestrate && a.pipeline == nil {
 		matched := orchestration.MatchSkills(a.originalRequest, a.config.Skills)
+		a.pipeline = DetectPipelineType(matched, a.config.ProjectLanguage)
+		a.pipelinePhase = 0
+		a.initializeImplementPhase()
+
 		skillNames := make([]string, len(matched))
 		for i, s := range matched {
 			skillNames[i] = s.Name
 		}
-		a.pipeline = DetectPipelineType(skillNames, a.config.ProjectLanguage)
-		a.pipelinePhase = 0
-		a.initializeImplementPhase()
-		log.Printf("[Agent] pipeline: %s (%d phases) | language: %s", a.pipeline.Name, len(a.pipeline.Phases), a.config.ProjectLanguage)
+		log.Printf("[Agent] pipeline: %s (%d phases) | language: %s | skills: %v",
+			a.pipeline.Name, len(a.pipeline.Phases), a.config.ProjectLanguage, skillNames)
 
 		a.emit(EventPipelineStart, "", map[string]any{
 			"pipeline_name":  a.pipeline.Name,
@@ -796,11 +798,7 @@ func (a *Agent) advancePipeline(content string) bool {
 	// Initialize pipeline on first call
 	if a.pipeline == nil {
 		matched := orchestration.MatchSkills(a.originalRequest, a.config.Skills)
-		skillNames := make([]string, len(matched))
-		for i, s := range matched {
-			skillNames[i] = s.Name
-		}
-		a.pipeline = DetectPipelineType(skillNames, a.config.ProjectLanguage)
+		a.pipeline = DetectPipelineType(matched, a.config.ProjectLanguage)
 		a.pipelinePhase = 0
 		log.Printf("[Agent] pipeline: %s (%d phases) | language: %s", a.pipeline.Name, len(a.pipeline.Phases), a.config.ProjectLanguage)
 	}

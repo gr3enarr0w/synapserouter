@@ -36,8 +36,17 @@ func TestSkillsForPhase(t *testing.T) {
 	}
 }
 
+// Helper to build skill with language and pipeline fields
+func skill(name, language, pipeline string) orchestration.Skill {
+	return orchestration.Skill{Name: name, Language: language, Pipeline: pipeline}
+}
+
 func TestDetectPipelineType_Default(t *testing.T) {
-	p := DetectPipelineType([]string{"go-patterns", "code-implement"}, "go")
+	matched := []orchestration.Skill{
+		skill("go-patterns", "go", ""),
+		skill("code-implement", "", ""),
+	}
+	p := DetectPipelineType(matched, "go")
 	if p.Name != "software" {
 		t.Errorf("expected software pipeline, got %s", p.Name)
 	}
@@ -45,30 +54,46 @@ func TestDetectPipelineType_Default(t *testing.T) {
 
 func TestDetectPipelineType_DataScience(t *testing.T) {
 	// Python + ML skills → data-science pipeline
-	p := DetectPipelineType([]string{"eda-explorer", "predictive-modeler"}, "python")
+	matched := []orchestration.Skill{
+		skill("eda-explorer", "python", "data-science"),
+		skill("predictive-modeler", "python", "data-science"),
+	}
+	p := DetectPipelineType(matched, "python")
 	if p.Name != "data-science" {
 		t.Errorf("expected data-science pipeline, got %s", p.Name)
 	}
 }
 
 func TestDetectPipelineType_SQLProject(t *testing.T) {
-	// SQL + EDA skills → software pipeline (NOT data-science)
-	p := DetectPipelineType([]string{"sql-expert", "eda-explorer"}, "sql")
+	// SQL + EDA skills → software pipeline (EDA is python-only, filtered out)
+	matched := []orchestration.Skill{
+		skill("sql-expert", "sql", ""),
+		skill("eda-explorer", "python", "data-science"),
+	}
+	p := DetectPipelineType(matched, "sql")
 	if p.Name != "software" {
 		t.Errorf("SQL project should use software pipeline, got %s", p.Name)
 	}
 }
 
 func TestDetectPipelineType_GoWithEDA(t *testing.T) {
-	// Go + EDA skills → software pipeline
-	p := DetectPipelineType([]string{"go-patterns", "eda-explorer"}, "go")
+	// Go + EDA skills → software pipeline (EDA filtered by language)
+	matched := []orchestration.Skill{
+		skill("go-patterns", "go", ""),
+		skill("eda-explorer", "python", "data-science"),
+	}
+	p := DetectPipelineType(matched, "go")
 	if p.Name != "software" {
 		t.Errorf("Go project should use software pipeline even with EDA, got %s", p.Name)
 	}
 }
 
 func TestDetectPipelineType_RustAlwaysSoftware(t *testing.T) {
-	p := DetectPipelineType([]string{"rust-patterns", "feature-engineer"}, "rust")
+	matched := []orchestration.Skill{
+		skill("rust-patterns", "rust", ""),
+		skill("feature-engineer", "python", "data-science"),
+	}
+	p := DetectPipelineType(matched, "rust")
 	if p.Name != "software" {
 		t.Errorf("Rust project should always use software pipeline, got %s", p.Name)
 	}
@@ -76,8 +101,37 @@ func TestDetectPipelineType_RustAlwaysSoftware(t *testing.T) {
 
 func TestDetectPipelineType_UnknownLanguageWithML(t *testing.T) {
 	// Unknown language + ML skills → data-science (backward compat)
-	p := DetectPipelineType([]string{"eda-explorer"}, "")
+	matched := []orchestration.Skill{
+		skill("eda-explorer", "python", "data-science"),
+	}
+	p := DetectPipelineType(matched, "")
 	if p.Name != "data-science" {
 		t.Errorf("Unknown language with EDA should use data-science, got %s", p.Name)
+	}
+}
+
+func TestDetectPipelineType_JavaScriptWithMLKeywords(t *testing.T) {
+	// JavaScript project that triggers ML skill keywords → software (ML filtered by language)
+	matched := []orchestration.Skill{
+		skill("javascript-patterns", "javascript", ""),
+		skill("eda-explorer", "python", "data-science"),
+		skill("predictive-modeler", "python", "data-science"),
+	}
+	p := DetectPipelineType(matched, "javascript")
+	if p.Name != "software" {
+		t.Errorf("JS project should use software pipeline even with ML skills matched, got %s", p.Name)
+	}
+}
+
+func TestDetectPipelineType_CrossLanguageSkillNoPipeline(t *testing.T) {
+	// Cross-language skills without pipeline field never trigger data-science
+	matched := []orchestration.Skill{
+		skill("code-review", "", ""),
+		skill("docker-expert", "", ""),
+		skill("data-scrubber", "", ""),
+	}
+	p := DetectPipelineType(matched, "go")
+	if p.Name != "software" {
+		t.Errorf("Cross-language skills should default to software, got %s", p.Name)
 	}
 }
