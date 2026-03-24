@@ -169,6 +169,11 @@ func (a *Agent) Metrics() *AgentMetrics {
 
 // Run processes a user message through the agent loop and returns the final text response.
 func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
+	// Register recall tool if tool output store is configured
+	if a.config.ToolStore != nil {
+		a.registry.Register(tools.NewRecallTool(a.config.ToolStore, a.sessionID))
+	}
+
 	// Input guardrails
 	if a.inputGuardrails != nil {
 		if result := a.inputGuardrails.Validate(userMessage); !result.Passed {
@@ -996,6 +1001,12 @@ func (a *Agent) advancePipeline(content string) bool {
 		a.plateauCount = 0
 		a.toolFingerprints = nil  // reset loop detection
 		a.loopWarningCount = 0
+
+		// Compact conversation between phases: store old messages to DB,
+		// keep only recent context + a phase summary. Prevents context overflow
+		// in long multi-phase sessions.
+		a.compactConversation(currentPhase.Name)
+
 		if a.pipelinePhase >= len(a.pipeline.Phases) {
 			log.Printf("[Agent] pipeline complete: all %d phases passed", len(a.pipeline.Phases))
 			return false
@@ -1536,6 +1547,43 @@ func extractToolCallNameArgs(tc map[string]interface{}) (string, map[string]inte
 		args = make(map[string]interface{})
 	}
 	return name, args
+}
+
+// compactConversation stores old messages to DB and keeps only recent context.
+// Called between pipeline phases to prevent context overflow in long sessions.
+func (a *Agent) compactConversation(completedPhase string) {
+	msgs := a.conversation.Messages()
+	if len(msgs) <= 30 {
+		return // not enough to compact
+	}
+
+	keepCount := 20 // keep last 20 messages
+	dropCount := len(msgs) - keepCount
+
+	// Store dropped messages to DB for later recall
+	if a.config.VectorMemory != nil {
+		for _, m := range msgs[:dropCount] {
+			if m.Content == "" || m.Role == "tool" {
+				continue
+			}
+			a.config.VectorMemory.Store(m.Content, m.Role, a.sessionID, nil)
+		}
+	}
+
+	// Replace conversation with summary + recent messages
+	recent := make([]providers.Message, keepCount)
+	copy(recent, msgs[dropCount:])
+
+	a.conversation.Clear()
+	a.conversation.Add(providers.Message{
+		Role:    "user",
+		Content: fmt.Sprintf("[Phase %s completed. %d earlier messages compacted to DB. Use recall tool to access past context.]", completedPhase, dropCount),
+	})
+	for _, m := range recent {
+		a.conversation.Add(m)
+	}
+
+	log.Printf("[Agent] compacted conversation: dropped %d messages, kept %d + summary", dropCount, keepCount)
 }
 
 // toolIdentityKeys defines which argument keys constitute the "identity" of a tool call.

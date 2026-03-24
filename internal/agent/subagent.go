@@ -75,6 +75,7 @@ func (a *Agent) SpawnChild(cfg SpawnConfig) *Agent {
 		EventBus:        a.config.EventBus,
 		ProjectLanguage: a.config.ProjectLanguage, // inherit so sub-agents use correct language context
 		ToolStore:       a.config.ToolStore,       // inherit so sub-agents store tool outputs in same DB
+		VectorMemory:    a.config.VectorMemory,    // inherit for recall tool access
 	}
 
 	child := New(a.executor, registry, a.renderer, childConfig)

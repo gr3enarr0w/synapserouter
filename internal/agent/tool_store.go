@@ -3,7 +3,8 @@ package agent
 import (
 	"database/sql"
 	"fmt"
-	"time"
+
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
 )
 
 // ToolOutputStore persists full tool outputs in the DB while conversation
@@ -12,16 +13,7 @@ type ToolOutputStore struct {
 	db *sql.DB
 }
 
-// ToolOutputEntry represents a stored tool output for search results.
-type ToolOutputEntry struct {
-	ID          int64
-	ToolName    string
-	ArgsSummary string
-	Summary     string
-	ExitCode    int
-	OutputSize  int
-	CreatedAt   time.Time
-}
+// ToolOutputStore implements tools.ToolOutputSearcher interface.
 
 // NewToolOutputStore creates a store backed by the given database.
 func NewToolOutputStore(db *sql.DB) *ToolOutputStore {
@@ -63,7 +55,7 @@ func (s *ToolOutputStore) Retrieve(sessionID string, id int64) (string, error) {
 }
 
 // Search finds recent tool outputs matching a tool name and/or session.
-func (s *ToolOutputStore) Search(sessionID, toolName string, limit int) ([]ToolOutputEntry, error) {
+func (s *ToolOutputStore) Search(sessionID, toolName string, limit int) ([]tools.ToolOutputResult, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -93,9 +85,9 @@ func (s *ToolOutputStore) Search(sessionID, toolName string, limit int) ([]ToolO
 	}
 	defer rows.Close()
 
-	var entries []ToolOutputEntry
+	var entries []tools.ToolOutputResult
 	for rows.Next() {
-		var e ToolOutputEntry
+		var e tools.ToolOutputResult
 		if err := rows.Scan(&e.ID, &e.ToolName, &e.ArgsSummary, &e.Summary, &e.ExitCode, &e.OutputSize, &e.CreatedAt); err != nil {
 			continue
 		}

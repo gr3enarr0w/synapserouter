@@ -4,6 +4,7 @@ import (
 	"database/sql"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
 )
 
@@ -40,7 +41,8 @@ type Config struct {
 
 	// Project context
 	ProjectLanguage string           // Declared language from spec or detection (overrides Detect())
-	ToolStore       *ToolOutputStore // DB-backed storage for full tool outputs (nil = no storage)
+	ToolStore       *ToolOutputStore     // DB-backed storage for full tool outputs (nil = no storage)
+	VectorMemory    *memory.VectorMemory // Direct DB access for conversation compaction + recall
 
 	// State persistence
 	DB        *sql.DB // SQLite database for session persistence
