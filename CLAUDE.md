@@ -23,7 +23,7 @@ Go-based LLM proxy router and coding agent that distributes requests across Olla
 - `internal/router/router.go` — Provider selection, fallback chain, circuit breakers, health caching
 - `internal/providers/provider.go` — Provider interface (`Name`, `ChatCompletion`, `IsHealthy`, `SupportsModel`)
 - `internal/providers/vertex.go` — Vertex AI provider (Claude via rawPredict, Gemini via generateContent)
-- `internal/providers/nanogpt.go` — NanoGPT provider with tiered model routing
+- `internal/agent/tool_store.go` — DB-backed tool output storage for recall
 - `internal/subscriptions/providers.go` — OAuth subscription provider management
 - `internal/subscriptions/credential_store.go` — Credential storage and OAuth refresh
 - `internal/router/circuit.go` — Circuit breaker with smart rate-limit cooldowns and reset
@@ -31,26 +31,27 @@ Go-based LLM proxy router and coding agent that distributes requests across Olla
 ## Architecture
 
 ### Provider Chain (Personal Profile)
-Cost-optimized escalation: subscription models first, paid API last.
+Ollama Cloud primary with 7-level escalation chain. Subscription providers optional (disable with `SUBSCRIPTIONS_DISABLED=true`).
 
-`NanoGPT-Sub → Gemini → Codex → Claude Code → Ollama → NanoGPT-Paid`
+```
+L0: ministral-3:14b, rnj-1:8b, nemotron-3-nano:30b       (fast/cheap)
+L1: gpt-oss:20b, devstral-small-2:24b, qwen3.5            (small coders)
+L2: nemotron-3-super, gpt-oss:120b, minimax-m2.7           (medium)
+L3: devstral-2:123b, qwen3-coder:480b                      (large coders)
+L4: qwen3.5:397b, kimi-k2.5, minimax-m2.5                  (XL general)
+L5: deepseek-v3.1:671b, cogito-2.1:671b                    (XXL reasoning)
+L6: glm-5, kimi-k2-thinking, glm-4.7                       (frontier)
+ → gemini → codex → claude-code                           (subscription fallback)
+```
 
-- `nanogpt-sub`: NanoGPT subscription models (qwen, deepseek, etc. — included in subscription)
-- `gemini`, `codex`, `claude-code`: CLI subscription providers (included in subscriptions)
-- `nanogpt-paid`: NanoGPT paid API models (claude/gpt/gemini via NanoGPT — costs money per call)
-- List order = priority (`GetBestProvider()` returns first under threshold)
+- Supports multiple API keys: `OLLAMA_API_KEYS=key1,key2,key3` (round-robin for concurrency)
 - Circuit breakers open on failures, parse "reset after Ns" from 429 errors
 - Health checks cached (2min TTL) to avoid burning API quota
-
-### NanoGPT Split
-Two provider instances from one `NANOGPT_API_KEY`:
-- `nanogpt-sub`: baseURL `https://nano-gpt.com/api/subscription/v1`, handles auto/subscription models
-- `nanogpt-paid`: baseURL `https://nano-gpt.com/api/paid/v1`, handles paid API models only
-- `SupportsModel` routes by tier; `nanogpt-paid` returns false for auto (only reachable via fallback)
+- Auto-escalation: when all providers at a level fail, moves to next level automatically
 
 ### Profiles
-- `personal`: NanoGPT-Sub + OAuth subscription providers + NanoGPT-Paid
-- `work`: Vertex AI only (Claude + Gemini via native GCP auth) — no NanoGPT
+- `personal`: Ollama Cloud (primary) + optional subscription providers (gemini, codex, claude-code)
+- `work`: Vertex AI only (Claude + Gemini via native GCP auth)
 - Controlled by `ACTIVE_PROFILE` in `.env`
 
 ### Skill Auto-Dispatch
@@ -111,8 +112,7 @@ Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-impl
 ### Key Patterns
 - Gemini 2.5+ models: thinking tokens from output budget, min 1024 maxOutputTokens enforced
 - Codex: SSE streaming via `/responses` endpoint (NOT `/responses/compact`)
-- NanoGPT-Sub: defaults to "qwen/qwen3.5-397b-a17b" for auto (paid subscription, not free)
-- NanoGPT-Paid: defaults to "chatgpt-4o-latest" for auto (only via fallback)
+- Ollama Cloud: defaults to model specified in OLLAMA_CHAIN env var per level
 - Gemini personal (subscription): defaults to "gemini-3-flash-preview" for auto
 - Vertex Gemini (work): defaults to "gemini-3.1-pro-preview" for auto
 - Vertex Claude: use model names without dates (e.g. `claude-sonnet-4-6`)
@@ -147,7 +147,7 @@ go vet ./...                               # Lint
 ./synroute                                 # Start server (default)
 ./synroute serve                           # Start server (explicit)
 ./synroute test                            # Smoke test all providers
-./synroute test --provider nanogpt         # Test single provider
+./synroute test --provider ollama-chain-1   # Test single provider
 ./synroute test --json                     # JSON output
 ./synroute eval import --source polyglot --path ~/polyglot-benchmark
 ./synroute eval import --source roocode --path ~/Roo-Code-Evals
@@ -163,7 +163,7 @@ go vet ./...                               # Lint
 ./synroute eval import-all --dir ~/eval-benchmarks
 ./synroute eval exercises --language go    # List imported exercises
 ./synroute eval run --language go --count 10 --two-pass
-./synroute eval run --provider nanogpt-sub --count 20
+./synroute eval run --provider ollama-chain-1 --count 20
 ./synroute eval run --mode routing --count 15
 ./synroute eval run --per-suite 40              # 40 per suite (default), pipeline validation
 ./synroute eval run --per-suite 0 --count 100   # no per-suite limit, 100 total
@@ -341,9 +341,9 @@ This audit is how we iteratively improve synapserouter. Each project run teaches
 ### The Router IS the Escalation
 - Synapserouter's entire purpose is cost-optimized escalation across providers
 - The agent uses the router's existing provider chain — no parallel escalation systems
-- Provider chain: `NanoGPT-Sub → Gemini → Codex → Claude Code → Ollama → NanoGPT-Paid`
+- Provider chain: 7-level Ollama Cloud → optional subscription fallback (gemini, codex, claude-code)
 - Agent sends `model: "auto"` and lets the router pick
-- NanoGPT subscription is a PAID subscription, not free
+- Ollama Cloud is a paid subscription ($20/mo Pro)
 
 ### Project Lifecycle Pipeline
 - Every substantial task goes through: Plan → Implement → Self-Check → Code Review → Acceptance Test → Deploy
@@ -375,7 +375,7 @@ This audit is how we iteratively improve synapserouter. Each project run teaches
 - Add comments, docstrings, or type annotations to code you didn't change
 - Over-engineer solutions beyond what was asked
 - Commit `.env` or credential files
-- Refer to NanoGPT subscription as "free" — it is a paid subscription
+- Refer to Ollama Cloud subscription as "free" — it is a paid subscription
 - Hardcode model names in escalation paths
 - Build parallel systems that duplicate the router's job
 - Bolt on mechanisms to the agent loop — use the pipeline
