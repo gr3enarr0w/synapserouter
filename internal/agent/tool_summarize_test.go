@@ -1,0 +1,133 @@
+package agent
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestShouldSummarize_SmallOutput(t *testing.T) {
+	if ShouldSummarize("bash", "hello world") {
+		t.Error("small output should not be summarized")
+	}
+}
+
+func TestShouldSummarize_LargeOutput(t *testing.T) {
+	large := strings.Repeat("x", 3000)
+	if !ShouldSummarize("bash", large) {
+		t.Error("large output should be summarized")
+	}
+}
+
+func TestShouldSummarize_FileWriteNever(t *testing.T) {
+	large := strings.Repeat("x", 5000)
+	if ShouldSummarize("file_write", large) {
+		t.Error("file_write should never be summarized (already returns summary)")
+	}
+}
+
+func TestShouldSummarize_FileEditNever(t *testing.T) {
+	large := strings.Repeat("x", 5000)
+	if ShouldSummarize("file_edit", large) {
+		t.Error("file_edit should never be summarized")
+	}
+}
+
+func TestSummarizeToolOutput_Bash_Success(t *testing.T) {
+	output := "ok  \tgithub.com/example\t1.5s\nok  \tgithub.com/example/pkg\t0.8s\nPASS\n"
+	output += strings.Repeat("test output line\n", 200)
+
+	summary := SummarizeToolOutput("bash", nil, output, 0)
+
+	if !strings.Contains(summary, "exit 0") {
+		t.Error("should contain exit code")
+	}
+	if !strings.Contains(summary, "PASS") || !strings.Contains(summary, "line") {
+		t.Logf("summary: %s", summary)
+	}
+	if len(summary) > 1000 {
+		t.Errorf("summary too long: %d chars", len(summary))
+	}
+}
+
+func TestSummarizeToolOutput_Bash_Error(t *testing.T) {
+	output := "main.go:10:5: undefined: foo\nmain.go:15:3: cannot use x\n"
+	summary := SummarizeToolOutput("bash", nil, output+strings.Repeat("x\n", 500), 1)
+
+	if !strings.Contains(summary, "exit 1") {
+		t.Error("should contain non-zero exit code")
+	}
+}
+
+func TestSummarizeToolOutput_Grep(t *testing.T) {
+	var lines []string
+	for i := 0; i < 50; i++ {
+		lines = append(lines, "src/file.go:10:matched line content")
+	}
+	output := strings.Join(lines, "\n")
+
+	summary := SummarizeToolOutput("grep", map[string]interface{}{"pattern": "TODO"}, output, 0)
+
+	if !strings.Contains(summary, "50 matches") {
+		t.Errorf("should contain match count, got: %s", summary)
+	}
+	if !strings.Contains(summary, "TODO") {
+		t.Error("should contain pattern")
+	}
+	if strings.Count(summary, "matched line") > 10 {
+		t.Error("should truncate to first 5 matches, not show all 50")
+	}
+}
+
+func TestSummarizeToolOutput_Glob(t *testing.T) {
+	var lines []string
+	for i := 0; i < 100; i++ {
+		lines = append(lines, "src/components/Component"+string(rune('A'+i%26))+".tsx")
+	}
+	output := strings.Join(lines, "\n")
+
+	summary := SummarizeToolOutput("glob", map[string]interface{}{"pattern": "**/*.tsx"}, output, 0)
+
+	if !strings.Contains(summary, "100 files") {
+		t.Errorf("should contain file count, got: %s", summary)
+	}
+	if strings.Count(summary, ".tsx") > 15 {
+		t.Error("should show at most 10 files, not all 100")
+	}
+}
+
+func TestSummarizeToolOutput_GitDiff(t *testing.T) {
+	output := `diff --git a/file1.go b/file1.go
+--- a/file1.go
++++ b/file1.go
+@@ -1,3 +1,5 @@
+ package main
++import "fmt"
++func hello() { fmt.Println("hi") }
+-func old() {}
+diff --git a/file2.go b/file2.go
+--- a/file2.go
++++ b/file2.go
+@@ -1 +1 @@
+-old line
++new line
+`
+	summary := SummarizeToolOutput("git", map[string]interface{}{"subcommand": "diff"}, output, 0)
+
+	if !strings.Contains(summary, "2 files") {
+		t.Errorf("should count 2 files changed, got: %s", summary)
+	}
+}
+
+func TestFormatArgsSummary_Bash(t *testing.T) {
+	s := FormatArgsSummary("bash", map[string]interface{}{"command": "npm install"})
+	if s != "npm install" {
+		t.Errorf("expected 'npm install', got '%s'", s)
+	}
+}
+
+func TestFormatArgsSummary_FileRead(t *testing.T) {
+	s := FormatArgsSummary("file_read", map[string]interface{}{"path": "/src/main.go"})
+	if s != "/src/main.go" {
+		t.Errorf("expected '/src/main.go', got '%s'", s)
+	}
+}

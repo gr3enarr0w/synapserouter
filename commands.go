@@ -400,6 +400,7 @@ func cmdChat(args []string) {
 	config.WorkDir = cwd
 	config.MaxAgents = *maxAgents
 	config.DB = ac.DB
+	config.ToolStore = agent.NewToolOutputStore(ac.DB)
 	if *system != "" {
 		config.SystemPrompt = *system
 	}

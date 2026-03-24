@@ -525,8 +525,36 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		}
 		a.emit(EventToolComplete, "", toolEventData)
 
-		// Truncate tool output for conversation (keep full output in renderer)
-		conversationContent := truncateToolOutput(resultContent, 32*1024)
+		// Summarize large tool outputs and store full output in DB.
+		// Small outputs (<2KB) are kept verbatim in conversation.
+		conversationContent := resultContent
+		exitCode := 0
+		if result != nil {
+			exitCode = result.ExitCode
+		}
+		if execErr != nil {
+			exitCode = -1
+		}
+		if ShouldSummarize(name, resultContent) {
+			summary := SummarizeToolOutput(name, args, resultContent, exitCode)
+			argsSummary := FormatArgsSummary(name, args)
+
+			// Store full output in DB (if configured)
+			if a.config.ToolStore != nil {
+				outputID, storeErr := a.config.ToolStore.Store(
+					a.sessionID, name, argsSummary, summary, resultContent,
+					exitCode, len(resultContent))
+				if storeErr != nil {
+					log.Printf("[Agent] warning: failed to store tool output: %v", storeErr)
+				} else {
+					summary += fmt.Sprintf("\n[full output: ref:%d]", outputID)
+				}
+			}
+			conversationContent = summary
+		} else {
+			// Still apply safety truncation for very large outputs that slip through
+			conversationContent = truncateToolOutput(resultContent, 32*1024)
+		}
 
 		a.conversation.Add(providers.Message{
 			Role:       "tool",

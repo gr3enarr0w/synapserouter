@@ -39,7 +39,8 @@ type Config struct {
 	Verbosity int       // 0=compact, 1=normal, 2=verbose
 
 	// Project context
-	ProjectLanguage string // Declared language from spec or detection (overrides Detect())
+	ProjectLanguage string           // Declared language from spec or detection (overrides Detect())
+	ToolStore       *ToolOutputStore // DB-backed storage for full tool outputs (nil = no storage)
 
 	// State persistence
 	DB        *sql.DB // SQLite database for session persistence
