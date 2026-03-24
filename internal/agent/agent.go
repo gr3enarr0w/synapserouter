@@ -349,6 +349,14 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		if strings.TrimSpace(msg.Role) == "" {
 			msg.Role = "assistant"
 		}
+		// Skip empty assistant messages (no content, no tool calls).
+		// Some models return these when confused or context is too large.
+		// Adding them to conversation causes 400 errors on strict models.
+		if msg.Content == "" && len(msg.ToolCalls) == 0 {
+			log.Printf("[Agent] skipping empty assistant message (no content, no tool_calls)")
+			a.noToolTurns++
+			continue
+		}
 		a.conversation.Add(msg)
 
 		// No tool calls → stall detection + pipeline advancement
@@ -1818,8 +1826,9 @@ Output the MERGED plan with complete acceptance criteria that reference the skil
 	return combined.String()
 }
 
-// callLLMWithRetry attempts the LLM call up to 3 times with exponential backoff
-// for transient errors (network, 429, 500). Non-retryable errors fail immediately.
+// callLLMWithRetry attempts the LLM call with retry and automatic escalation.
+// If all providers at the current level fail, escalates to the next level and retries.
+// Only returns error if all levels are exhausted or a non-retryable error occurs.
 func (a *Agent) callLLMWithRetry(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
 	backoffs := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second}
 	var lastErr error
@@ -1830,6 +1839,18 @@ func (a *Agent) callLLMWithRetry(ctx context.Context, req providers.ChatRequest)
 			return resp, nil
 		}
 		lastErr = err
+
+		// All providers at current level failed — escalate instead of retrying same level
+		if strings.Contains(err.Error(), "all providers at level") {
+			if a.escalateProvider() {
+				log.Printf("[Agent] all providers at level %d failed — escalated to level %d",
+					a.providerIdx-1, a.providerIdx)
+				// Retry immediately at the new level (don't burn a backoff)
+				continue
+			}
+			// No more levels to escalate to
+			return providers.ChatResponse{}, fmt.Errorf("all escalation levels exhausted: %w", err)
+		}
 
 		if !isRetryableError(err) {
 			return resp, err
