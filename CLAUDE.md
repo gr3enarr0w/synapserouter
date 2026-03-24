@@ -1,6 +1,6 @@
 # SynapseRouter (synroute)
 
-Go-based LLM proxy router and coding agent that distributes requests across subscription providers (Claude Code, Codex, Gemini) and direct providers (NanoGPT, Ollama, Vertex AI). Includes interactive agent REPL with tool execution (bash, file I/O, grep, glob, git), worktree isolation, and MCP server mode. Two profiles: `personal` (OAuth subscriptions) and `work` (Vertex AI). Auto-discovers 159+ models across all active providers.
+Go-based LLM proxy router and coding agent that distributes requests across Ollama Cloud (primary, 7-level escalation chain with 19+ models), subscription providers (Gemini, Codex, Claude Code), and Vertex AI. Includes interactive agent REPL with tool execution (bash, file I/O, grep, glob, git), worktree isolation, and MCP server mode. Two profiles: `personal` (Ollama Cloud + OAuth subscriptions) and `work` (Vertex AI). Supports multiple Ollama API keys for concurrent subscriptions.
 
 ## Key Files
 

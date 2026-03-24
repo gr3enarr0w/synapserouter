@@ -193,7 +193,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		a.pipeline = DetectPipelineType(skillNames, a.config.ProjectLanguage)
 		a.pipelinePhase = 0
 		a.initializeImplementPhase()
-		log.Printf("[Agent] pipeline: %s (%d phases)", a.pipeline.Name, len(a.pipeline.Phases))
+		log.Printf("[Agent] pipeline: %s (%d phases) | language: %s", a.pipeline.Name, len(a.pipeline.Phases), a.config.ProjectLanguage)
 
 		a.emit(EventPipelineStart, "", map[string]any{
 			"pipeline_name":  a.pipeline.Name,
@@ -489,7 +489,7 @@ func (a *Agent) buildMessages() []providers.Message {
 	if a.cachedSystemPrompt == "" || a.cachedPromptLevel != a.providerIdx {
 		sysPrompt := a.config.SystemPrompt
 		if sysPrompt == "" {
-			sysPrompt = defaultSystemPrompt(a.config.WorkDir, a.providerIdx)
+			sysPrompt = defaultSystemPrompt(a.config.WorkDir, a.providerIdx, a.config.ProjectLanguage)
 		}
 
 		// Inject matched skill instructions
@@ -636,11 +636,19 @@ EXECUTION RULES:
 - Build the PROGRAM. Run it once briefly to verify it starts. Then deliver.
 - If a command takes more than 10 seconds, it is too long — the user will run it themselves.`
 
-func defaultSystemPrompt(workDir string, providerLevel int) string {
+func defaultSystemPrompt(workDir string, providerLevel int, projectLanguage string) string {
+	// Language directive — prevents wrong-language file creation
+	langDirective := ""
+	if projectLanguage != "" {
+		langDirective = fmt.Sprintf("\nPROJECT LANGUAGE: %s — all source files MUST be in this language. "+
+			"Do NOT create config files or source files for other languages "+
+			"(no go.mod for JS projects, no setup.py for Go projects, no package.json for Python projects).\n", projectLanguage)
+	}
+
 	// Level 0 (small models ~20-30B): shorter, more forceful prompt focused on tool calling
 	if providerLevel == 0 {
 		return fmt.Sprintf(`You are a coding assistant working in: %s
-
+%s
 YOU MUST USE TOOLS TO COMPLETE TASKS. Do not describe what you would do — actually do it by calling tools.
 
 %s
@@ -651,12 +659,12 @@ WORKFLOW — start immediately with tool calls:
 3. bash: install dependencies and run code
 4. file_read: inspect output and fix issues
 
-Do NOT output plans, descriptions, or JSON without tool calls. Every response must include at least one tool call.`, workDir, toolBlock)
+Do NOT output plans, descriptions, or JSON without tool calls. Every response must include at least one tool call.`, workDir, langDirective, toolBlock)
 	}
 
 	// Level 1+ (larger models ~120B+): full prompt with methodology
 	return fmt.Sprintf(`You are a coding assistant that BUILDS tools and programs. You are working in: %s
-
+%s
 TOOL BUILDER (DEFAULT MODE):
 - By default, BUILD programs and tools — do not do the work yourself.
 - When a task involves operations (API calls, data processing, sync, transforms):
@@ -677,7 +685,7 @@ PRODUCTION QUALITY:
 - Show math for calculated values. Never approximate when exact values are available.
 - Document assumptions. Flag ambiguous decisions for review.
 
-%s`, workDir, toolBlock)
+%s`, workDir, langDirective, toolBlock)
 }
 
 // forceToolsMessage returns a phase-appropriate message demanding tool calls.
@@ -713,6 +721,9 @@ func (a *Agent) writeSynrouteMD() {
 		}
 		buf.WriteString(fmt.Sprintf("- Pipeline: %s\n", a.pipeline.Name))
 		buf.WriteString(fmt.Sprintf("- Phase: %s (%d/%d)\n", phaseName, phaseNum, total))
+	}
+	if a.config.ProjectLanguage != "" {
+		buf.WriteString(fmt.Sprintf("- Language: %s\n", a.config.ProjectLanguage))
 	}
 	buf.WriteString(fmt.Sprintf("- Last run: %s\n", time.Now().Format("2006-01-02 15:04")))
 	buf.WriteString(fmt.Sprintf("- Tool calls: %d\n", a.toolCallCount))
@@ -791,7 +802,7 @@ func (a *Agent) advancePipeline(content string) bool {
 		}
 		a.pipeline = DetectPipelineType(skillNames, a.config.ProjectLanguage)
 		a.pipelinePhase = 0
-		log.Printf("[Agent] pipeline: %s (%d phases)", a.pipeline.Name, len(a.pipeline.Phases))
+		log.Printf("[Agent] pipeline: %s (%d phases) | language: %s", a.pipeline.Name, len(a.pipeline.Phases), a.config.ProjectLanguage)
 	}
 
 	if a.pipelinePhase >= len(a.pipeline.Phases) {

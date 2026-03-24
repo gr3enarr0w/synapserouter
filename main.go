@@ -328,11 +328,15 @@ func initializeProviders() []providers.Provider {
 		providerList = append(providerList, initializePersonalProviders()...)
 	}
 
-	// Ollama Cloud (available in all profiles)
-	ollamaAPIKey := os.Getenv("OLLAMA_API_KEY")
+	// Ollama Cloud — supports multiple API keys for concurrent subscriptions
+	apiKeys := app.ParseOllamaAPIKeys()
 	ollamaBaseURL := os.Getenv("OLLAMA_BASE_URL")
-	if ollamaAPIKey != "" || ollamaBaseURL != "" {
+	if len(apiKeys) == 0 && ollamaBaseURL != "" {
+		apiKeys = []string{""} // local Ollama, no key needed
+	}
+	if len(apiKeys) > 0 {
 		registered := 0
+		keyIdx := 0
 
 		// Planners (unique — planning is a separate phase)
 		for _, m := range []struct{ envVar, name string }{
@@ -343,9 +347,11 @@ func initializeProviders() []providers.Provider {
 			if model == "" {
 				continue
 			}
+			apiKey := apiKeys[keyIdx%len(apiKeys)]
+			keyIdx++
 			providerList = append(providerList,
-				providers.NewOllamaCloudProvider(ollamaBaseURL, ollamaAPIKey, model, m.name))
-			log.Printf("✓ %s provider initialized (model=%s)", m.name, model)
+				providers.NewOllamaCloudProvider(ollamaBaseURL, apiKey, model, m.name))
+			log.Printf("✓ %s provider initialized (model=%s, key=%d/%d)", m.name, model, (keyIdx-1)%len(apiKeys)+1, len(apiKeys))
 			registered++
 		}
 
@@ -355,10 +361,12 @@ func initializeProviders() []providers.Provider {
 		for _, models := range chainLevels {
 			for _, model := range models {
 				modelIdx++
+				apiKey := apiKeys[keyIdx%len(apiKeys)]
+				keyIdx++
 				name := fmt.Sprintf("ollama-chain-%d", modelIdx)
 				providerList = append(providerList,
-					providers.NewOllamaCloudProvider(ollamaBaseURL, ollamaAPIKey, model, name))
-				log.Printf("✓ %s provider initialized (model=%s)", name, model)
+					providers.NewOllamaCloudProvider(ollamaBaseURL, apiKey, model, name))
+				log.Printf("✓ %s provider initialized (model=%s, key=%d/%d)", name, model, (keyIdx-1)%len(apiKeys)+1, len(apiKeys))
 				registered++
 			}
 		}
@@ -368,9 +376,13 @@ func initializeProviders() []providers.Provider {
 			ollamaModel := os.Getenv("OLLAMA_MODEL")
 			if ollamaModel != "" {
 				providerList = append(providerList,
-					providers.NewOllamaCloudProvider(ollamaBaseURL, ollamaAPIKey, ollamaModel, "ollama-cloud"))
+					providers.NewOllamaCloudProvider(ollamaBaseURL, apiKeys[0], ollamaModel, "ollama-cloud"))
 				log.Printf("✓ ollama-cloud provider initialized (model=%s)", ollamaModel)
 			}
+		}
+
+		if registered > 0 {
+			log.Printf("✓ Ollama Cloud: %d API keys, %d models", len(apiKeys), registered)
 		}
 	}
 
@@ -1300,7 +1312,7 @@ func providerConfigured(name string) bool {
 	case "qwen":
 		return envFirst("SYNROUTE_QWEN_API_KEY", "SYNROUTE_QWEN_API_KEYS", "SYNROUTE_QWEN_SESSION_TOKEN", "SYNROUTE_QWEN_SESSION_TOKENS") != ""
 	case "ollama-cloud":
-		return strings.TrimSpace(os.Getenv("OLLAMA_API_KEY")) != ""
+		return len(app.ParseOllamaAPIKeys()) > 0
 	default:
 		return true
 	}
@@ -1342,7 +1354,7 @@ func providerNotes(name string, healthy bool) string {
 		if healthy {
 			return "Ollama Cloud API reachable"
 		}
-		return "Check OLLAMA_API_KEY and OLLAMA_BASE_URL"
+		return "Check OLLAMA_API_KEY/OLLAMA_API_KEYS and OLLAMA_BASE_URL"
 	default:
 		if healthy {
 			return name + " available"

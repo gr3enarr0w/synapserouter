@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -443,14 +444,20 @@ func cmdChat(args []string) {
 	}
 
 	// If --spec-file provided, read file and compose message.
-	// Detect if the working directory already has code from a previous run —
-	// if so, switch to review/fix mode instead of rebuilding from scratch.
+	// Also detect project language from spec content for pipeline routing.
 	if *specFile != "" && *message == "" {
 		specContent, err := os.ReadFile(*specFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading spec file: %v\n", err)
 			os.Exit(1)
 		}
+
+		// Extract language from spec content (e.g., "Language: TypeScript" or "next.js")
+		if lang := detectLanguageFromSpec(string(specContent)); lang != "" {
+			config.ProjectLanguage = lang
+			fmt.Fprintf(os.Stderr, "Detected language from spec: %s\n", lang)
+		}
+
 		var composed string
 		if hasExistingProject(cwd) {
 			composed = "Review and improve the existing implementation against this specification. " +
@@ -462,6 +469,13 @@ func cmdChat(args []string) {
 			composed = "Implement the following specification:\n\n" + string(specContent)
 		}
 		message = &composed
+	}
+
+	// Fallback: detect language from existing project files (re-runs without spec)
+	if config.ProjectLanguage == "" {
+		if env := environment.Detect(cwd); env != nil && env.Language != "" {
+			config.ProjectLanguage = env.Language
+		}
 	}
 
 	if *message != "" {
@@ -606,4 +620,68 @@ func hasExistingProject(dir string) bool {
 		}
 	}
 	return false
+}
+
+// detectLanguageFromSpec scans spec text for language/framework indicators.
+// Uses two tiers: explicit declarations ("Language: TypeScript") first,
+// then framework keywords ("next.js", "django") as fallback.
+func detectLanguageFromSpec(content string) string {
+	lower := strings.ToLower(content)
+
+	// Tier 1: Explicit language declarations (most reliable)
+	// Matches patterns like "Language: TypeScript", "Language/Runtime: Python"
+	langPatterns := []struct {
+		pattern  string
+		language string
+	}{
+		{`language[/\w]*[:\s]+typescript`, "javascript"},
+		{`language[/\w]*[:\s]+javascript`, "javascript"},
+		{`language[/\w]*[:\s]+node`, "javascript"},
+		{`language[/\w]*[:\s]+python`, "python"},
+		{`language[/\w]*[:\s]+golang`, "go"},
+		{`language[/\w]*[:\s]+rust`, "rust"},
+		{`language[/\w]*[:\s]+java\b`, "java"},
+		{`language[/\w]*[:\s]+c#`, "csharp"},
+		{`language[/\w]*[:\s]+csharp`, "csharp"},
+		{`language[/\w]*[:\s]+sql`, "sql"},
+		{`language[/\w]*[:\s]+ruby`, "ruby"},
+		{`language[/\w]*[:\s]+r\b`, "r"},
+		{`language[/\w]*[:\s]+cpp`, "cpp"},
+		{`language[/\w]*[:\s]+c\+\+`, "cpp"},
+	}
+	for _, p := range langPatterns {
+		if matched, _ := regexp.MatchString(p.pattern, lower); matched {
+			return p.language
+		}
+	}
+
+	// Special case: "Language: Go" needs word boundary (avoid "going", "google")
+	if matched, _ := regexp.MatchString(`language[/\w]*[:\s]+go\b`, lower); matched {
+		return "go"
+	}
+
+	// Tier 2: Framework/ecosystem keywords (less reliable but catches most specs)
+	// Ordered: check more specific frameworks first
+	frameworkIndicators := []struct {
+		keywords []string
+		language string
+	}{
+		{[]string{"next.js", "nextjs", "react", "express", "node.js", "npm install", "package.json", "typescript", ".tsx", ".jsx"}, "javascript"},
+		{[]string{"django", "flask", "fastapi", "pytorch", "tensorflow", "pandas", "sklearn", "pip install", "requirements.txt", "pyproject.toml"}, "python"},
+		{[]string{"cargo.toml", "cargo build", "cargo test"}, "rust"},
+		{[]string{"spring boot", "maven", "gradle", "pom.xml"}, "java"},
+		{[]string{"dotnet", "nuget", "entity framework", ".csproj"}, "csharp"},
+		{[]string{"prisma", "drizzle"}, "javascript"}, // ORM = Node.js ecosystem
+		{[]string{"postgresql", "mysql", "sqlite", "create table", "insert into"}, "sql"},
+		{[]string{"go.mod", "go build", "go test"}, "go"},
+	}
+	for _, fi := range frameworkIndicators {
+		for _, kw := range fi.keywords {
+			if strings.Contains(lower, kw) {
+				return fi.language
+			}
+		}
+	}
+
+	return ""
 }

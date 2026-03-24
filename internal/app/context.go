@@ -110,11 +110,15 @@ func initializeProviders(profile string) []providers.Provider {
 	case "work":
 		providerList = append(providerList, initializeWorkProviders()...)
 	default:
-		// Ollama Cloud (3 concurrent models + sequential fallbacks)
-		ollamaAPIKey := os.Getenv("OLLAMA_API_KEY")
+		// Ollama Cloud — supports multiple API keys for concurrent subscriptions
+		apiKeys := ParseOllamaAPIKeys()
 		ollamaBaseURL := os.Getenv("OLLAMA_BASE_URL")
-		if ollamaAPIKey != "" || ollamaBaseURL != "" {
+		if len(apiKeys) == 0 && ollamaBaseURL != "" {
+			apiKeys = []string{""} // local Ollama, no key needed
+		}
+		if len(apiKeys) > 0 {
 			registered := 0
+			keyIdx := 0
 
 			// Planners (unique — planning is a separate phase)
 			for _, m := range []struct{ envVar, name string }{
@@ -125,9 +129,11 @@ func initializeProviders(profile string) []providers.Provider {
 				if model == "" {
 					continue
 				}
+				apiKey := apiKeys[keyIdx%len(apiKeys)]
+				keyIdx++
 				providerList = append(providerList,
-					providers.NewOllamaCloudProvider(ollamaBaseURL, ollamaAPIKey, model, m.name))
-				log.Printf("✓ %s provider initialized (model=%s)", m.name, model)
+					providers.NewOllamaCloudProvider(ollamaBaseURL, apiKey, model, m.name))
+				log.Printf("✓ %s provider initialized (model=%s, key=%d/%d)", m.name, model, (keyIdx-1)%len(apiKeys)+1, len(apiKeys))
 				registered++
 			}
 
@@ -138,10 +144,12 @@ func initializeProviders(profile string) []providers.Provider {
 			for _, models := range chainLevels {
 				for _, model := range models {
 					modelIdx++
+					apiKey := apiKeys[keyIdx%len(apiKeys)]
+					keyIdx++
 					name := fmt.Sprintf("ollama-chain-%d", modelIdx)
 					providerList = append(providerList,
-						providers.NewOllamaCloudProvider(ollamaBaseURL, ollamaAPIKey, model, name))
-					log.Printf("✓ %s provider initialized (model=%s)", name, model)
+						providers.NewOllamaCloudProvider(ollamaBaseURL, apiKey, model, name))
+					log.Printf("✓ %s provider initialized (model=%s, key=%d/%d)", name, model, (keyIdx-1)%len(apiKeys)+1, len(apiKeys))
 					registered++
 				}
 			}
@@ -151,17 +159,45 @@ func initializeProviders(profile string) []providers.Provider {
 				ollamaModel := os.Getenv("OLLAMA_MODEL")
 				if ollamaModel != "" {
 					providerList = append(providerList,
-						providers.NewOllamaCloudProvider(ollamaBaseURL, ollamaAPIKey, ollamaModel, "ollama-cloud"))
+						providers.NewOllamaCloudProvider(ollamaBaseURL, apiKeys[0], ollamaModel, "ollama-cloud"))
 					log.Printf("✓ ollama-cloud provider initialized (model=%s)", ollamaModel)
 				}
 			}
+
+			if registered > 0 {
+				log.Printf("✓ Ollama Cloud: %d API keys, %d models", len(apiKeys), registered)
+			}
 		}
 
-		// Subscription providers (gemini, codex, claude-code)
-		providerList = append(providerList, initializePersonalProviders()...)
+		// Subscription providers (gemini, codex, claude-code) — disable with SUBSCRIPTIONS_DISABLED=true
+		if os.Getenv("SUBSCRIPTIONS_DISABLED") != "true" {
+			providerList = append(providerList, initializePersonalProviders()...)
+		}
 	}
 
 	return providerList
+}
+
+// ParseOllamaAPIKeys returns all available Ollama API keys.
+// Supports OLLAMA_API_KEYS (comma-separated, for multiple subscriptions)
+// and falls back to single OLLAMA_API_KEY.
+func ParseOllamaAPIKeys() []string {
+	if keys := os.Getenv("OLLAMA_API_KEYS"); keys != "" {
+		var parsed []string
+		for _, k := range strings.Split(keys, ",") {
+			k = strings.TrimSpace(k)
+			if k != "" {
+				parsed = append(parsed, k)
+			}
+		}
+		if len(parsed) > 0 {
+			return parsed
+		}
+	}
+	if key := os.Getenv("OLLAMA_API_KEY"); key != "" {
+		return []string{key}
+	}
+	return nil
 }
 
 func initializePersonalProviders() []providers.Provider {
@@ -234,8 +270,8 @@ func buildEscalationChain(profile string) []agent.EscalationLevel {
 		}
 	}
 
-	// Subscription providers
-	if profile != "work" {
+	// Subscription providers — disable with SUBSCRIPTIONS_DISABLED=true
+	if profile != "work" && os.Getenv("SUBSCRIPTIONS_DISABLED") != "true" {
 		sps, err := subscriptions.LoadRuntimeProviders(context.Background())
 		if err == nil {
 			for _, p := range sps {
