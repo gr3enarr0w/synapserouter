@@ -30,8 +30,16 @@ func DetectPipelineType(matched []orchestration.Skill, projectLanguage string) *
 			continue
 		}
 		if skill.Pipeline == "data-science" {
-			return &DataSciencePipeline
+			return copyPipeline(&DataSciencePipeline)
 		}
 	}
-	return &DefaultPipeline
+	return copyPipeline(&DefaultPipeline)
+}
+
+// copyPipeline returns a deep copy so concurrent agents don't race on global state.
+func copyPipeline(src *Pipeline) *Pipeline {
+	p := *src
+	p.Phases = make([]PipelinePhase, len(src.Phases))
+	copy(p.Phases, src.Phases)
+	return &p
 }

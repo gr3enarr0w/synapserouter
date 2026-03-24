@@ -4,10 +4,16 @@ import (
 	"embed"
 	"log"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration/skilldata"
+)
+
+var (
+	cachedSkills     []Skill
+	cachedSkillsOnce sync.Once
 )
 
 // Skill is a named unit of work with trigger conditions, a role mapping,
@@ -52,7 +58,10 @@ var PhaseOrder = map[string]int{
 // To add a new skill: create a .md file in internal/orchestration/skilldata/
 // with proper frontmatter and rebuild. No Go code changes needed.
 func DefaultSkills() []Skill {
-	return ParseSkillsFromFS(skilldata.Skills)
+	cachedSkillsOnce.Do(func() {
+		cachedSkills = ParseSkillsFromFS(skilldata.Skills)
+	})
+	return cachedSkills
 }
 
 // ParseSkillsFromFS reads all .md files from an embedded filesystem,

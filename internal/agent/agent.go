@@ -1123,7 +1123,8 @@ func (a *Agent) advancePipeline(content string) bool {
 // sequential review→fix stages: A reviews → B fixes → C reviews B's fix.
 // Returns the final sub-agent's result text.
 func (a *Agent) runSubAgentPhase(phase PipelinePhase) string {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
 	model := "auto"
 
 	// Dynamically match skills and extract verification commands (single matching pass)
@@ -1970,11 +1971,20 @@ func (a *Agent) callLLMWithRetry(ctx context.Context, req providers.ChatRequest)
 			if a.escalateProvider() {
 				log.Printf("[Agent] all providers at level %d failed — escalated to level %d",
 					a.providerIdx-1, a.providerIdx)
-				// Retry immediately at the new level (don't burn a backoff)
 				continue
 			}
-			// No more levels to escalate to
 			return providers.ChatResponse{}, fmt.Errorf("all escalation levels exhausted: %w", err)
+		}
+
+		// Context overflow — trim conversation and retry instead of crashing
+		if isContextOverflowError(err) {
+			trimmed := a.conversation.TrimOldest(20)
+			if trimmed > 0 {
+				log.Printf("[Agent] context overflow — trimmed %d old messages, retrying", trimmed)
+				req.Messages = a.buildMessages()
+				continue
+			}
+			return providers.ChatResponse{}, fmt.Errorf("context overflow, cannot trim further: %w", err)
 		}
 
 		if !isRetryableError(err) {
@@ -1992,6 +2002,17 @@ func (a *Agent) callLLMWithRetry(ctx context.Context, req providers.ChatRequest)
 		}
 	}
 	return providers.ChatResponse{}, lastErr
+}
+
+// isContextOverflowError returns true if the error indicates the request exceeds
+// the model's context window. Previously dead code — now wired into callLLMWithRetry.
+func isContextOverflowError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "too long") ||
+		strings.Contains(msg, "context length") ||
+		strings.Contains(msg, "maximum context") ||
+		strings.Contains(msg, "token limit") ||
+		strings.Contains(msg, "request too large")
 }
 
 // isRetryableError returns true for transient errors worth retrying.

@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -235,7 +234,7 @@ func (p *Pipeline) PhasePrompt(phaseIdx int, criteria string) string {
 	}
 	phase := p.Phases[phaseIdx]
 	if criteria != "" {
-		return fmt.Sprintf(phase.Prompt, criteria)
+		return strings.ReplaceAll(phase.Prompt, "%s", criteria)
 	}
 	// Replace %s placeholder with descriptive text when no criteria available yet
 	return strings.ReplaceAll(phase.Prompt, "%s", "(criteria will be defined during earlier phases)")

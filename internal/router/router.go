@@ -158,6 +158,7 @@ func (r *Router) ChatCompletionForProvider(
 	}
 
 	// Retrieve memory BEFORE storing new messages (to avoid retrieving what we just stored)
+	injectedCount := 0
 	memoryQuery := lastUserMessage(req.Messages)
 	var retrievedMessages []memory.Message
 	var metadata *providers.ProxyMetadata
@@ -185,6 +186,8 @@ func (r *Router) ChatCompletionForProvider(
 			// Inject retrieved memory into request (prepend to provide context)
 			// Filter out: tool-role messages (orphaned without tool_call_id),
 			// empty messages (corrupted assistant messages that lost tool_calls).
+			// Track actual injected count (not len(retrievedMessages)) for correct slice offset later.
+			injectedCount := 0
 			if len(retrievedMessages) > 0 {
 				priorMessages := make([]providers.Message, 0, len(retrievedMessages)+len(req.Messages))
 				for _, msg := range retrievedMessages {
@@ -195,10 +198,11 @@ func (r *Router) ChatCompletionForProvider(
 						Role:    msg.Role,
 						Content: msg.Content,
 					})
+					injectedCount++
 				}
 				priorMessages = append(priorMessages, req.Messages...)
 				req.Messages = priorMessages
-				log.Printf("[Router] Injected %d memory messages into request for session %s", len(retrievedMessages), sessionID)
+				log.Printf("[Router] Injected %d memory messages into request for session %s", injectedCount, sessionID)
 			}
 
 			// Build debug metadata if requested
@@ -224,9 +228,9 @@ func (r *Router) ChatCompletionForProvider(
 	// Store the NEW messages — synthesize content for tool-call-only assistant messages
 	// so memory preserves what the agent did without storing empty messages that corrupt conversations.
 	if sessionID != "" && !req.SkipMemory {
-		originalMsgCount := len(req.Messages) - len(retrievedMessages)
+		originalMsgCount := len(req.Messages) - injectedCount
 		if originalMsgCount > 0 {
-			msgsToStore := req.Messages[len(retrievedMessages):]
+			msgsToStore := req.Messages[injectedCount:]
 			var msgs []memory.Message
 			for _, m := range msgsToStore {
 				if m.Role == "tool" {
@@ -410,6 +414,7 @@ func (r *Router) ChatCompletionWithDebug(
 	}
 
 	// 1. Retrieve memory BEFORE storing new messages
+	injectedCount2 := 0
 	memoryQuery := lastUserMessage(req.Messages)
 	var retrievedMessages []memory.Message
 	var metadata *providers.ProxyMetadata
@@ -435,8 +440,7 @@ func (r *Router) ChatCompletionWithDebug(
 			}
 
 			// Inject retrieved memory into request
-			// Filter out: tool-role messages (orphaned without tool_call_id),
-			// empty messages (corrupted assistant messages that lost tool_calls).
+			// Track actual injected count for correct slice offset in storage.
 			if len(retrievedMessages) > 0 {
 				priorMessages := make([]providers.Message, 0, len(retrievedMessages)+len(req.Messages))
 				for _, msg := range retrievedMessages {
@@ -447,10 +451,11 @@ func (r *Router) ChatCompletionWithDebug(
 						Role:    msg.Role,
 						Content: msg.Content,
 					})
+					injectedCount2++
 				}
 				priorMessages = append(priorMessages, req.Messages...)
 				req.Messages = priorMessages
-				log.Printf("[Router] Injected %d memory messages into request for session %s", len(retrievedMessages), sessionID)
+				log.Printf("[Router] Injected %d memory messages into request for session %s", injectedCount2, sessionID)
 			}
 
 			// Build debug metadata if requested
@@ -475,9 +480,9 @@ func (r *Router) ChatCompletionWithDebug(
 
 	// 2. Store the NEW messages — synthesize content for tool-call-only messages
 	if sessionID != "" && !req.SkipMemory {
-		originalMsgCount := len(req.Messages) - len(retrievedMessages)
+		originalMsgCount := len(req.Messages) - injectedCount2
 		if originalMsgCount > 0 {
-			msgsToStore := req.Messages[len(retrievedMessages):]
+			msgsToStore := req.Messages[injectedCount2:]
 			var msgs []memory.Message
 			for _, m := range msgsToStore {
 				if m.Role == "tool" {
@@ -838,7 +843,11 @@ func (r *Router) handleStall(
 		metadata.StallRetried = true
 	}
 
-	log.Printf("[Router] Stall retry succeeded with %d chars", len(retryResp.Choices[0].Message.Content))
+	if len(retryResp.Choices) > 0 {
+		log.Printf("[Router] Stall retry succeeded with %d chars", len(retryResp.Choices[0].Message.Content))
+	} else {
+		log.Printf("[Router] Stall retry returned empty choices")
+	}
 	return retryResp, true
 }
 

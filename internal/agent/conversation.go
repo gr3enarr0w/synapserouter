@@ -43,6 +43,22 @@ func (c *Conversation) Clear() {
 	c.messages = nil
 }
 
+// TrimOldest removes N messages from the front of the conversation,
+// respecting tool-call boundaries. Returns the number actually removed.
+// Used for context overflow recovery — trim and retry the LLM call.
+func (c *Conversation) TrimOldest(n int) int {
+	before := len(c.messages)
+	if before <= n {
+		return 0 // don't trim everything
+	}
+	c.messages = c.messages[n:]
+	// Clean up any orphaned tool messages at the new front
+	for len(c.messages) > 0 && c.messages[0].Role == "tool" {
+		c.messages = c.messages[1:]
+	}
+	return before - len(c.messages)
+}
+
 // trim drops old messages when the conversation exceeds the max,
 // respecting tool-call boundaries so assistant messages with ToolCalls
 // are never separated from their corresponding tool result messages.
