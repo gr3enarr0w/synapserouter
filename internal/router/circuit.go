@@ -83,7 +83,9 @@ func (cb *CircuitBreaker) IsOpen() bool {
 }
 
 func (cb *CircuitBreaker) RecordSuccess() error {
-	// Reset failure count and close circuit
+	// Ensure row exists, then reset
+	cb.db.Exec(`INSERT OR IGNORE INTO circuit_breaker_state (provider, state, failure_count)
+		VALUES (?, 'closed', 0)`, cb.provider)
 	_, err := cb.db.Exec(`
 		UPDATE circuit_breaker_state
 		SET state = ?, failure_count = 0, open_until = NULL
@@ -103,6 +105,10 @@ func (cb *CircuitBreaker) RecordFailure() error {
 		return err
 	}
 	defer tx.Rollback()
+
+	// Ensure row exists (auto-create on first failure)
+	tx.Exec(`INSERT OR IGNORE INTO circuit_breaker_state (provider, state, failure_count)
+		VALUES (?, 'closed', 0)`, cb.provider)
 
 	// Increment failure count
 	var failureCount int
