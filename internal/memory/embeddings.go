@@ -38,10 +38,21 @@ func NewLocalHashEmbedding(dimensions int) *LocalHashEmbedding {
 	return &LocalHashEmbedding{dimensions: dimensions}
 }
 
+const maxEmbeddingInputBytes = 32 * 1024 // 32KB cap to prevent excessive memory/CPU usage
+
 func (e *LocalHashEmbedding) Embed(ctx context.Context, text string) ([]float32, error) {
 	text = strings.ToLower(strings.TrimSpace(text))
 	if text == "" {
 		return make([]float32, e.dimensions), nil
+	}
+
+	// Cap input size to prevent excessive memory/CPU usage on large tool outputs
+	if len(text) > maxEmbeddingInputBytes {
+		// Truncate on a UTF-8 boundary by finding the last valid rune
+		text = text[:maxEmbeddingInputBytes]
+		for len(text) > 0 && text[len(text)-1]&0xC0 == 0x80 {
+			text = text[:len(text)-1]
+		}
 	}
 
 	embedding := make([]float32, e.dimensions)

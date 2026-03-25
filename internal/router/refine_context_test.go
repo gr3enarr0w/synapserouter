@@ -467,13 +467,13 @@ func TestContext_SkillDispatch_TechnicalTriggersStillWork(t *testing.T) {
 		wantSkills []string
 	}{
 		{"implement OAuth", []string{"code-implement", "security-review"}},
-		{"fix the auth handler", []string{"code-implement", "security-review"}},
+		{"fix the auth handler", []string{"security-review"}},
 		{"refactor the Go code", []string{"go-patterns", "code-implement"}},
-		{"add Docker compose", []string{"docker-expert", "code-implement"}},
+		{"add Docker compose", []string{"docker-expert"}},
 		{"research gRPC", []string{"research"}},
 		{"test the parser", []string{"go-testing", "python-testing"}},
 		{"review code quality", []string{"code-review"}},
-		{"create REST endpoint", []string{"api-design", "code-implement"}},
+		{"create REST endpoint", []string{"api-design"}},
 		{"debug the router", []string{"research"}},
 		{"explain circuit breakers", []string{"research"}},
 	}

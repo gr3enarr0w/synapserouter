@@ -45,11 +45,27 @@ var ambiguousWords = map[string]bool{
 }
 
 // matchesTrigger checks if a trigger matches the goal text.
+// Compound triggers with "+" (e.g. "go+handler") require ALL parts to match.
 // Multi-word triggers and triggers with special chars use substring matching.
 // Short ambiguous words (like "go") use exact word matching to prevent
 // false positives ("go" matching "going"/"got"). All other triggers use
 // substring matching.
 func matchesTrigger(text string, words []string, trigger string) bool {
+	// Compound triggers: "go+handler" means both "go" AND "handler" must match
+	if strings.Contains(trigger, "+") {
+		parts := strings.Split(trigger, "+")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if !matchesTrigger(text, words, part) {
+				return false
+			}
+		}
+		return true
+	}
+
 	// Multi-word triggers or triggers with special chars: substring match
 	if strings.Contains(trigger, " ") || strings.ContainsAny(trigger, ".-_/") {
 		return strings.Contains(text, trigger)

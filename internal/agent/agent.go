@@ -77,6 +77,7 @@ type Agent struct {
 	cachedSkillContext string // computed once from originalRequest, injected into all sub-agents
 	skillContextOnce   sync.Once
 	noToolTurns        int // consecutive turns without tool calls (stall detection)
+	reviewTracker      *ReviewCycleTracker // detects stable review cycles (no progress)
 	phaseRetries       int // consecutive quality gate rejections in current phase
 	lastGateScore      int // verification gate passed count from previous retry (plateau detection)
 	plateauCount       int // consecutive retries with no score improvement
@@ -100,6 +101,7 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer *Renderer, co
 		sessionID:         fmt.Sprintf("agent-%d", uniqueID()),
 		bus:               config.EventBus,
 		cachedPromptLevel: -1, // force rebuild on first call
+		reviewTracker:     &ReviewCycleTracker{},
 	}
 }
 
@@ -1073,6 +1075,17 @@ func (a *Agent) advancePipeline(content string) bool {
 			// Sub-agent found issues — escalate and fix on the CURRENT (bigger) model.
 			// Never go back to small coders. Each cycle escalates further.
 			a.pipelineCycles++
+
+			// Check for stability — if code and issues unchanged for 2 cycles, accept
+			if a.reviewTracker.CheckStability(a.config.WorkDir, reviewResult) {
+				log.Printf("[Agent] pipeline: review stable — accepting result after %d cycles", a.pipelineCycles)
+				a.conversation.Add(providers.Message{
+					Role:    "user",
+					Content: fmt.Sprintf("Review found issues but no improvement detected across cycles. Accepting current state:\n%s", reviewResult),
+				})
+				return a.advancePipeline("PHASE_PASSED")
+			}
+
 			if a.pipelineCycles > 8 {
 				log.Printf("[Agent] pipeline: max review cycles reached (%d), accepting result", a.pipelineCycles)
 				a.conversation.Add(providers.Message{
@@ -1112,6 +1125,13 @@ func (a *Agent) advancePipeline(content string) bool {
 
 	if IsFailSignal(content) {
 		a.pipelineCycles++
+
+		// Check for stability — if code and issues unchanged for 2 cycles, accept
+		if a.reviewTracker.CheckStability(a.config.WorkDir, content) {
+			log.Printf("[Agent] pipeline: review stable — accepting result after %d cycles", a.pipelineCycles)
+			return false
+		}
+
 		if a.pipelineCycles > 8 {
 			log.Printf("[Agent] pipeline: max review cycles reached, accepting result")
 			return false

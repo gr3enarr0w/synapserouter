@@ -6,12 +6,6 @@ triggers:
   - "build"
   - "write"
   - "refactor"
-  - "create"
-  - "fix"
-  - "add"
-  - "update"
-  - "change"
-  - "modify"
   - "set up"
   - "setup"
 role: coder

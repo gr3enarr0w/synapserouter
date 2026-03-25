@@ -10,9 +10,14 @@ func TestMatchSkills_GoCode(t *testing.T) {
 	matched := MatchSkills("fix the Go authentication handler", registry)
 
 	names := skillNames(matched)
-	assertContains(t, names, "go-patterns", "should match go-patterns for Go code")
+	assertContains(t, names, "go-patterns", "should match go-patterns for Go+auth compound trigger")
 	assertContains(t, names, "security-review", "should match security-review for auth")
-	assertContains(t, names, "code-implement", "should match code-implement for fix")
+	// "fix" no longer triggers code-implement (too generic)
+	for _, n := range names {
+		if n == "code-implement" {
+			t.Error("should NOT match code-implement for bare 'fix'")
+		}
+	}
 }
 
 func TestMatchSkills_Python(t *testing.T) {
@@ -298,7 +303,7 @@ func TestDispatch_SecurityChain(t *testing.T) {
 
 	names := skillNames(result.SkillChain)
 	assertContains(t, names, "security-review", "should include security-review")
-	assertContains(t, names, "code-implement", "should include code-implement for fix")
+	// "fix" no longer triggers code-implement (removed generic triggers)
 	assertContains(t, names, "go-testing", "should include testing for verify")
 
 	// Verify phase ordering: analyze skills before implement, implement before verify
@@ -334,9 +339,9 @@ func TestDispatch_RealisticPrompts(t *testing.T) {
 		{
 			name:       "fix Go bug with auth",
 			prompt:     "fix the authentication bug in the Go middleware",
-			wantSkills: []string{"go-patterns", "security-review", "code-implement"},
-			wantAbsent: []string{"python-patterns", "docker-expert"},
-			minSkills:  3,
+			wantSkills: []string{"go-patterns", "security-review"},
+			wantAbsent: []string{"python-patterns", "docker-expert", "code-implement"},
+			minSkills:  2,
 		},
 		{
 			name:       "refactor Go handler",
@@ -348,14 +353,14 @@ func TestDispatch_RealisticPrompts(t *testing.T) {
 		{
 			name:       "add Go tests for router",
 			prompt:     "add unit tests for the router package in Go",
-			wantSkills: []string{"go-patterns", "go-testing", "code-implement"},
-			minSkills:  3,
+			wantSkills: []string{"go-patterns", "go-testing"},
+			minSkills:  2,
 		},
 		{
 			name:       "Go file extension trigger",
 			prompt:     "update the handler.go file to return proper errors",
-			wantSkills: []string{"go-patterns", "code-implement"},
-			minSkills:  2,
+			wantSkills: []string{"go-patterns"},
+			minSkills:  1,
 		},
 
 		// --- Python development scenarios ---
@@ -369,14 +374,14 @@ func TestDispatch_RealisticPrompts(t *testing.T) {
 		{
 			name:       "pytest fixtures",
 			prompt:     "add pytest fixtures for the database layer",
-			wantSkills: []string{"python-patterns", "python-testing", "code-implement"},
-			minSkills:  3,
+			wantSkills: []string{"python-patterns", "python-testing"},
+			minSkills:  2,
 		},
 		{
 			name:       "Python .py trigger",
 			prompt:     "update the utils.py file to validate input",
-			wantSkills: []string{"python-patterns", "code-implement"},
-			minSkills:  2,
+			wantSkills: []string{"python-patterns"},
+			minSkills:  1,
 		},
 
 		// --- Security scenarios ---
@@ -395,8 +400,8 @@ func TestDispatch_RealisticPrompts(t *testing.T) {
 		{
 			name:       "password hashing",
 			prompt:     "update the password hashing to use bcrypt",
-			wantSkills: []string{"security-review", "code-implement"},
-			minSkills:  2,
+			wantSkills: []string{"security-review"},
+			minSkills:  1,
 		},
 		{
 			name:       "secret management",
@@ -416,14 +421,14 @@ func TestDispatch_RealisticPrompts(t *testing.T) {
 		{
 			name:       "docker compose setup",
 			prompt:     "create a docker compose file for local development",
-			wantSkills: []string{"docker-expert", "code-implement"},
-			minSkills:  2,
+			wantSkills: []string{"docker-expert"},
+			minSkills:  1,
 		},
 		{
 			name:       "container networking",
 			prompt:     "fix the container networking between services",
-			wantSkills: []string{"docker-expert", "code-implement"},
-			minSkills:  2,
+			wantSkills: []string{"docker-expert"},
+			minSkills:  1,
 		},
 
 		// --- API design scenarios ---
@@ -436,8 +441,8 @@ func TestDispatch_RealisticPrompts(t *testing.T) {
 		{
 			name:       "route handler",
 			prompt:     "add a new route handler for /v1/webhooks",
-			wantSkills: []string{"api-design", "code-implement"},
-			minSkills:  2,
+			wantSkills: []string{"api-design"},
+			minSkills:  1,
 		},
 		{
 			name:       "API authentication",
@@ -477,8 +482,8 @@ func TestDispatch_RealisticPrompts(t *testing.T) {
 		{
 			name:       "security audit with fix",
 			prompt:     "fix the OAuth token refresh and verify the credential handling is secure",
-			wantSkills: []string{"security-review", "code-implement", "go-testing"},
-			minSkills:  3,
+			wantSkills: []string{"security-review", "go-testing"},
+			minSkills:  2,
 			wantPhaseOrder: true,
 		},
 		{
@@ -490,8 +495,8 @@ func TestDispatch_RealisticPrompts(t *testing.T) {
 		{
 			name:       "API + security + test",
 			prompt:     "create a new API endpoint with token auth and validate it with tests",
-			wantSkills: []string{"api-design", "security-review", "code-implement", "go-testing"},
-			minSkills:  4,
+			wantSkills: []string{"api-design", "security-review", "go-testing"},
+			minSkills:  3,
 			wantPhaseOrder: true,
 		},
 		{
@@ -526,20 +531,20 @@ func TestDispatch_RealisticPrompts(t *testing.T) {
 		{
 			name:       "Rust ownership fix",
 			prompt:     "fix the ownership issue in the Rust parser",
-			wantSkills: []string{"rust-patterns", "code-implement"},
-			minSkills:  2,
+			wantSkills: []string{"rust-patterns"},
+			minSkills:  1,
 		},
 		{
 			name:       "Spring Boot endpoint",
 			prompt:     "add a Spring Boot REST endpoint for user registration",
-			wantSkills: []string{"java-spring", "code-implement"},
-			minSkills:  2,
+			wantSkills: []string{"java-spring"},
+			minSkills:  1,
 		},
 		{
 			name:       "FastAPI with Pydantic",
 			prompt:     "create a FastAPI endpoint with Pydantic validation",
-			wantSkills: []string{"fastapi-patterns", "code-implement"},
-			minSkills:  2,
+			wantSkills: []string{"fastapi-patterns"},
+			minSkills:  1,
 		},
 		{
 			name:       "SQL schema design",
@@ -550,8 +555,8 @@ func TestDispatch_RealisticPrompts(t *testing.T) {
 		{
 			name:       "dbt incremental model",
 			prompt:     "create a dbt incremental model for the events table",
-			wantSkills: []string{"dbt-modeler", "code-implement"},
-			minSkills:  2,
+			wantSkills: []string{"dbt-modeler"},
+			minSkills:  1,
 		},
 		{
 			name:       "Snowflake warehouse",
@@ -652,7 +657,7 @@ func TestDispatch_RealisticPrompts(t *testing.T) {
 		{
 			name:       "parallel task decomposition",
 			prompt:     "decompose this refactor into parallel subtasks",
-			wantSkills: []string{"task-orchestrator", "code-implement"},
+			wantSkills: []string{"task-orchestrator", "code-implement"}, // "refactor" still triggers code-implement
 			minSkills:  2,
 		},
 		{
@@ -695,8 +700,8 @@ func TestDispatch_RealisticPrompts(t *testing.T) {
 		{
 			name:       "mixed case and punctuation",
 			prompt:     "FIX the GO handler!! Make tests PASS!!!",
-			wantSkills: []string{"go-patterns", "code-implement", "go-testing"},
-			minSkills:  3,
+			wantSkills: []string{"go-patterns", "go-testing"},
+			minSkills:  2,
 		},
 		{
 			name:       "very long prompt",
@@ -708,8 +713,8 @@ func TestDispatch_RealisticPrompts(t *testing.T) {
 		{
 			name:       "trigger substring in word",
 			prompt:     "update the golang service",
-			wantSkills: []string{"go-patterns", "code-implement"},
-			minSkills:  2,
+			wantSkills: []string{"go-patterns"},
+			minSkills:  1,
 		},
 	}
 
