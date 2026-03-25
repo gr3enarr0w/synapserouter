@@ -131,3 +131,44 @@ func TestFormatArgsSummary_FileRead(t *testing.T) {
 		t.Errorf("expected '/src/main.go', got '%s'", s)
 	}
 }
+
+func TestScrubSecrets_BearerToken(t *testing.T) {
+	input := `curl -H 'Authorization: Bearer sk-abc123xyz' https://api.example.com`
+	result := scrubSecrets(input)
+	if strings.Contains(result, "sk-abc123xyz") {
+		t.Error("Bearer token should be redacted")
+	}
+	if !strings.Contains(result, "[REDACTED]") {
+		t.Error("should contain [REDACTED] placeholder")
+	}
+}
+
+func TestScrubSecrets_KeyValuePatterns(t *testing.T) {
+	tests := []struct {
+		input string
+		leaked string
+	}{
+		{"token=abc123&user=me", "abc123"},
+		{"password=s3cret", "s3cret"},
+		{"api_key=key-xyz-789", "key-xyz-789"},
+		{"secret=mysecretvalue", "mysecretvalue"},
+	}
+	for _, tt := range tests {
+		result := scrubSecrets(tt.input)
+		if strings.Contains(result, tt.leaked) {
+			t.Errorf("secret %q should be redacted in %q, got %q", tt.leaked, tt.input, result)
+		}
+	}
+}
+
+func TestFormatArgsSummary_ScrubsSecrets(t *testing.T) {
+	s := FormatArgsSummary("bash", map[string]interface{}{
+		"command": "curl -H 'Authorization: Bearer sk-abc123' https://api.example.com",
+	})
+	if strings.Contains(s, "sk-abc123") {
+		t.Error("FormatArgsSummary should scrub Bearer tokens")
+	}
+	if !strings.Contains(s, "[REDACTED]") {
+		t.Error("should contain [REDACTED]")
+	}
+}

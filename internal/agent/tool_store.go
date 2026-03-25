@@ -47,6 +47,10 @@ func (s *ToolOutputStore) Store(sessionID, toolName, argsSummary, summary, fullO
 	if s == nil || s.db == nil {
 		return 0, nil
 	}
+	// Scrub secrets from stored data to prevent credential leaks in DB
+	fullOutput = scrubSecrets(fullOutput)
+	argsSummary = scrubSecrets(argsSummary)
+
 	result, err := s.db.Exec(`
 		INSERT INTO tool_outputs (session_id, tool_name, args_summary, summary, full_output, exit_code, output_size)
 		VALUES (?, ?, ?, ?, ?, ?, ?)

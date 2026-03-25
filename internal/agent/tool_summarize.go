@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -205,6 +206,11 @@ func summarizeGeneric(toolName string, lines []string, totalLines int) string {
 
 // FormatArgsSummary creates a brief string describing the tool call arguments.
 func FormatArgsSummary(toolName string, args map[string]interface{}) string {
+	result := formatArgsSummaryRaw(toolName, args)
+	return scrubSecrets(result)
+}
+
+func formatArgsSummaryRaw(toolName string, args map[string]interface{}) string {
 	switch toolName {
 	case "bash":
 		cmd, _ := args["command"].(string)
@@ -229,4 +235,23 @@ func FormatArgsSummary(toolName string, args map[string]interface{}) string {
 	default:
 		return toolName
 	}
+}
+
+// secretPatterns matches common credential patterns for redaction before DB storage.
+var secretPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(Bearer\s+)[^\s"']+`),
+	regexp.MustCompile(`(?i)(token=)[^\s&"']+`),
+	regexp.MustCompile(`(?i)(password=)[^\s&"']+`),
+	regexp.MustCompile(`(?i)(api_key=)[^\s&"']+`),
+	regexp.MustCompile(`(?i)(secret=)[^\s&"']+`),
+	regexp.MustCompile(`(?i)(api[-_]?key[=:\s]+)[^\s"']+`),
+	regexp.MustCompile(`(?i)(authorization:\s+)[^\s"']+`),
+}
+
+// scrubSecrets redacts known credential patterns from text.
+func scrubSecrets(s string) string {
+	for _, p := range secretPatterns {
+		s = p.ReplaceAllString(s, "${1}[REDACTED]")
+	}
+	return s
 }
