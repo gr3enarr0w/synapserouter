@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 
@@ -157,133 +156,153 @@ func startServer() {
 	orchestrator.SetWorkDir(cwd)
 	ampConfig, _ = compat.LoadAmpCodeConfig(db)
 
-	// Create HTTP router
-	r := mux.NewRouter()
-	r.Use(maxBodySizeMiddleware(10 << 20)) // 10MB request body limit
-	r.Use(securityHeadersMiddleware)
+	// Create HTTP router (Go 1.22+ stdlib routing)
+	r := http.NewServeMux()
 
 	// Health check
-	r.HandleFunc("/health", healthHandler).Methods("GET")
-	r.HandleFunc("/v1/startup-check", startupCheckHandler).Methods("GET")
-	r.HandleFunc("/anthropic/callback", subscriptionProviderCallbackHandler("anthropic")).Methods("GET")
-	r.HandleFunc("/codex/callback", subscriptionProviderCallbackHandler("openai")).Methods("GET")
-	r.HandleFunc("/google/callback", subscriptionProviderCallbackHandler("gemini")).Methods("GET")
+	r.HandleFunc("GET /health", healthHandler)
+	r.HandleFunc("GET /v1/startup-check", startupCheckHandler)
+	r.HandleFunc("GET /anthropic/callback", subscriptionProviderCallbackHandler("anthropic"))
+	r.HandleFunc("GET /codex/callback", subscriptionProviderCallbackHandler("openai"))
+	r.HandleFunc("GET /google/callback", subscriptionProviderCallbackHandler("gemini"))
 
 	// OpenAI-compatible endpoints
-	r.HandleFunc("/v1/models", modelsHandler).Methods("GET")
-	r.HandleFunc("/v1/chat/completions", chatHandler).Methods("POST")
-	r.HandleFunc("/v1/responses", responsesHandler).Methods("POST")
-	r.HandleFunc("/v1/responses/compact", responsesCompactHandler).Methods("POST")
-	r.HandleFunc("/v1/responses/{response_id}", responseGetHandler).Methods("GET")
-	r.HandleFunc("/v1/responses/{response_id}", responseDeleteHandler).Methods("DELETE")
-	r.HandleFunc("/api/provider/{provider}/v1/models", providerModelsHandler).Methods("GET")
-	r.HandleFunc("/api/provider/{provider}/v1/chat/completions", providerChatHandler).Methods("POST")
-	r.HandleFunc("/api/provider/{provider}/v1/responses", providerResponsesHandler).Methods("POST")
+	r.HandleFunc("GET /v1/models", modelsHandler)
+	r.HandleFunc("POST /v1/chat/completions", chatHandler)
+	r.HandleFunc("POST /v1/responses", responsesHandler)
+	r.HandleFunc("POST /v1/responses/compact", responsesCompactHandler)
+	r.HandleFunc("GET /v1/responses/{response_id}", responseGetHandler)
+	r.HandleFunc("DELETE /v1/responses/{response_id}", responseDeleteHandler)
+	r.HandleFunc("GET /api/provider/{provider}/v1/models", providerModelsHandler)
+	r.HandleFunc("POST /api/provider/{provider}/v1/chat/completions", providerChatHandler)
+	r.HandleFunc("POST /api/provider/{provider}/v1/responses", providerResponsesHandler)
 
 	// Anthropic-compatible endpoints
-	r.HandleFunc("/v1/messages", messagesHandler).Methods("POST")
-	r.HandleFunc("/api/provider/{provider}/v1/messages", providerMessagesHandler).Methods("POST")
+	r.HandleFunc("POST /v1/messages", messagesHandler)
+	r.HandleFunc("POST /api/provider/{provider}/v1/messages", providerMessagesHandler)
 
 	// Usage stats endpoint
-	r.HandleFunc("/v1/providers", providersHandler).Methods("GET")
-	r.Handle("/v1/usage", withAdminAuth(http.HandlerFunc(usageHandler))).Methods("GET")
-	r.Handle("/v1/memory/search", withAdminAuth(http.HandlerFunc(memorySearchHandler))).Methods("GET")
-	r.Handle("/v1/memory/session/{session_id}", withAdminAuth(http.HandlerFunc(memorySessionHandler))).Methods("GET")
-	r.Handle("/v1/audit/session/{session_id}", withAdminAuth(http.HandlerFunc(auditSessionHandler))).Methods("GET")
-	r.Handle("/v1/audit/request/{request_id}", withAdminAuth(http.HandlerFunc(auditRequestHandler))).Methods("GET")
-	r.Handle("/v1/debug/trace", withAdminAuth(http.HandlerFunc(traceHandler))).Methods("POST")
+	r.HandleFunc("GET /v1/providers", providersHandler)
+	r.Handle("GET /v1/usage", withAdminAuth(http.HandlerFunc(usageHandler)))
+	r.Handle("GET /v1/memory/search", withAdminAuth(http.HandlerFunc(memorySearchHandler)))
+	r.Handle("GET /v1/memory/session/{session_id}", withAdminAuth(http.HandlerFunc(memorySessionHandler)))
+	r.Handle("GET /v1/audit/session/{session_id}", withAdminAuth(http.HandlerFunc(auditSessionHandler)))
+	r.Handle("GET /v1/audit/request/{request_id}", withAdminAuth(http.HandlerFunc(auditRequestHandler)))
+	r.Handle("POST /v1/debug/trace", withAdminAuth(http.HandlerFunc(traceHandler)))
 	// Skill dispatch endpoints
-	r.Handle("/v1/skills", withAdminAuth(http.HandlerFunc(skillsListHandler))).Methods("GET")
-	r.Handle("/v1/skills/match", withAdminAuth(http.HandlerFunc(skillsMatchHandler))).Methods("GET")
-	r.Handle("/v1/tools", withAdminAuth(http.HandlerFunc(toolsListHandler(toolRegistry)))).Methods("GET")
-	r.Handle("/v1/agent/chat", withAdminAuth(http.HandlerFunc(agentChatHandler(toolRegistry)))).Methods("POST")
-	r.Handle("/v1/agent/pool", withAdminAuth(http.HandlerFunc(agentPoolHandler))).Methods("GET")
+	r.Handle("GET /v1/skills", withAdminAuth(http.HandlerFunc(skillsListHandler)))
+	r.Handle("GET /v1/skills/match", withAdminAuth(http.HandlerFunc(skillsMatchHandler)))
+	r.Handle("GET /v1/tools", withAdminAuth(http.HandlerFunc(toolsListHandler(toolRegistry))))
+	r.Handle("POST /v1/agent/chat", withAdminAuth(http.HandlerFunc(agentChatHandler(toolRegistry))))
+	r.Handle("GET /v1/agent/pool", withAdminAuth(http.HandlerFunc(agentPoolHandler)))
 
 	// MCP server mode (expose tools to other agents)
 	if strings.EqualFold(os.Getenv("SYNROUTE_MCP_SERVER"), "true") {
 		mcpSrv := mcpserver.NewServer(toolRegistry, cwd)
 		mcpHandler := mcpSrv.Handler()
-		r.HandleFunc("/mcp/initialize", mcpHandler.HandleInitialize).Methods("POST")
-		r.HandleFunc("/mcp/tools/list", mcpHandler.HandleToolsList).Methods("GET", "POST")
-		r.HandleFunc("/mcp/tools/call", mcpHandler.HandleToolsCall).Methods("POST")
+		r.HandleFunc("POST /mcp/initialize", mcpHandler.HandleInitialize)
+		r.HandleFunc("GET /mcp/tools/list", mcpHandler.HandleToolsList)
+		r.HandleFunc("POST /mcp/tools/list", mcpHandler.HandleToolsList)
+		r.HandleFunc("POST /mcp/tools/call", mcpHandler.HandleToolsCall)
 		log.Println("MCP server enabled on /mcp/* routes")
 	}
 
-	r.Handle("/v1/orchestration/roles", withAdminAuth(http.HandlerFunc(orchestrationRolesHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/workflows", withAdminAuth(http.HandlerFunc(orchestrationWorkflowsHandler))).Methods("GET", "POST")
-	r.Handle("/v1/orchestration/workflows/{template_id}", withAdminAuth(http.HandlerFunc(orchestrationWorkflowHandler))).Methods("GET", "PUT", "DELETE")
-	r.Handle("/v1/orchestration/workflows/{template_id}/run", withAdminAuth(http.HandlerFunc(orchestrationWorkflowRunHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/executions/{workflow_id}/state", withAdminAuth(http.HandlerFunc(orchestrationExecutionStateHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/executions/{workflow_id}/metrics", withAdminAuth(http.HandlerFunc(orchestrationExecutionMetricsHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/executions/{workflow_id}/debug", withAdminAuth(http.HandlerFunc(orchestrationExecutionDebugHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/sessions/{session_id}/tasks", withAdminAuth(http.HandlerFunc(orchestrationSessionTasksHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/sessions/{session_id}/resume", withAdminAuth(http.HandlerFunc(orchestrationSessionResumeHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/sessions/{session_id}/fork", withAdminAuth(http.HandlerFunc(orchestrationSessionForkHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/tasks", withAdminAuth(http.HandlerFunc(orchestrationTasksHandler))).Methods("GET", "POST")
-	r.Handle("/v1/orchestration/tasks/{task_id}", withAdminAuth(http.HandlerFunc(orchestrationTaskHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/tasks/{task_id}/run", withAdminAuth(http.HandlerFunc(orchestrationTaskRunHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/tasks/{task_id}/pause", withAdminAuth(http.HandlerFunc(orchestrationTaskPauseHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/tasks/{task_id}/resume", withAdminAuth(http.HandlerFunc(orchestrationTaskResumeHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/tasks/{task_id}/cancel", withAdminAuth(http.HandlerFunc(orchestrationTaskCancelHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/tasks/{task_id}/assign", withAdminAuth(http.HandlerFunc(orchestrationTaskAssignHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/tasks/{task_id}/steal", withAdminAuth(http.HandlerFunc(orchestrationTaskStealHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/tasks/{task_id}/contest", withAdminAuth(http.HandlerFunc(orchestrationTaskContestHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/tasks/{task_id}/contest/resolve", withAdminAuth(http.HandlerFunc(orchestrationTaskContestResolveHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/tasks/{task_id}/refine", withAdminAuth(http.HandlerFunc(orchestrationTaskRefineHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/tasks/{task_id}/events", withAdminAuth(http.HandlerFunc(orchestrationTaskEventsHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/agents", withAdminAuth(http.HandlerFunc(orchestrationAgentsHandler))).Methods("GET", "POST")
-	r.Handle("/v1/orchestration/agents/health", withAdminAuth(http.HandlerFunc(orchestrationAgentHealthHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/agents/{agent_id}", withAdminAuth(http.HandlerFunc(orchestrationAgentHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/agents/{agent_id}/status", withAdminAuth(http.HandlerFunc(orchestrationAgentStatusHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/agents/{agent_id}/stop", withAdminAuth(http.HandlerFunc(orchestrationAgentStopHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/agents/{agent_id}/metrics", withAdminAuth(http.HandlerFunc(orchestrationAgentMetricsHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/agents/{agent_id}/logs", withAdminAuth(http.HandlerFunc(orchestrationAgentLogsHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/swarms", withAdminAuth(http.HandlerFunc(orchestrationSwarmsHandler))).Methods("GET", "POST")
-	r.Handle("/v1/orchestration/swarms/{swarm_id}", withAdminAuth(http.HandlerFunc(orchestrationSwarmHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/swarms/{swarm_id}/status", withAdminAuth(http.HandlerFunc(orchestrationSwarmStatusHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/swarms/{swarm_id}/start", withAdminAuth(http.HandlerFunc(orchestrationSwarmStartHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/swarms/{swarm_id}/stop", withAdminAuth(http.HandlerFunc(orchestrationSwarmStopHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/swarms/{swarm_id}/pause", withAdminAuth(http.HandlerFunc(orchestrationSwarmPauseHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/swarms/{swarm_id}/resume", withAdminAuth(http.HandlerFunc(orchestrationSwarmResumeHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/swarms/{swarm_id}/scale", withAdminAuth(http.HandlerFunc(orchestrationSwarmScaleHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/swarms/{swarm_id}/coordinate", withAdminAuth(http.HandlerFunc(orchestrationSwarmCoordinateHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/swarms/{swarm_id}/load", withAdminAuth(http.HandlerFunc(orchestrationSwarmLoadHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/swarms/{swarm_id}/imbalance", withAdminAuth(http.HandlerFunc(orchestrationSwarmImbalanceHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/swarms/{swarm_id}/rebalance/preview", withAdminAuth(http.HandlerFunc(orchestrationSwarmRebalancePreviewHandler))).Methods("POST")
-	r.Handle("/v1/orchestration/swarms/{swarm_id}/stealable", withAdminAuth(http.HandlerFunc(orchestrationSwarmStealableTasksHandler))).Methods("GET")
+	r.Handle("GET /v1/orchestration/roles", withAdminAuth(http.HandlerFunc(orchestrationRolesHandler)))
+	r.Handle("GET /v1/orchestration/workflows", withAdminAuth(http.HandlerFunc(orchestrationWorkflowsHandler)))
+	r.Handle("POST /v1/orchestration/workflows", withAdminAuth(http.HandlerFunc(orchestrationWorkflowsHandler)))
+	r.Handle("GET /v1/orchestration/workflows/{template_id}", withAdminAuth(http.HandlerFunc(orchestrationWorkflowHandler)))
+	r.Handle("PUT /v1/orchestration/workflows/{template_id}", withAdminAuth(http.HandlerFunc(orchestrationWorkflowHandler)))
+	r.Handle("DELETE /v1/orchestration/workflows/{template_id}", withAdminAuth(http.HandlerFunc(orchestrationWorkflowHandler)))
+	r.Handle("POST /v1/orchestration/workflows/{template_id}/run", withAdminAuth(http.HandlerFunc(orchestrationWorkflowRunHandler)))
+	r.Handle("GET /v1/orchestration/executions/{workflow_id}/state", withAdminAuth(http.HandlerFunc(orchestrationExecutionStateHandler)))
+	r.Handle("GET /v1/orchestration/executions/{workflow_id}/metrics", withAdminAuth(http.HandlerFunc(orchestrationExecutionMetricsHandler)))
+	r.Handle("GET /v1/orchestration/executions/{workflow_id}/debug", withAdminAuth(http.HandlerFunc(orchestrationExecutionDebugHandler)))
+	r.Handle("GET /v1/orchestration/sessions/{session_id}/tasks", withAdminAuth(http.HandlerFunc(orchestrationSessionTasksHandler)))
+	r.Handle("POST /v1/orchestration/sessions/{session_id}/resume", withAdminAuth(http.HandlerFunc(orchestrationSessionResumeHandler)))
+	r.Handle("POST /v1/orchestration/sessions/{session_id}/fork", withAdminAuth(http.HandlerFunc(orchestrationSessionForkHandler)))
+	r.Handle("GET /v1/orchestration/tasks", withAdminAuth(http.HandlerFunc(orchestrationTasksHandler)))
+	r.Handle("POST /v1/orchestration/tasks", withAdminAuth(http.HandlerFunc(orchestrationTasksHandler)))
+	r.Handle("GET /v1/orchestration/tasks/{task_id}", withAdminAuth(http.HandlerFunc(orchestrationTaskHandler)))
+	r.Handle("POST /v1/orchestration/tasks/{task_id}/run", withAdminAuth(http.HandlerFunc(orchestrationTaskRunHandler)))
+	r.Handle("POST /v1/orchestration/tasks/{task_id}/pause", withAdminAuth(http.HandlerFunc(orchestrationTaskPauseHandler)))
+	r.Handle("POST /v1/orchestration/tasks/{task_id}/resume", withAdminAuth(http.HandlerFunc(orchestrationTaskResumeHandler)))
+	r.Handle("POST /v1/orchestration/tasks/{task_id}/cancel", withAdminAuth(http.HandlerFunc(orchestrationTaskCancelHandler)))
+	r.Handle("POST /v1/orchestration/tasks/{task_id}/assign", withAdminAuth(http.HandlerFunc(orchestrationTaskAssignHandler)))
+	r.Handle("POST /v1/orchestration/tasks/{task_id}/steal", withAdminAuth(http.HandlerFunc(orchestrationTaskStealHandler)))
+	r.Handle("POST /v1/orchestration/tasks/{task_id}/contest", withAdminAuth(http.HandlerFunc(orchestrationTaskContestHandler)))
+	r.Handle("POST /v1/orchestration/tasks/{task_id}/contest/resolve", withAdminAuth(http.HandlerFunc(orchestrationTaskContestResolveHandler)))
+	r.Handle("POST /v1/orchestration/tasks/{task_id}/refine", withAdminAuth(http.HandlerFunc(orchestrationTaskRefineHandler)))
+	r.Handle("GET /v1/orchestration/tasks/{task_id}/events", withAdminAuth(http.HandlerFunc(orchestrationTaskEventsHandler)))
+	r.Handle("GET /v1/orchestration/agents", withAdminAuth(http.HandlerFunc(orchestrationAgentsHandler)))
+	r.Handle("POST /v1/orchestration/agents", withAdminAuth(http.HandlerFunc(orchestrationAgentsHandler)))
+	r.Handle("GET /v1/orchestration/agents/health", withAdminAuth(http.HandlerFunc(orchestrationAgentHealthHandler)))
+	r.Handle("GET /v1/orchestration/agents/{agent_id}", withAdminAuth(http.HandlerFunc(orchestrationAgentHandler)))
+	r.Handle("GET /v1/orchestration/agents/{agent_id}/status", withAdminAuth(http.HandlerFunc(orchestrationAgentStatusHandler)))
+	r.Handle("POST /v1/orchestration/agents/{agent_id}/stop", withAdminAuth(http.HandlerFunc(orchestrationAgentStopHandler)))
+	r.Handle("GET /v1/orchestration/agents/{agent_id}/metrics", withAdminAuth(http.HandlerFunc(orchestrationAgentMetricsHandler)))
+	r.Handle("GET /v1/orchestration/agents/{agent_id}/logs", withAdminAuth(http.HandlerFunc(orchestrationAgentLogsHandler)))
+	r.Handle("GET /v1/orchestration/swarms", withAdminAuth(http.HandlerFunc(orchestrationSwarmsHandler)))
+	r.Handle("POST /v1/orchestration/swarms", withAdminAuth(http.HandlerFunc(orchestrationSwarmsHandler)))
+	r.Handle("GET /v1/orchestration/swarms/{swarm_id}", withAdminAuth(http.HandlerFunc(orchestrationSwarmHandler)))
+	r.Handle("GET /v1/orchestration/swarms/{swarm_id}/status", withAdminAuth(http.HandlerFunc(orchestrationSwarmStatusHandler)))
+	r.Handle("POST /v1/orchestration/swarms/{swarm_id}/start", withAdminAuth(http.HandlerFunc(orchestrationSwarmStartHandler)))
+	r.Handle("POST /v1/orchestration/swarms/{swarm_id}/stop", withAdminAuth(http.HandlerFunc(orchestrationSwarmStopHandler)))
+	r.Handle("POST /v1/orchestration/swarms/{swarm_id}/pause", withAdminAuth(http.HandlerFunc(orchestrationSwarmPauseHandler)))
+	r.Handle("POST /v1/orchestration/swarms/{swarm_id}/resume", withAdminAuth(http.HandlerFunc(orchestrationSwarmResumeHandler)))
+	r.Handle("POST /v1/orchestration/swarms/{swarm_id}/scale", withAdminAuth(http.HandlerFunc(orchestrationSwarmScaleHandler)))
+	r.Handle("POST /v1/orchestration/swarms/{swarm_id}/coordinate", withAdminAuth(http.HandlerFunc(orchestrationSwarmCoordinateHandler)))
+	r.Handle("GET /v1/orchestration/swarms/{swarm_id}/load", withAdminAuth(http.HandlerFunc(orchestrationSwarmLoadHandler)))
+	r.Handle("GET /v1/orchestration/swarms/{swarm_id}/imbalance", withAdminAuth(http.HandlerFunc(orchestrationSwarmImbalanceHandler)))
+	r.Handle("POST /v1/orchestration/swarms/{swarm_id}/rebalance/preview", withAdminAuth(http.HandlerFunc(orchestrationSwarmRebalancePreviewHandler)))
+	r.Handle("GET /v1/orchestration/swarms/{swarm_id}/stealable", withAdminAuth(http.HandlerFunc(orchestrationSwarmStealableTasksHandler)))
 
 	// Session management
-	r.HandleFunc("/v1/session/end", sessionEndHandler).Methods("POST")
+	r.HandleFunc("POST /v1/session/end", sessionEndHandler)
 
 	// Diagnostic and management endpoints
-	r.Handle("/v1/test/providers", withAdminAuth(http.HandlerFunc(smokeTestHandler))).Methods("POST")
-	r.Handle("/v1/circuit-breakers/reset", withAdminAuth(http.HandlerFunc(circuitBreakerResetHandler))).Methods("POST")
-	r.Handle("/v1/profile", withAdminAuth(http.HandlerFunc(profileHandler))).Methods("GET")
-	r.Handle("/v1/profile/switch", withAdminAuth(http.HandlerFunc(profileSwitchHandler))).Methods("POST")
-	r.Handle("/v1/doctor", withAdminAuth(http.HandlerFunc(doctorHandler))).Methods("GET")
+	r.Handle("POST /v1/test/providers", withAdminAuth(http.HandlerFunc(smokeTestHandler)))
+	r.Handle("POST /v1/circuit-breakers/reset", withAdminAuth(http.HandlerFunc(circuitBreakerResetHandler)))
+	r.Handle("GET /v1/profile", withAdminAuth(http.HandlerFunc(profileHandler)))
+	r.Handle("POST /v1/profile/switch", withAdminAuth(http.HandlerFunc(profileSwitchHandler)))
+	r.Handle("GET /v1/doctor", withAdminAuth(http.HandlerFunc(doctorHandler)))
 
 	// Eval framework endpoints
-	r.Handle("/v1/eval/exercises", withAdminAuth(http.HandlerFunc(evalExercisesHandler))).Methods("GET")
-	r.Handle("/v1/eval/runs", withAdminAuth(http.HandlerFunc(evalRunsListHandler))).Methods("GET")
-	r.Handle("/v1/eval/runs", withAdminAuth(http.HandlerFunc(evalRunStartHandler))).Methods("POST")
-	r.Handle("/v1/eval/runs/{run_id}", withAdminAuth(http.HandlerFunc(evalRunGetHandler))).Methods("GET")
-	r.Handle("/v1/eval/runs/{run_id}/results", withAdminAuth(http.HandlerFunc(evalRunResultsHandler))).Methods("GET")
-	r.Handle("/v1/eval/compare", withAdminAuth(http.HandlerFunc(evalCompareHandler))).Methods("POST")
-	r.Handle("/v1/eval/import", withAdminAuth(http.HandlerFunc(evalImportHandler))).Methods("POST")
+	r.Handle("GET /v1/eval/exercises", withAdminAuth(http.HandlerFunc(evalExercisesHandler)))
+	r.Handle("GET /v1/eval/runs", withAdminAuth(http.HandlerFunc(evalRunsListHandler)))
+	r.Handle("POST /v1/eval/runs", withAdminAuth(http.HandlerFunc(evalRunStartHandler)))
+	r.Handle("GET /v1/eval/runs/{run_id}", withAdminAuth(http.HandlerFunc(evalRunGetHandler)))
+	r.Handle("GET /v1/eval/runs/{run_id}/results", withAdminAuth(http.HandlerFunc(evalRunResultsHandler)))
+	r.Handle("POST /v1/eval/compare", withAdminAuth(http.HandlerFunc(evalCompareHandler)))
+	r.Handle("POST /v1/eval/import", withAdminAuth(http.HandlerFunc(evalImportHandler)))
 
 	// Amp compatibility management endpoints
-	r.Handle("/v0/management/anthropic-auth-url", withAdminAuth(http.HandlerFunc(subscriptionAnthropicAuthURLHandler))).Methods("GET")
-	r.Handle("/v0/management/codex-auth-url", withAdminAuth(http.HandlerFunc(subscriptionCodexAuthURLHandler))).Methods("GET")
-	r.Handle("/v0/management/gemini-cli-auth-url", withAdminAuth(http.HandlerFunc(subscriptionGeminiAuthURLHandler))).Methods("GET")
-	r.Handle("/v0/management/oauth-callback", withAdminAuth(http.HandlerFunc(subscriptionOAuthCallbackHandler))).Methods("POST")
-	r.Handle("/v0/management/get-auth-status", withAdminAuth(http.HandlerFunc(subscriptionAuthStatusHandler))).Methods("GET")
-	r.Handle("/v0/management/ampcode", withAdminAuth(http.HandlerFunc(ampConfigHandler))).Methods("GET")
-	r.Handle("/v0/management/ampcode/upstream-url", withAdminAuth(http.HandlerFunc(ampUpstreamURLHandler))).Methods("GET", "PUT", "DELETE")
-	r.Handle("/v0/management/ampcode/upstream-api-key", withAdminAuth(http.HandlerFunc(ampUpstreamAPIKeyHandler))).Methods("GET", "PUT", "DELETE")
-	r.Handle("/v0/management/ampcode/upstream-api-keys", withAdminAuth(http.HandlerFunc(ampUpstreamAPIKeysHandler))).Methods("GET", "PUT", "PATCH", "DELETE")
-	r.Handle("/v0/management/ampcode/model-mappings", withAdminAuth(http.HandlerFunc(ampModelMappingsHandler))).Methods("GET", "PUT", "PATCH", "DELETE")
-	r.Handle("/v0/management/ampcode/force-model-mappings", withAdminAuth(http.HandlerFunc(ampForceModelMappingsHandler))).Methods("GET", "PUT")
-	r.Handle("/v0/management/ampcode/restrict-management-to-localhost", withAdminAuth(http.HandlerFunc(ampRestrictManagementToLocalhostHandler))).Methods("GET", "PUT")
+	r.Handle("GET /v0/management/anthropic-auth-url", withAdminAuth(http.HandlerFunc(subscriptionAnthropicAuthURLHandler)))
+	r.Handle("GET /v0/management/codex-auth-url", withAdminAuth(http.HandlerFunc(subscriptionCodexAuthURLHandler)))
+	r.Handle("GET /v0/management/gemini-cli-auth-url", withAdminAuth(http.HandlerFunc(subscriptionGeminiAuthURLHandler)))
+	r.Handle("POST /v0/management/oauth-callback", withAdminAuth(http.HandlerFunc(subscriptionOAuthCallbackHandler)))
+	r.Handle("GET /v0/management/get-auth-status", withAdminAuth(http.HandlerFunc(subscriptionAuthStatusHandler)))
+	r.Handle("GET /v0/management/ampcode", withAdminAuth(http.HandlerFunc(ampConfigHandler)))
+	r.Handle("GET /v0/management/ampcode/upstream-url", withAdminAuth(http.HandlerFunc(ampUpstreamURLHandler)))
+	r.Handle("PUT /v0/management/ampcode/upstream-url", withAdminAuth(http.HandlerFunc(ampUpstreamURLHandler)))
+	r.Handle("DELETE /v0/management/ampcode/upstream-url", withAdminAuth(http.HandlerFunc(ampUpstreamURLHandler)))
+	r.Handle("GET /v0/management/ampcode/upstream-api-key", withAdminAuth(http.HandlerFunc(ampUpstreamAPIKeyHandler)))
+	r.Handle("PUT /v0/management/ampcode/upstream-api-key", withAdminAuth(http.HandlerFunc(ampUpstreamAPIKeyHandler)))
+	r.Handle("DELETE /v0/management/ampcode/upstream-api-key", withAdminAuth(http.HandlerFunc(ampUpstreamAPIKeyHandler)))
+	r.Handle("GET /v0/management/ampcode/upstream-api-keys", withAdminAuth(http.HandlerFunc(ampUpstreamAPIKeysHandler)))
+	r.Handle("PUT /v0/management/ampcode/upstream-api-keys", withAdminAuth(http.HandlerFunc(ampUpstreamAPIKeysHandler)))
+	r.Handle("PATCH /v0/management/ampcode/upstream-api-keys", withAdminAuth(http.HandlerFunc(ampUpstreamAPIKeysHandler)))
+	r.Handle("DELETE /v0/management/ampcode/upstream-api-keys", withAdminAuth(http.HandlerFunc(ampUpstreamAPIKeysHandler)))
+	r.Handle("GET /v0/management/ampcode/model-mappings", withAdminAuth(http.HandlerFunc(ampModelMappingsHandler)))
+	r.Handle("PUT /v0/management/ampcode/model-mappings", withAdminAuth(http.HandlerFunc(ampModelMappingsHandler)))
+	r.Handle("PATCH /v0/management/ampcode/model-mappings", withAdminAuth(http.HandlerFunc(ampModelMappingsHandler)))
+	r.Handle("DELETE /v0/management/ampcode/model-mappings", withAdminAuth(http.HandlerFunc(ampModelMappingsHandler)))
+	r.Handle("GET /v0/management/ampcode/force-model-mappings", withAdminAuth(http.HandlerFunc(ampForceModelMappingsHandler)))
+	r.Handle("PUT /v0/management/ampcode/force-model-mappings", withAdminAuth(http.HandlerFunc(ampForceModelMappingsHandler)))
+	r.Handle("GET /v0/management/ampcode/restrict-management-to-localhost", withAdminAuth(http.HandlerFunc(ampRestrictManagementToLocalhostHandler)))
+	r.Handle("PUT /v0/management/ampcode/restrict-management-to-localhost", withAdminAuth(http.HandlerFunc(ampRestrictManagementToLocalhostHandler)))
+
+	// Apply middleware (replaces gorilla/mux r.Use())
+	handler := applyMiddleware(r, maxBodySizeMiddleware(10<<20), securityHeadersMiddleware)
 
 	// Start server
 	port := os.Getenv("PORT")
@@ -309,7 +328,7 @@ func startServer() {
 	}
 	logStartupCheck(startupCheck)
 
-	if err := http.ListenAndServe(addr, r); err != nil {
+	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal(err)
 	}
 	db.Close()
@@ -807,7 +826,7 @@ func orchestrationTasksHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationSessionTasksHandler(w http.ResponseWriter, r *http.Request) {
-	sessionID := strings.TrimSpace(mux.Vars(r)["session_id"])
+	sessionID := strings.TrimSpace(r.PathValue("session_id"))
 	tasks := orchestrator.ListTasksBySession(sessionID)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -818,7 +837,7 @@ func orchestrationSessionTasksHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationSessionResumeHandler(w http.ResponseWriter, r *http.Request) {
-	sessionID := strings.TrimSpace(mux.Vars(r)["session_id"])
+	sessionID := strings.TrimSpace(r.PathValue("session_id"))
 	var req struct {
 		Goal    string `json:"goal,omitempty"`
 		Execute bool   `json:"execute,omitempty"`
@@ -838,7 +857,7 @@ func orchestrationSessionResumeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationSessionForkHandler(w http.ResponseWriter, r *http.Request) {
-	sessionID := strings.TrimSpace(mux.Vars(r)["session_id"])
+	sessionID := strings.TrimSpace(r.PathValue("session_id"))
 	var req orchestration.SessionForkRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -855,7 +874,7 @@ func orchestrationSessionForkHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationTaskHandler(w http.ResponseWriter, r *http.Request) {
-	taskID := mux.Vars(r)["task_id"]
+	taskID := r.PathValue("task_id")
 	task, err := orchestrator.GetTask(taskID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -866,7 +885,7 @@ func orchestrationTaskHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationTaskRunHandler(w http.ResponseWriter, r *http.Request) {
-	taskID := mux.Vars(r)["task_id"]
+	taskID := r.PathValue("task_id")
 	if err := orchestrator.StartTask(taskID); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -875,7 +894,7 @@ func orchestrationTaskRunHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationTaskPauseHandler(w http.ResponseWriter, r *http.Request) {
-	taskID := mux.Vars(r)["task_id"]
+	taskID := r.PathValue("task_id")
 	task, err := orchestrator.PauseTask(taskID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -886,7 +905,7 @@ func orchestrationTaskPauseHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationTaskResumeHandler(w http.ResponseWriter, r *http.Request) {
-	taskID := mux.Vars(r)["task_id"]
+	taskID := r.PathValue("task_id")
 	task, err := orchestrator.ResumeTask(taskID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -897,7 +916,7 @@ func orchestrationTaskResumeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationTaskCancelHandler(w http.ResponseWriter, r *http.Request) {
-	taskID := mux.Vars(r)["task_id"]
+	taskID := r.PathValue("task_id")
 	task, err := orchestrator.CancelTask(taskID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -908,7 +927,7 @@ func orchestrationTaskCancelHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationTaskRefineHandler(w http.ResponseWriter, r *http.Request) {
-	taskID := mux.Vars(r)["task_id"]
+	taskID := r.PathValue("task_id")
 	var req orchestration.RefineRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -995,7 +1014,7 @@ func memorySearchHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func memorySessionHandler(w http.ResponseWriter, r *http.Request) {
-	sessionID := strings.TrimSpace(mux.Vars(r)["session_id"])
+	sessionID := strings.TrimSpace(r.PathValue("session_id"))
 	if sessionID == "" {
 		http.Error(w, "session_id is required", http.StatusBadRequest)
 		return
@@ -1031,7 +1050,7 @@ func parsePositiveIntQuery(r *http.Request, key string, fallback int) (int, erro
 }
 
 func auditSessionHandler(w http.ResponseWriter, r *http.Request) {
-	sessionID := strings.TrimSpace(mux.Vars(r)["session_id"])
+	sessionID := strings.TrimSpace(r.PathValue("session_id"))
 	if sessionID == "" {
 		http.Error(w, "session_id is required", http.StatusBadRequest)
 		return
@@ -1091,7 +1110,7 @@ func auditSessionHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func auditRequestHandler(w http.ResponseWriter, r *http.Request) {
-	requestID := strings.TrimSpace(mux.Vars(r)["request_id"])
+	requestID := strings.TrimSpace(r.PathValue("request_id"))
 	if requestID == "" {
 		http.Error(w, "request_id is required", http.StatusBadRequest)
 		return
@@ -1188,6 +1207,14 @@ func traceHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(trace)
 }
 
+// applyMiddleware wraps a handler with middleware in order (last = outermost).
+func applyMiddleware(h http.Handler, middlewares ...func(http.Handler) http.Handler) http.Handler {
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		h = middlewares[i](h)
+	}
+	return h
+}
+
 func securityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -1196,7 +1223,7 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func maxBodySizeMiddleware(maxBytes int64) mux.MiddlewareFunc {
+func maxBodySizeMiddleware(maxBytes int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Body != nil && (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch) {

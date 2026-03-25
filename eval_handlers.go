@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/eval"
 )
 
@@ -115,7 +114,7 @@ func evalRunStartHandler(w http.ResponseWriter, r *http.Request) {
 
 func evalRunGetHandler(w http.ResponseWriter, r *http.Request) {
 	store := eval.NewStore(db)
-	runID := mux.Vars(r)["run_id"]
+	runID := r.PathValue("run_id")
 
 	run, err := store.GetRun(runID)
 	if err != nil {
@@ -133,7 +132,7 @@ func evalRunGetHandler(w http.ResponseWriter, r *http.Request) {
 
 func evalRunResultsHandler(w http.ResponseWriter, r *http.Request) {
 	store := eval.NewStore(db)
-	runID := mux.Vars(r)["run_id"]
+	runID := r.PathValue("run_id")
 
 	results, err := store.GetResultsByRun(runID)
 	if err != nil {
