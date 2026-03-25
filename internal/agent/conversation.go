@@ -8,7 +8,8 @@ const maxConversationMessages = 200
 
 // Conversation manages message history for an agent session.
 type Conversation struct {
-	messages []providers.Message
+	messages       []providers.Message
+	BeforeTrimHook func(dropped []providers.Message) // called with messages about to be dropped
 }
 
 // NewConversation creates an empty conversation.
@@ -51,6 +52,12 @@ func (c *Conversation) TrimOldest(n int) int {
 	if before <= n {
 		return 0 // don't trim everything
 	}
+
+	// Persist messages about to be dropped
+	if c.BeforeTrimHook != nil {
+		c.BeforeTrimHook(c.messages[:n])
+	}
+
 	c.messages = c.messages[n:]
 	// Clean up any orphaned tool messages at the new front
 	for len(c.messages) > 0 && c.messages[0].Role == "tool" {
@@ -94,6 +101,11 @@ func (c *Conversation) trim() {
 			continue
 		}
 		break // Clean boundary — user message or plain assistant message
+	}
+
+	// Persist messages about to be dropped
+	if keepFrom > 0 && c.BeforeTrimHook != nil {
+		c.BeforeTrimHook(c.messages[:keepFrom])
 	}
 
 	c.messages = c.messages[keepFrom:]

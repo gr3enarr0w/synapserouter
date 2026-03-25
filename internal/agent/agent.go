@@ -169,8 +169,38 @@ func (a *Agent) Metrics() *AgentMetrics {
 	return a.metrics
 }
 
+// setupTrimHook wires the conversation's BeforeTrimHook to persist dropped
+// messages to VectorMemory before they are lost. Must be called after the
+// agent has its sessionID set (which happens in New()).
+func (a *Agent) setupTrimHook() {
+	if a.config.VectorMemory == nil {
+		return
+	}
+	a.conversation.BeforeTrimHook = func(dropped []providers.Message) {
+		for _, m := range dropped {
+			// Store all roles including tool messages. For assistant messages
+			// with empty Content but ToolCalls, serialize the tool call structure.
+			content := m.Content
+			if content == "" && len(m.ToolCalls) > 0 {
+				if b, err := json.Marshal(m.ToolCalls); err == nil {
+					content = fmt.Sprintf("[tool_calls] %s", string(b))
+				}
+			}
+			if content == "" {
+				continue
+			}
+			if err := a.config.VectorMemory.Store(content, m.Role, a.sessionID, nil); err != nil {
+				log.Printf("[Agent] trim hook: failed to store dropped message to DB: %v", err)
+			}
+		}
+	}
+}
+
 // Run processes a user message through the agent loop and returns the final text response.
 func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
+	// Wire trim hook so messages are persisted to DB before being dropped
+	a.setupTrimHook()
+
 	// Register recall tool if tool output store is configured
 	if a.config.ToolStore != nil {
 		a.registry.Register(tools.NewRecallTool(a.config.ToolStore, a.sessionID))
@@ -542,20 +572,28 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		if execErr != nil {
 			exitCode = -1
 		}
+		argsSummary := FormatArgsSummary(name, args)
+
+		// Store ALL tool outputs in DB regardless of size (if configured).
+		// This ensures nothing is lost — even small outputs are persisted for recall.
+		var storedOutputID int64
+		if a.config.ToolStore != nil {
+			summary := SummarizeToolOutput(name, args, resultContent, exitCode)
+			outputID, storeErr := a.config.ToolStore.Store(
+				a.sessionID, name, argsSummary, summary, resultContent,
+				exitCode, len(resultContent))
+			if storeErr != nil {
+				log.Printf("[Agent] warning: failed to store tool output: %v", storeErr)
+			} else {
+				storedOutputID = outputID
+			}
+		}
+
+		// Summarize large outputs for conversation context; keep small outputs verbatim.
 		if ShouldSummarize(name, resultContent) {
 			summary := SummarizeToolOutput(name, args, resultContent, exitCode)
-			argsSummary := FormatArgsSummary(name, args)
-
-			// Store full output in DB (if configured)
-			if a.config.ToolStore != nil {
-				outputID, storeErr := a.config.ToolStore.Store(
-					a.sessionID, name, argsSummary, summary, resultContent,
-					exitCode, len(resultContent))
-				if storeErr != nil {
-					log.Printf("[Agent] warning: failed to store tool output: %v", storeErr)
-				} else {
-					summary += fmt.Sprintf("\n[full output: ref:%d]", outputID)
-				}
+			if storedOutputID > 0 {
+				summary += fmt.Sprintf("\n[full output: ref:%d]", storedOutputID)
 			}
 			conversationContent = summary
 		} else {
@@ -1581,19 +1619,8 @@ func (a *Agent) compactConversation(completedPhase string) {
 	keepCount := 20 // keep last 20 messages
 	dropCount := len(msgs) - keepCount
 
-	// Store dropped messages to DB for later recall.
-	// If any store fails, skip compaction to avoid data loss.
-	if a.config.VectorMemory != nil {
-		for _, m := range msgs[:dropCount] {
-			if m.Content == "" || m.Role == "tool" {
-				continue
-			}
-			if err := a.config.VectorMemory.Store(m.Content, m.Role, a.sessionID, nil); err != nil {
-				log.Printf("[Agent] compaction aborted — failed to store message to DB: %v", err)
-				return
-			}
-		}
-	}
+	// Store dropped messages to DB for later recall (all roles including tool).
+	a.storeMessagesToDB(msgs[:dropCount], "compaction")
 
 	// Replace conversation with summary + recent messages
 	recent := make([]providers.Message, keepCount)
@@ -2077,11 +2104,16 @@ func (a *Agent) callLLMWithRetry(ctx context.Context, req providers.ChatRequest)
 			return providers.ChatResponse{}, fmt.Errorf("all escalation levels exhausted: %w", err)
 		}
 
-		// Context overflow — trim conversation and retry instead of crashing
+		// Context overflow — persist messages to DB, then trim and retry
 		if isContextOverflowError(err) {
+			// Store messages to DB before they are lost
+			allMsgs := a.conversation.Messages()
+			if len(allMsgs) > 20 {
+				a.storeMessagesToDB(allMsgs[:20], "context_overflow_trim")
+			}
 			trimmed := a.conversation.TrimOldest(20)
 			if trimmed > 0 {
-				log.Printf("[Agent] context overflow — trimmed %d old messages, retrying", trimmed)
+				log.Printf("[Agent] context overflow — stored and trimmed %d old messages, retrying", trimmed)
 				req.Messages = a.buildMessages()
 				continue
 			}
@@ -2103,6 +2135,38 @@ func (a *Agent) callLLMWithRetry(ctx context.Context, req providers.ChatRequest)
 		}
 	}
 	return providers.ChatResponse{}, lastErr
+}
+
+// storeMessagesToDB persists messages to VectorMemory before they are dropped.
+// Used by emergency trim and compaction to ensure zero information loss.
+func (a *Agent) storeMessagesToDB(msgs []providers.Message, source string) {
+	if a.config.VectorMemory == nil {
+		return
+	}
+	for _, m := range msgs {
+		content := m.Content
+
+		// For assistant messages with empty Content but ToolCalls, serialize the tool calls
+		if content == "" && len(m.ToolCalls) > 0 {
+			b, err := json.Marshal(m.ToolCalls)
+			if err == nil {
+				content = fmt.Sprintf("[tool_calls: %s]", string(b))
+			}
+		}
+
+		if content == "" {
+			continue
+		}
+
+		metadata := map[string]interface{}{"source": source}
+		if m.ToolCallID != "" {
+			metadata["tool_call_id"] = m.ToolCallID
+		}
+
+		if err := a.config.VectorMemory.Store(content, m.Role, a.sessionID, metadata); err != nil {
+			log.Printf("[Agent] storeMessagesToDB: failed to store message: %v", err)
+		}
+	}
 }
 
 // isContextOverflowError returns true if the error indicates the request exceeds

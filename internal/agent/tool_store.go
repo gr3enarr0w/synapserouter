@@ -77,6 +77,61 @@ func (s *ToolOutputStore) Retrieve(sessionID string, id int64) (string, error) {
 	return output, nil
 }
 
+// SearchMultiSession finds recent tool outputs across multiple sessions.
+// If toolName is non-empty, results are filtered to that tool.
+func (s *ToolOutputStore) SearchMultiSession(sessionIDs []string, toolName string, limit int) ([]tools.ToolOutputResult, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	if len(sessionIDs) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+
+	// Build placeholder string: (?, ?, ?)
+	placeholders := ""
+	args := make([]interface{}, 0, len(sessionIDs)+2)
+	for i, sid := range sessionIDs {
+		if i > 0 {
+			placeholders += ", "
+		}
+		placeholders += "?"
+		args = append(args, sid)
+	}
+
+	query := `
+		SELECT id, tool_name, args_summary, summary, exit_code, output_size, created_at
+		FROM tool_outputs
+		WHERE session_id IN (` + placeholders + `)`
+	if toolName != "" {
+		query += ` AND tool_name = ?`
+		args = append(args, toolName)
+	}
+	query += ` ORDER BY created_at DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []tools.ToolOutputResult
+	for rows.Next() {
+		var e tools.ToolOutputResult
+		if err := rows.Scan(&e.ID, &e.ToolName, &e.ArgsSummary, &e.Summary, &e.ExitCode, &e.OutputSize, &e.CreatedAt); err != nil {
+			continue
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return entries, fmt.Errorf("rows iteration error: %w", err)
+	}
+	return entries, nil
+}
+
 // Search finds recent tool outputs matching a tool name and/or session.
 func (s *ToolOutputStore) Search(sessionID, toolName string, limit int) ([]tools.ToolOutputResult, error) {
 	if s == nil || s.db == nil {
