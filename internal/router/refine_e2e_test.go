@@ -309,7 +309,7 @@ func TestE2E_FullPipeline_RefineToSkillChain(t *testing.T) {
 			refinedPrompt:  "fix the Docker container networking so the Go API service can connect to the postgres database",
 			wantSkills:     []string{"docker-expert", "go-patterns"}, // "fix" no longer triggers code-implement
 			wantAbsent:     []string{"python-patterns"},
-			wantMinSkills:  3,
+			wantMinSkills:  2,
 			wantPhaseOrder: true,
 		},
 		{
@@ -357,7 +357,7 @@ func TestE2E_FullPipeline_RefineToSkillChain(t *testing.T) {
 			vaguePrompt:    "finish it up",
 			refinedPrompt:  "add Go tests for the user management handler, review the code quality, and verify the implementation is complete",
 			wantSkills:     []string{"go-patterns", "go-testing", "code-review"}, // "add" no longer triggers code-implement
-			wantMinSkills:  4,
+			wantMinSkills:  3,
 			wantPhaseOrder: true,
 		},
 	}
@@ -468,7 +468,7 @@ func TestE2E_MultiTurnConversation(t *testing.T) {
 				refinedPrompt:  "fix the error handling for expired tokens in the Go OAuth auth handler",
 				assistantResp:  "Added proper error handling with token re-issue on expiry",
 				wantSkills:     []string{"go-patterns", "security-review"},
-				wantMinSkills:  3,
+				wantMinSkills:  2,
 			},
 			{
 				// Turn 4: vague status check
@@ -533,7 +533,7 @@ func TestE2E_MultiTurnConversation(t *testing.T) {
 				refinedPrompt:  "fix the Python pytest fixture teardown and validate the test coverage for the data pipeline is complete",
 				assistantResp:  "Fixed teardown, coverage now at 95%",
 				wantSkills:     []string{"python-patterns", "python-testing"},
-				wantMinSkills:  3,
+				wantMinSkills:  2,
 			},
 		}
 

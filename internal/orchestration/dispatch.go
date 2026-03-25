@@ -54,6 +54,7 @@ func matchesTrigger(text string, words []string, trigger string) bool {
 	// Compound triggers: "go+handler" means both "go" AND "handler" must match
 	if strings.Contains(trigger, "+") {
 		parts := strings.Split(trigger, "+")
+		matched := 0
 		for _, part := range parts {
 			part = strings.TrimSpace(part)
 			if part == "" {
@@ -62,8 +63,9 @@ func matchesTrigger(text string, words []string, trigger string) bool {
 			if !matchesTrigger(text, words, part) {
 				return false
 			}
+			matched++
 		}
-		return true
+		return matched > 0 // reject empty triggers like "+" or "++"
 	}
 
 	// Multi-word triggers or triggers with special chars: substring match

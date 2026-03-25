@@ -48,10 +48,18 @@ func (e *LocalHashEmbedding) Embed(ctx context.Context, text string) ([]float32,
 
 	// Cap input size to prevent excessive memory/CPU usage on large tool outputs
 	if len(text) > maxEmbeddingInputBytes {
-		// Truncate on a UTF-8 boundary by finding the last valid rune
 		text = text[:maxEmbeddingInputBytes]
+		// Strip incomplete UTF-8 sequence at the end: remove continuation bytes,
+		// then remove the dangling leader byte if its sequence is incomplete
 		for len(text) > 0 && text[len(text)-1]&0xC0 == 0x80 {
 			text = text[:len(text)-1]
+		}
+		if len(text) > 0 {
+			b := text[len(text)-1]
+			// Check if last byte is a multi-byte leader without its continuations
+			if b&0xE0 == 0xC0 || b&0xF0 == 0xE0 || b&0xF8 == 0xF0 {
+				text = text[:len(text)-1]
+			}
 		}
 	}
 

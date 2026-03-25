@@ -58,6 +58,30 @@ func TestMatchSkills_Research(t *testing.T) {
 	assertContains(t, names, "api-design", "should match api-design for API keyword")
 }
 
+func TestMatchesTrigger_CompoundEdgeCases(t *testing.T) {
+	tests := []struct {
+		text    string
+		trigger string
+		want    bool
+	}{
+		{"fix the go handler", "go+handler", true},
+		{"fix the go handler", "go+missing", false},
+		{"implement it", "+", false},          // empty compound — vacuous truth rejected
+		{"implement it", "++", false},         // double empty
+		{"implement it", "+implement", true},  // leading empty part skipped
+		{"implement it", "implement+", true},  // trailing empty part skipped
+		{"go code handler", "go+code+handler", true}, // 3-part compound
+		{"go code", "go+code+handler", false},        // 3-part, missing one
+	}
+	for _, tt := range tests {
+		words := tokenize(tt.text)
+		got := matchesTrigger(tt.text, words, tt.trigger)
+		if got != tt.want {
+			t.Errorf("matchesTrigger(%q, %q) = %v, want %v", tt.text, tt.trigger, got, tt.want)
+		}
+	}
+}
+
 func TestBuildSkillChain_PhaseOrdering(t *testing.T) {
 	skills := []Skill{
 		{Name: "code-review", Phase: "review", Role: "reviewer"},

@@ -1,16 +1,19 @@
 package agent
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
 // ReviewCycleTracker detects when review cycles are making no progress.
 // If LOC and issues are unchanged for 2 consecutive cycles, we accept and move on.
+// NOT goroutine-safe — must only be called from the agent's main loop.
 type ReviewCycleTracker struct {
 	prevLOC       int
 	prevIssueHash string
@@ -48,8 +51,12 @@ func (r *ReviewCycleTracker) Reset() {
 	r.stableCount = 0
 }
 
+const maxLOCBytesPerFile = 1 << 20 // 1MB cap per file to prevent OOM on large generated files
+const maxLOCTotalFiles = 10000     // safety cap on total files walked
+
 // countLOC counts total lines of code in the working directory.
 // Only counts .go, .py, .js, .ts, .rs, .java, .rb, .c, .cpp, .h files.
+// Uses WalkDir (not Walk) for efficiency. Skips symlinks to prevent traversal attacks.
 func countLOC(workDir string) int {
 	if workDir == "" {
 		return 0
@@ -62,11 +69,16 @@ func countLOC(workDir string) int {
 	}
 
 	total := 0
-	filepath.Walk(workDir, func(path string, info os.FileInfo, err error) error {
+	fileCount := 0
+	filepath.WalkDir(workDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip errors
 		}
-		if info.IsDir() {
+		// Skip symlinks entirely to prevent traversal/loops
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if d.IsDir() {
 			base := filepath.Base(path)
 			if base == ".git" || base == "vendor" || base == "node_modules" || base == ".claude" {
 				return filepath.SkipDir
@@ -77,20 +89,33 @@ func countLOC(workDir string) int {
 		if !codeExts[ext] {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		fileCount++
+		if fileCount > maxLOCTotalFiles {
+			return filepath.SkipAll
+		}
+		// Read with size cap to prevent OOM on large generated files
+		f, err := os.Open(path)
 		if err != nil {
 			return nil
 		}
-		total += len(strings.Split(string(data), "\n"))
+		defer f.Close()
+		buf := make([]byte, maxLOCBytesPerFile)
+		n, _ := f.Read(buf)
+		total += bytes.Count(buf[:n], []byte{'\n'})
 		return nil
 	})
 	return total
 }
 
+// lineNumberPattern matches file:line patterns like "main.go:42:" or "line 57"
+var lineNumberPattern = regexp.MustCompile(`(?::\d+:?|line \d+)`)
+
 // hashIssues produces a stable hash of the review output to detect duplicate issues.
+// Strips line numbers so the same issue at different positions hashes identically.
 func hashIssues(reviewOutput string) string {
-	// Normalize: lowercase, collapse whitespace, remove line numbers
 	normalized := strings.ToLower(strings.TrimSpace(reviewOutput))
+	// Strip line numbers so same issue at different positions hashes the same
+	normalized = lineNumberPattern.ReplaceAllString(normalized, ":")
 	lines := strings.Split(normalized, "\n")
 	var significant []string
 	for _, line := range lines {

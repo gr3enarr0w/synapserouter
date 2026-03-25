@@ -288,7 +288,6 @@ func detectErrorLoop(messages []providers.Message) (loopDetected bool, repeatedE
 			loopDetected = true
 			repeatedErrors = append(repeatedErrors, fp)
 		}
-		_ = fp
 	}
 
 	// Also detect loop via retry language + any errors

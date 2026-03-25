@@ -997,12 +997,13 @@ func (a *Agent) advancePipeline(content string) bool {
 
 		// Advance to next phase
 		a.pipelinePhase++
-		a.phaseToolCalls = 0    // reset for new phase
-		a.phaseRetries = 0      // reset retry counter
-		a.lastGateScore = 0     // reset plateau tracking
+		a.phaseToolCalls = 0      // reset for new phase
+		a.phaseRetries = 0        // reset retry counter
+		a.lastGateScore = 0       // reset plateau tracking
 		a.plateauCount = 0
 		a.toolFingerprints = nil  // reset loop detection
 		a.loopWarningCount = 0
+		a.reviewTracker.Reset()   // reset review stability detection for new phase
 
 		// Compact conversation between phases: store old messages to DB,
 		// keep only recent context + a phase summary. Prevents context overflow
