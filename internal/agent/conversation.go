@@ -9,7 +9,16 @@ const maxConversationMessages = 200
 // Conversation manages message history for an agent session.
 type Conversation struct {
 	messages       []providers.Message
+	MaxMessages    int                               // per-model max; 0 = use default (maxConversationMessages)
 	BeforeTrimHook func(dropped []providers.Message) // called with messages about to be dropped
+}
+
+// maxMsgs returns the effective message limit: MaxMessages if set, else the default.
+func (c *Conversation) maxMsgs() int {
+	if c.MaxMessages > 0 {
+		return c.MaxMessages
+	}
+	return maxConversationMessages
 }
 
 // NewConversation creates an empty conversation.
@@ -70,11 +79,12 @@ func (c *Conversation) TrimOldest(n int) int {
 // respecting tool-call boundaries so assistant messages with ToolCalls
 // are never separated from their corresponding tool result messages.
 func (c *Conversation) trim() {
-	if len(c.messages) <= maxConversationMessages {
+	max := c.maxMsgs()
+	if len(c.messages) <= max {
 		return
 	}
 
-	keepFrom := len(c.messages) - maxConversationMessages
+	keepFrom := len(c.messages) - max
 	if keepFrom < 0 {
 		keepFrom = 0
 	}

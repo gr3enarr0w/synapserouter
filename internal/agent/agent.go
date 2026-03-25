@@ -85,6 +85,9 @@ type Agent struct {
 	toolFingerprints   []string // sliding window of recent tool call fingerprints (loop detection)
 	loopWarningCount   int      // consecutive loop warnings without resolution (escalation trigger)
 
+	// Context retrieval after compaction
+	hasCompacted bool // set true after compactConversation; triggers auto-context injection
+
 	// Event bus for real-time observability
 	bus *EventBus
 }
@@ -200,6 +203,9 @@ func (a *Agent) setupTrimHook() {
 func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 	// Wire trim hook so messages are persisted to DB before being dropped
 	a.setupTrimHook()
+
+	// Set model-aware conversation limit so large-context models compact less aggressively
+	a.conversation.MaxMessages = modelMaxMessages(a.config.Model)
 
 	// Register recall tool with unified searcher that covers all ancestor sessions.
 	// UnifiedSearcher queries both ToolOutputStore (tool outputs) and VectorMemory
@@ -644,6 +650,32 @@ func (a *Agent) buildMessages() []providers.Message {
 		Role:    "system",
 		Content: a.cachedSystemPrompt,
 	}}
+
+	// After compaction, auto-inject relevant past context from VectorMemory.
+	// This surfaces earlier conversation that was compacted to DB, so the LLM
+	// has continuity without the agent needing explicit recall tool calls.
+	if a.hasCompacted && a.config.VectorMemory != nil {
+		lastUser := a.conversation.LastUserMessage()
+		if lastUser != "" {
+			retrieved, err := a.config.VectorMemory.RetrieveRelevant(lastUser, a.sessionID, 2048)
+			if err == nil && len(retrieved) > 0 {
+				var contextBuf strings.Builder
+				contextBuf.WriteString("[Retrieved context from earlier:]\n")
+				for _, m := range retrieved {
+					contextBuf.WriteString(fmt.Sprintf("[%s] %s\n", m.Role, m.Content))
+				}
+				msgs = append(msgs, providers.Message{
+					Role:    "user",
+					Content: contextBuf.String(),
+				})
+				msgs = append(msgs, providers.Message{
+					Role:    "assistant",
+					Content: "Understood, I have the retrieved context from earlier in the session.",
+				})
+			}
+		}
+	}
+
 	msgs = append(msgs, a.conversation.Messages()...)
 	return msgs
 }
@@ -1643,6 +1675,7 @@ func (a *Agent) compactConversation(completedPhase string) {
 		a.conversation.Add(m)
 	}
 
+	a.hasCompacted = true
 	log.Printf("[Agent] compacted conversation: dropped %d messages, kept %d + summary", dropCount, keepCount)
 }
 
@@ -2347,6 +2380,22 @@ func mergeParallelDir(subDir, parentDir string) {
 	})
 	if merged > 0 {
 		log.Printf("[Agent] merged %d files from %s to %s", merged, filepath.Base(subDir), filepath.Base(parentDir))
+	}
+}
+
+// modelMaxMessages returns the conversation message limit based on the model's
+// context window. Large-context models can hold more messages before compaction.
+func modelMaxMessages(model string) int {
+	lower := strings.ToLower(model)
+	switch {
+	case strings.Contains(lower, "gemini"):
+		return 500 // Gemini models have 1M+ context
+	case strings.Contains(lower, "claude"):
+		return 400 // Claude models have 200K context
+	case strings.Contains(lower, "deepseek"):
+		return 300 // DeepSeek models have 128K context
+	default:
+		return 0 // 0 = use default (maxConversationMessages = 200)
 	}
 }
 
