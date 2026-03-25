@@ -44,6 +44,9 @@ type Config struct {
 	ToolStore       *ToolOutputStore     // DB-backed storage for full tool outputs (nil = no storage)
 	VectorMemory    *memory.VectorMemory // Direct DB access for conversation compaction + recall
 
+	// Session lineage — enables sub-agents to recall parent tool outputs
+	ParentSessionIDs []string // ordered: [parent, grandparent, ...] session IDs
+
 	// State persistence
 	DB        *sql.DB // SQLite database for session persistence
 	Resume    bool    // Resume most recent session on startup

@@ -201,9 +201,17 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 	// Wire trim hook so messages are persisted to DB before being dropped
 	a.setupTrimHook()
 
-	// Register recall tool if tool output store is configured
-	if a.config.ToolStore != nil {
-		a.registry.Register(tools.NewRecallTool(a.config.ToolStore, a.sessionID))
+	// Register recall tool with unified searcher that covers all ancestor sessions.
+	// UnifiedSearcher queries both ToolOutputStore (tool outputs) and VectorMemory
+	// (compacted conversation messages) across the current session and all parent sessions.
+	if a.config.ToolStore != nil || a.config.VectorMemory != nil {
+		allSessionIDs := append([]string{a.sessionID}, a.config.ParentSessionIDs...)
+		searcher := NewUnifiedSearcher(a.config.ToolStore, a.config.VectorMemory, allSessionIDs)
+		recall := tools.NewRecallTool(searcher, a.sessionID)
+		if a.config.VectorMemory != nil {
+			recall.WithSemanticSearcher(searcher)
+		}
+		a.registry.Register(recall)
 	}
 
 	// Input guardrails

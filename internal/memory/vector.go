@@ -201,6 +201,10 @@ func (vm *VectorMemory) RetrieveRelevant(query, sessionID string, maxTokens int)
 	return results, nil
 }
 
+// minSimilarityThreshold is the minimum cosine similarity score for a vector
+// search result to be included. Results below this threshold are noise.
+const minSimilarityThreshold = 0.15
+
 // retrieveByVectorSimilarity uses cosine similarity between embeddings
 func (vm *VectorMemory) retrieveByVectorSimilarity(query, sessionID string, maxTokens int) ([]Message, error) {
 	// Generate query embedding
@@ -271,6 +275,11 @@ func (vm *VectorMemory) retrieveByVectorSimilarity(query, sessionID string, maxT
 	seen := make(map[string]struct{})
 
 	for _, item := range scored {
+		// Skip results below similarity threshold to avoid returning noise
+		if item.score < minSimilarityThreshold {
+			break // scored is sorted descending, so all remaining are below threshold too
+		}
+
 		if _, exists := seen[item.Role+"\x00"+item.Content]; exists {
 			continue
 		}
@@ -290,8 +299,8 @@ func (vm *VectorMemory) retrieveByVectorSimilarity(query, sessionID string, maxT
 		totalTokens += msgTokens
 	}
 
-	log.Printf("[Memory] Vector search found %d relevant messages (~%d tokens, limit %d)",
-		len(results), totalTokens, maxTokens)
+	log.Printf("[Memory] Vector search found %d relevant messages (~%d tokens, limit %d, threshold %.2f)",
+		len(results), totalTokens, maxTokens, minSimilarityThreshold)
 
 	return results, nil
 }

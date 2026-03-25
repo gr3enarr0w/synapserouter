@@ -14,6 +14,18 @@ type ToolOutputSearcher interface {
 	Retrieve(sessionID string, id int64) (string, error)
 }
 
+// SemanticSearcher provides semantic search over conversation memory.
+// Implemented by memory.VectorMemory.
+type SemanticSearcher interface {
+	RetrieveRelevant(query, sessionID string, maxTokens int) ([]SemanticResult, error)
+}
+
+// SemanticResult represents a result from semantic search.
+type SemanticResult struct {
+	Role    string
+	Content string
+}
+
 // ToolOutputResult represents a stored tool output entry.
 type ToolOutputResult struct {
 	ID          int64
@@ -28,12 +40,19 @@ type ToolOutputResult struct {
 // RecallTool allows the agent to search and retrieve past tool outputs from the DB.
 type RecallTool struct {
 	searcher  ToolOutputSearcher
+	semantic  SemanticSearcher
 	sessionID string
 }
 
 // NewRecallTool creates a recall tool bound to a session.
 func NewRecallTool(searcher ToolOutputSearcher, sessionID string) *RecallTool {
 	return &RecallTool{searcher: searcher, sessionID: sessionID}
+}
+
+// WithSemanticSearcher adds semantic search capability to the recall tool.
+func (t *RecallTool) WithSemanticSearcher(s SemanticSearcher) *RecallTool {
+	t.semantic = s
+	return t
 }
 
 func (t *RecallTool) Name() string        { return "recall" }
@@ -89,13 +108,50 @@ func (t *RecallTool) Execute(ctx context.Context, args map[string]interface{}, w
 		}
 	}
 
-	// Mode 2: Search by tool name and/or query
+	// Mode 2: Semantic search when query is provided and no tool_name filter
+	query, _ := args["query"].(string)
 	toolName, _ := args["tool_name"].(string)
 	limit := 5
 	if l, ok := args["limit"].(float64); ok && l > 0 {
 		limit = int(l)
 	}
 
+	if query != "" && toolName == "" && t.semantic != nil {
+		// Use semantic search over conversation memory
+		maxTokens := limit * 512 // ~512 tokens per result
+		semanticResults, err := t.semantic.RetrieveRelevant(query, t.sessionID, maxTokens)
+		if err == nil && len(semanticResults) > 0 {
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("Found %d relevant memory entries:\n\n", len(semanticResults)))
+			for i, r := range semanticResults {
+				if i >= limit {
+					break
+				}
+				// Truncate long content for the listing
+				content := r.Content
+				if len(content) > 500 {
+					content = content[:500] + "..."
+				}
+				b.WriteString(fmt.Sprintf("  [%s] %s\n\n", r.Role, content))
+			}
+
+			// Also search tool outputs for completeness
+			toolResults, toolErr := t.searcher.Search(t.sessionID, "", limit)
+			if toolErr == nil && len(toolResults) > 0 {
+				b.WriteString(fmt.Sprintf("Also found %d tool outputs:\n\n", len(toolResults)))
+				for _, r := range toolResults {
+					b.WriteString(fmt.Sprintf("  [ref:%d] %s (%s) — %d bytes, exit %d\n",
+						r.ID, r.ToolName, r.ArgsSummary, r.OutputSize, r.ExitCode))
+					b.WriteString(fmt.Sprintf("    %s\n\n", r.Summary))
+				}
+				b.WriteString("Use recall(id=N) to retrieve the full output of any tool result.")
+			}
+			return &ToolResult{Output: b.String()}, nil
+		}
+		// Fall through to tool output search if semantic search returned nothing
+	}
+
+	// Mode 3: Search tool outputs by tool name and/or query
 	results, err := t.searcher.Search(t.sessionID, toolName, limit)
 	if err != nil {
 		return &ToolResult{Output: fmt.Sprintf("search error: %v", err), ExitCode: 1}, nil

@@ -64,18 +64,23 @@ func (a *Agent) SpawnChild(cfg SpawnConfig) *Agent {
 	// pick providers (gemini, codex) that should only be reached via escalation.
 	escalationChain := a.config.EscalationChain
 
+	// Build parent session chain: current agent's session prepended to its own parent chain.
+	// This gives the child visibility into all ancestor sessions for cross-session recall.
+	parentChain := append([]string{a.sessionID}, a.config.ParentSessionIDs...)
+
 	childConfig := Config{
-		Model:           model,
-		SystemPrompt:    sysPrompt,
-		MaxTurns:        maxTurns,
-		WorkDir:         workDir,
-		TargetProvider:  cfg.Provider,
-		EscalationChain: escalationChain,
-		Skills:          a.config.Skills,          // inherit parent's skill registry for dynamic matching
-		EventBus:        a.config.EventBus,
-		ProjectLanguage: a.config.ProjectLanguage, // inherit so sub-agents use correct language context
-		ToolStore:       a.config.ToolStore,       // inherit so sub-agents store tool outputs in same DB
-		VectorMemory:    a.config.VectorMemory,    // inherit for recall tool access
+		Model:            model,
+		SystemPrompt:     sysPrompt,
+		MaxTurns:         maxTurns,
+		WorkDir:          workDir,
+		TargetProvider:   cfg.Provider,
+		EscalationChain:  escalationChain,
+		Skills:           a.config.Skills,          // inherit parent's skill registry for dynamic matching
+		EventBus:         a.config.EventBus,
+		ProjectLanguage:  a.config.ProjectLanguage, // inherit so sub-agents use correct language context
+		ToolStore:        a.config.ToolStore,       // inherit so sub-agents store tool outputs in same DB
+		VectorMemory:     a.config.VectorMemory,    // inherit for recall tool access
+		ParentSessionIDs: parentChain,              // pass full ancestor chain for cross-session recall
 	}
 
 	child := New(a.executor, registry, a.renderer, childConfig)
