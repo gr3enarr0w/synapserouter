@@ -75,8 +75,6 @@ func (t *RecallTool) Execute(ctx context.Context, args map[string]interface{}, w
 		switch v := idVal.(type) {
 		case float64:
 			id = int64(v)
-		case int64:
-			id = v
 		}
 		if id > 0 {
 			output, err := t.searcher.Retrieve(t.sessionID, id)
@@ -84,8 +82,8 @@ func (t *RecallTool) Execute(ctx context.Context, args map[string]interface{}, w
 				return &ToolResult{Output: fmt.Sprintf("not found: %v", err), ExitCode: 1}, nil
 			}
 			// Truncate very large outputs for conversation
-			if len(output) > 16*1024 {
-				output = output[:16*1024] + "\n...(truncated, full output is " + fmt.Sprintf("%d", len(output)) + " bytes)"
+			if originalLen := len(output); originalLen > 16*1024 {
+				output = output[:16*1024] + "\n...(truncated, full output is " + fmt.Sprintf("%d", originalLen) + " bytes)"
 			}
 			return &ToolResult{Output: output}, nil
 		}

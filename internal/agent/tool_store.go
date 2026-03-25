@@ -3,6 +3,7 @@ package agent
 import (
 	"database/sql"
 	"fmt"
+	"log"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
 )
@@ -22,7 +23,7 @@ func NewToolOutputStore(db *sql.DB) *ToolOutputStore {
 		return nil
 	}
 	// Auto-create table if not exists (handles case where migration hasn't run)
-	db.Exec(`CREATE TABLE IF NOT EXISTS tool_outputs (
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS tool_outputs (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		session_id TEXT NOT NULL,
 		tool_name TEXT NOT NULL,
@@ -32,7 +33,10 @@ func NewToolOutputStore(db *sql.DB) *ToolOutputStore {
 		exit_code INTEGER DEFAULT 0,
 		output_size INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	)`)
+	)`); err != nil {
+		log.Printf("[ToolStore] failed to create table: %v", err)
+		return nil
+	}
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_tool_outputs_session ON tool_outputs(session_id, created_at DESC)`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_tool_outputs_tool ON tool_outputs(session_id, tool_name)`)
 	return &ToolOutputStore{db: db}
@@ -107,6 +111,9 @@ func (s *ToolOutputStore) Search(sessionID, toolName string, limit int) ([]tools
 			continue
 		}
 		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return entries, fmt.Errorf("rows iteration error: %w", err)
 	}
 	return entries, nil
 }

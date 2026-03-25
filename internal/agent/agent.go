@@ -1581,13 +1581,17 @@ func (a *Agent) compactConversation(completedPhase string) {
 	keepCount := 20 // keep last 20 messages
 	dropCount := len(msgs) - keepCount
 
-	// Store dropped messages to DB for later recall
+	// Store dropped messages to DB for later recall.
+	// If any store fails, skip compaction to avoid data loss.
 	if a.config.VectorMemory != nil {
 		for _, m := range msgs[:dropCount] {
 			if m.Content == "" || m.Role == "tool" {
 				continue
 			}
-			a.config.VectorMemory.Store(m.Content, m.Role, a.sessionID, nil)
+			if err := a.config.VectorMemory.Store(m.Content, m.Role, a.sessionID, nil); err != nil {
+				log.Printf("[Agent] compaction aborted — failed to store message to DB: %v", err)
+				return
+			}
 		}
 	}
 

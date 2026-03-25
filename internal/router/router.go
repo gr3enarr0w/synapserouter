@@ -187,7 +187,7 @@ func (r *Router) ChatCompletionForProvider(
 			// Filter out: tool-role messages (orphaned without tool_call_id),
 			// empty messages (corrupted assistant messages that lost tool_calls).
 			// Track actual injected count (not len(retrievedMessages)) for correct slice offset later.
-			injectedCount := 0
+			injectedCount = 0
 			if len(retrievedMessages) > 0 {
 				priorMessages := make([]providers.Message, 0, len(retrievedMessages)+len(req.Messages))
 				for _, msg := range retrievedMessages {
