@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/environment"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
@@ -91,6 +92,10 @@ type Agent struct {
 	// Hallucination detection
 	factTracker              *FactTracker // in-memory ground-truth accumulator
 	hallucinationRecallCount int          // consecutive auto-corrections (rate limited at 3)
+
+	// Toolchain detection
+	toolchainSetup    string // install instructions for missing tools
+	resolvedBuildCmds string // resolved build/test/install commands for detected language
 
 	// Event bus for real-time observability
 	bus *EventBus
@@ -225,6 +230,23 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 			recall.WithSemanticSearcher(searcher)
 		}
 		a.registry.Register(recall)
+	}
+
+	// Detect missing build tools and prepare install instructions for the system prompt
+	if a.config.WorkDir != "" {
+		env := environment.Detect(a.config.WorkDir)
+		if env != nil {
+			missing := environment.MissingTools(env, a.config.WorkDir)
+			if len(missing) > 0 {
+				a.toolchainSetup = environment.SetupInstructions(env, a.config.WorkDir)
+				log.Printf("[Agent] missing tools detected: %v", missing)
+			}
+			// Also resolve dynamic build commands (e.g., Maven vs Gradle for Java)
+			install, test, build := environment.ResolveBuildCommands(env.Language, a.config.WorkDir)
+			if install != "" || test != "" || build != "" {
+				a.resolvedBuildCmds = fmt.Sprintf("Build: %s | Test: %s | Install: %s", build, test, install)
+			}
+		}
 	}
 
 	// Input guardrails
@@ -676,6 +698,15 @@ func (a *Agent) buildMessages() []providers.Message {
 		// Inject project-level instructions (CLAUDE.md / AGENTS.md from working directory)
 		if projectInstr := LoadProjectInstructions(a.config.WorkDir); projectInstr != "" {
 			sysPrompt += "\n\n# Project Instructions\n" + projectInstr
+		}
+
+		// Inject toolchain setup instructions if missing tools detected
+		if a.toolchainSetup != "" {
+			sysPrompt += "\n\n# TOOLCHAIN SETUP REQUIRED\n" + a.toolchainSetup +
+				"\nInstall these tools FIRST before attempting to build or test."
+		}
+		if a.resolvedBuildCmds != "" {
+			sysPrompt += "\n\n# Resolved Build Commands\n" + a.resolvedBuildCmds
 		}
 
 		a.cachedSystemPrompt = sysPrompt
