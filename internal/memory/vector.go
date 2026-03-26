@@ -135,6 +135,10 @@ func (vm *VectorMemory) RetrieveRecent(sessionID string, limit int, skipContent 
 		}
 	}
 
+	if err := rows.Err(); err != nil {
+		return messages, fmt.Errorf("rows iteration error: %w", err)
+	}
+
 	// Reverse to get chronological order
 	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
 		messages[i], messages[j] = messages[j], messages[i]
@@ -256,6 +260,9 @@ func (vm *VectorMemory) retrieveByVectorSimilarity(query, sessionID string, maxT
 		msg.score = similarity
 		scored = append(scored, msg)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("vector search rows error: %w", err)
+	}
 
 	if len(scored) == 0 {
 		return nil, fmt.Errorf("no messages with embeddings found")
@@ -340,6 +347,9 @@ func (vm *VectorMemory) retrieveByLexicalScore(query, sessionID string, maxToken
 		if msg.score > 0 {
 			scored = append(scored, msg)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lexical search rows error: %w", err)
 	}
 
 	if len(scored) == 0 {
@@ -443,6 +453,9 @@ func (vm *VectorMemory) RetrieveRecentFromSession(sessionID string, limit int) (
 		}
 		messages = append(messages, msg)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("recent session rows error: %w", err)
+	}
 
 	// Reverse to chronological order
 	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
@@ -472,6 +485,9 @@ func (vm *VectorMemory) GetSessionHistory(sessionID string) ([]Message, error) {
 			continue
 		}
 		messages = append(messages, msg)
+	}
+	if err := rows.Err(); err != nil {
+		return messages, fmt.Errorf("session history rows error: %w", err)
 	}
 
 	return messages, nil

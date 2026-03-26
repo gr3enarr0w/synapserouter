@@ -311,7 +311,9 @@ func normalizeVector(v []float32) []float32 {
 // EncodeEmbedding converts float32 slice to bytes for storage
 func EncodeEmbedding(embedding []float32) []byte {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.LittleEndian, embedding)
+	if err := binary.Write(buf, binary.LittleEndian, embedding); err != nil {
+		return nil
+	}
 	return buf.Bytes()
 }
 

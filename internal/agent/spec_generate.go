@@ -107,6 +107,7 @@ func (a *Agent) generateSpec(message string) (string, error) {
 		return "", fmt.Errorf("no working directory configured")
 	}
 
+	// Use strings.Replace (not fmt.Sprintf) to avoid format string bugs if user message contains %s/%d/etc.
 	prompt := strings.Replace(specPromptTemplate, "%s", message, 1)
 
 	// Use the agent's LLM executor to generate the spec
