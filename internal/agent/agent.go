@@ -80,6 +80,7 @@ type Agent struct {
 	noToolTurns        int // consecutive turns without tool calls (stall detection)
 	reviewTracker      *ReviewCycleTracker // detects stable review cycles (no progress)
 	phaseRetries       int // consecutive quality gate rejections in current phase
+	phaseTurns         int // turns spent in current phase (hard cap at maxPhaseTurns)
 	lastGateScore      int // verification gate passed count from previous retry (plateau detection)
 	plateauCount       int // consecutive retries with no score improvement
 	cachedPromptLevel  int      // provider level when system prompt was cached (-1 = uncached)
@@ -369,6 +370,24 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			a.budget.RecordTurn()
 			if reason := a.budget.Exceeded(); reason != "" {
 				return "", fmt.Errorf("agent budget exceeded: %s", reason)
+			}
+		}
+
+		// Per-phase turn cap: force-advance if a single phase consumes too many turns.
+		// This prevents infinite loops in self-check/review phases that can't converge.
+		if a.config.AutoOrchestrate && a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
+			a.phaseTurns++
+			if a.phaseTurns > maxPhaseTurns {
+				phaseName := a.pipeline.Phases[a.pipelinePhase].Name
+				log.Printf("[Agent] phase %s exceeded %d turn cap — force-advancing to next phase",
+					phaseName, maxPhaseTurns)
+				a.emit(EventPhaseComplete, "", map[string]any{
+					"phase_name":    phaseName,
+					"passed":        false,
+					"force_advance": true,
+					"turns_used":    a.phaseTurns,
+				})
+				a.advancePipeline("PHASE_SKIPPED_TURN_CAP")
 			}
 		}
 
@@ -849,6 +868,11 @@ func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query strin
 	return b.String()
 }
 
+// maxPhaseTurns is the hard cap on LLM calls per pipeline phase.
+// Prevents infinite loops when self-check or review phases can't converge.
+// 25 turns is enough for: read errors (1) + fix files (5-10) + rebuild (1) + verify (1) + iterate (5-10).
+const maxPhaseTurns = 25
+
 // toolBlock is the canonical tool reference shared across all prompt levels.
 const toolBlock = `AVAILABLE TOOLS (use exact names):
 - bash: Run shell commands. Args: command (string).
@@ -891,12 +915,16 @@ RULES:
 - After writing tests: ALWAYS run them. If they fail, fix and re-run until all pass.
 - Never claim success without running the actual command and seeing output.
 - If a build tool is missing (mvn, go, npm, etc.), install it first: bash(brew install <tool>).
+- WORKING DIRECTORY: All files MUST be created directly in the current working directory — do NOT
+  create subdirectories like "petclinic/", "myapp/", or "project/" and build inside them.
+- When bash returns a compilation error, READ THE ERROR carefully — it tells you the exact
+  file and line number. Use file_edit to fix that specific line, then rebuild.
 
 WORKFLOW — start immediately with tool calls:
-1. bash: create directories (mkdir -p src)
+1. bash: create directories WITHIN the working directory (mkdir -p src/main/java/...)
 2. file_write: create NEW source files with full content
 3. bash: install dependencies, build, and run tests
-4. If tests fail: file_edit to fix, then re-run
+4. If tests fail: READ the error output, file_edit to fix the exact file:line, then re-run
 
 Do NOT output plans, descriptions, or JSON without tool calls. Every response must include at least one tool call.`, workDir, langDirective, toolBlock)
 	}
@@ -935,6 +963,25 @@ ENVIRONMENT SETUP:
   - For Python projects: ensure python3 and pip are available
 - Do NOT skip the build step because a tool is missing — install it first.
 
+WORKING DIRECTORY:
+- All project files MUST be created directly in the working directory (%s).
+- Do NOT create a wrapper subdirectory (e.g., "petclinic/", "myapp/") and build inside it.
+- Source trees go directly in the working directory: src/, pom.xml, package.json, etc.
+- When running bash commands, do NOT use "cd <subdir> && ..." — run from the working directory.
+
+SPEC COMPLIANCE:
+- If a spec defines IN SCOPE and OUT OF SCOPE sections, follow them strictly.
+- Do NOT add features, layers, or components listed as OUT OF SCOPE.
+- Do NOT add a service layer if the spec says "no service layer."
+- Do NOT add REST controllers, security config, or other components not in the spec.
+- Match the spec's directory structure exactly — do not reorganize or rename packages.
+
+SELF-CORRECTION ON BUILD ERRORS:
+- When a build command (mvn, go build, npm run build, cargo build) fails, READ THE ERROR OUTPUT.
+- Compilation errors include the exact file path and line number — use file_edit to fix that line.
+- Do NOT create new files to work around compilation errors — fix the existing file.
+- After fixing, re-run the SAME build command to verify. Repeat until it compiles.
+
 VERIFY YOUR WORK:
 - After writing code, ALWAYS run the build/compile command to verify it compiles.
 - After writing tests, ALWAYS run them. If any test fails, fix it before reporting success.
@@ -946,7 +993,7 @@ PRODUCTION QUALITY:
 - Show math for calculated values. Never approximate when exact values are available.
 - Document assumptions. Flag ambiguous decisions for review.
 
-%s`, workDir, langDirective, toolBlock)
+%s`, workDir, langDirective, workDir, toolBlock)
 }
 
 // forceToolsMessage returns a phase-appropriate message demanding tool calls.
@@ -1171,6 +1218,7 @@ func (a *Agent) advancePipeline(content string) bool {
 		// Advance to next phase
 		a.pipelinePhase++
 		a.phaseToolCalls = 0      // reset for new phase
+		a.phaseTurns = 0          // reset per-phase turn counter
 		a.phaseRetries = 0        // reset retry counter
 		a.lastGateScore = 0       // reset plateau tracking
 		a.plateauCount = 0
@@ -2000,6 +2048,13 @@ When done, say IMPLEMENT_COMPLETE.`,
 	})
 
 	// For implement phases, give each agent its own temp directory to prevent file conflicts
+	// Cleanup function defined first, then used after temp dirs are created
+	var tempDirs []string
+	cleanup := func() {
+		for _, dir := range tempDirs {
+			os.RemoveAll(dir)
+		}
+	}
 	if phase.Name != "plan" {
 		for i := range tasks {
 			subDir, err := os.MkdirTemp("", fmt.Sprintf("synroute-parallel-%s-*", tasks[i].role))
@@ -2009,16 +2064,10 @@ When done, say IMPLEMENT_COMPLETE.`,
 			}
 			copyDirContents(a.config.WorkDir, subDir)
 			tasks[i].workDir = subDir
+			tempDirs = append(tempDirs, subDir)
 			log.Printf("[Agent] parallel agent %s using isolated dir: %s", tasks[i].role, subDir)
 		}
-		// Cleanup temp dirs after merge (defer only for cleanup, merge happens below)
-		defer func() {
-			for _, t := range tasks {
-				if t.workDir != "" {
-					os.RemoveAll(t.workDir)
-				}
-			}
-		}()
+		defer cleanup()
 	}
 
 	// Run in parallel

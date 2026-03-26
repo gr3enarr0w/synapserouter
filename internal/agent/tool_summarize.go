@@ -46,6 +46,9 @@ func SummarizeToolOutput(toolName string, args map[string]interface{}, output st
 	}
 }
 
+// compilationErrorPattern matches file:line:col error patterns from compilers (javac, gcc, go, rustc, tsc).
+var compilationErrorPattern = regexp.MustCompile(`(?i)^.*\.(java|go|rs|ts|js|c|cpp|cs|py|rb|kt|swift):\d+[:\d]*:?\s*(error|cannot|undefined|unresolved|expected|illegal|invalid)`)
+
 func summarizeBash(output string, exitCode int, lines []string, totalLines int) string {
 	var b strings.Builder
 	if exitCode == 0 {
@@ -55,13 +58,62 @@ func summarizeBash(output string, exitCode int, lines []string, totalLines int) 
 	}
 	b.WriteString(fmt.Sprintf(" | %d lines\n", totalLines))
 
-	// Show last 5 non-empty lines (most relevant for errors and results)
-	var lastLines []string
+	// For errors: extract compilation error lines (file:line patterns) so the LLM
+	// can see exactly which files and lines need fixing. Without this, Maven/Gradle
+	// errors > 2KB get truncated to just "BUILD FAILURE" and the agent can't self-correct.
+	if exitCode != 0 {
+		var errorLines []string
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			if compilationErrorPattern.MatchString(trimmed) {
+				if len(trimmed) > 300 {
+					trimmed = trimmed[:300] + "..."
+				}
+				errorLines = append(errorLines, trimmed)
+			}
+		}
+		if len(errorLines) > 0 {
+			b.WriteString("--- compilation errors ---\n")
+			shown := errorLines
+			if len(shown) > 15 {
+				shown = shown[:15]
+			}
+			for _, l := range shown {
+				b.WriteString(l + "\n")
+			}
+			if len(errorLines) > 15 {
+				b.WriteString(fmt.Sprintf("... and %d more errors\n", len(errorLines)-15))
+			}
+			b.WriteString("--- end errors ---\n")
+		}
+	}
+
+	// Show first 5 + last 5 non-empty lines for context
+	var firstLines, lastLines []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && len(firstLines) < 5 {
+			firstLines = append(firstLines, trimmed)
+		}
+	}
 	for i := totalLines - 1; i >= 0 && len(lastLines) < 5; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line != "" {
 			lastLines = append([]string{line}, lastLines...)
 		}
+	}
+
+	for _, l := range firstLines {
+		if len(l) > 200 {
+			l = l[:200] + "..."
+		}
+		b.WriteString(l + "\n")
+	}
+	if totalLines > 10 {
+		b.WriteString(fmt.Sprintf("... (%d lines omitted) ...\n", totalLines-10))
 	}
 	for _, l := range lastLines {
 		if len(l) > 200 {
