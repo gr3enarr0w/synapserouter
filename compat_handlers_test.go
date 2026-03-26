@@ -43,7 +43,7 @@ func TestAmpUpstreamURLHandlerUpdatesConfig(t *testing.T) {
 
 func TestProviderModelsHandlerFiltersProvider(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/provider/gemini/v1/models", nil)
-	req = muxSetVars(req, map[string]string{"provider": "gemini"})
+	req.SetPathValue("provider", "gemini")
 	rr := httptest.NewRecorder()
 
 	providerModelsHandler(rr, req)
@@ -336,7 +336,7 @@ func TestResponseGetHandlerReturnsStoredResponse(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp-get", nil)
-	req = muxSetVars(req, map[string]string{"response_id": "resp-get"})
+	req.SetPathValue("response_id", "resp-get")
 	rr := httptest.NewRecorder()
 
 	responseGetHandler(rr, req)
@@ -356,7 +356,7 @@ func TestResponseDeleteHandlerRemovesStoredResponse(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodDelete, "/v1/responses/resp-delete", nil)
-	req = muxSetVars(req, map[string]string{"response_id": "resp-delete"})
+	req.SetPathValue("response_id", "resp-delete")
 	rr := httptest.NewRecorder()
 
 	responseDeleteHandler(rr, req)
@@ -492,7 +492,7 @@ func TestProviderChatHandlerFallsBackToAmpUpstreamForUnknownModel(t *testing.T) 
 
 	ampConfig = compat.AmpCodeConfig{UpstreamURL: "https://amp.example", UpstreamAPIKey: "amp-secret"}
 	req := httptest.NewRequest(http.MethodPost, "/api/provider/openai/v1/chat/completions", strings.NewReader(`{"model":"unknown-model","messages":[{"role":"user","content":"hello"}]}`))
-	req = muxSetVars(req, map[string]string{"provider": "openai"})
+	req.SetPathValue("provider", "openai")
 	rr := httptest.NewRecorder()
 
 	providerChatHandler(rr, req)

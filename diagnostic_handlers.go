@@ -6,10 +6,18 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/agent"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/app"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/router"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
+)
+
+var (
+	agentPool     *agent.Pool
+	agentPoolOnce sync.Once
 )
 
 func smokeTestHandler(w http.ResponseWriter, r *http.Request) {
@@ -22,7 +30,7 @@ func smokeTestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	timeout := 30 * time.Second
+	timeout := 45 * time.Second
 	if req.Timeout != "" {
 		if parsed, err := time.ParseDuration(req.Timeout); err == nil {
 			timeout = parsed
@@ -136,6 +144,17 @@ func skillsListHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func toolsListHandler(registry *tools.Registry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		info := registry.ToolInfo()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"tools": info,
+			"count": len(info),
+		})
+	}
+}
+
 func skillsMatchHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	if query == "" {
@@ -161,4 +180,101 @@ func doctorHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(checks)
+}
+
+func getAgentPool() *agent.Pool {
+	agentPoolOnce.Do(func() {
+		agentPool = agent.NewPool(5)
+	})
+	return agentPool
+}
+
+func agentChatHandler(registry *tools.Registry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Message     string `json:"message"`
+			Model       string `json:"model"`
+			System      string `json:"system"`
+			MaxTurns    int    `json:"max_turns"`
+			MaxTokens   int64  `json:"max_tokens"`
+			SessionID   string `json:"session_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.Message == "" {
+			http.Error(w, "message is required", http.StatusBadRequest)
+			return
+		}
+
+		config := agent.DefaultConfig()
+		if req.Model != "" {
+			config.Model = req.Model
+		}
+		if req.System != "" {
+			config.SystemPrompt = req.System
+		}
+		if req.MaxTurns > 0 {
+			config.MaxTurns = req.MaxTurns
+		}
+
+		// Use temp directory to avoid writing files into the project root
+		tmpDir, tmpErr := os.MkdirTemp("", "synroute-agent-*")
+		if tmpErr == nil {
+			config.WorkDir = tmpDir
+			defer os.RemoveAll(tmpDir)
+		} else {
+			cwd, _ := os.Getwd()
+			config.WorkDir = cwd
+		}
+
+		// Create agent with tracing enabled
+		ag := agent.New(proxyRouter, registry, nil, config)
+		ag.EnableTracing()
+
+		// Set budget if specified
+		if req.MaxTokens > 0 {
+			ag.SetInputGuardrails(agent.NewGuardrailChain(&agent.SecretPatternGuardrail{}))
+		}
+
+		// Register delegation tools
+		agentRegistry := tools.DefaultRegistry()
+		agentRegistry.Register(agent.NewDelegateTool(ag))
+
+		pool := getAgentPool()
+		result, err := pool.RunInPool(r.Context(), ag, "api", req.Message)
+
+		response := map[string]interface{}{
+			"session_id": ag.SessionID(),
+			"model":      config.Model,
+		}
+
+		if err != nil {
+			response["error"] = err.Error()
+			w.WriteHeader(http.StatusInternalServerError)
+		} else {
+			response["response"] = result
+		}
+
+		// Include trace if available
+		if trace := ag.Trace(); trace != nil {
+			response["trace"] = map[string]interface{}{
+				"spans":    trace.SpanCount(),
+				"duration": trace.TotalDuration().String(),
+			}
+		}
+
+		// Include pool metrics
+		response["pool"] = pool.Metrics()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}
+}
+
+func agentPoolHandler(w http.ResponseWriter, r *http.Request) {
+	pool := getAgentPool()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(pool.Metrics())
 }

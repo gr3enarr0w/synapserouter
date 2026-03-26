@@ -24,15 +24,15 @@ build-cli:
 build-all: build build-cli
 	@echo "✓ All binaries built"
 
-## test: Run all tests
+## test: Run all tests with race detection
 test:
-	@echo "🧪 Running tests..."
-	@go test ./... -v
+	@echo "🧪 Running tests with race detection..."
+	@go test -race ./... -v
 
 ## test-short: Run tests without verbose output
 test-short:
 	@echo "🧪 Running tests..."
-	@go test ./...
+	@go test -race ./...
 
 ## clean: Remove binary and clean build cache
 clean:
@@ -61,6 +61,13 @@ deps:
 	@go mod download
 	@go mod tidy
 	@echo "✓ Dependencies installed"
+
+## vet: Run go vet
+vet:
+	@go vet ./...
+
+## all: Run vet, test, and build
+all: vet test build
 
 ## check: Run go vet and format checks
 check:

@@ -135,6 +135,10 @@ func (vm *VectorMemory) RetrieveRecent(sessionID string, limit int, skipContent 
 		}
 	}
 
+	if err := rows.Err(); err != nil {
+		return messages, fmt.Errorf("rows iteration error: %w", err)
+	}
+
 	// Reverse to get chronological order
 	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
 		messages[i], messages[j] = messages[j], messages[i]
@@ -147,6 +151,12 @@ func (vm *VectorMemory) RetrieveRecent(sessionID string, limit int, skipContent 
 // 1. Always includes the most recent N messages for immediate continuity.
 // 2. Supplement with semantic search results (vector or lexical).
 func (vm *VectorMemory) RetrieveRelevant(query, sessionID string, maxTokens int) ([]Message, error) {
+	// Cap memory injection to prevent context overflow.
+	// Memory should never dominate the context window — 8K max, default 4K.
+	if maxTokens <= 0 || maxTokens > 8192 {
+		maxTokens = 4096
+	}
+
 	// 1. Always get most recent context (crucial for handoffs and direct follow-ups)
 	recent, err := vm.RetrieveRecent(sessionID, 4, query)
 	if err != nil {
@@ -160,13 +170,17 @@ func (vm *VectorMemory) RetrieveRelevant(query, sessionID string, maxTokens int)
 		recentTokens += EstimateTokens(msg.Content)
 	}
 
-	// 2. Get semantic context
-	var semantic []Message
-	if vm.embedder != nil {
-		semantic, _ = vm.retrieveByVectorSimilarity(query, sessionID, maxTokens-recentTokens)
+	// 2. Get semantic context (clamp budget to avoid negative limits)
+	semanticBudget := maxTokens - recentTokens
+	if semanticBudget < 0 {
+		semanticBudget = 0
 	}
-	if len(semantic) == 0 {
-		semantic, _ = vm.retrieveByLexicalScore(query, sessionID, maxTokens-recentTokens)
+	var semantic []Message
+	if semanticBudget > 0 && vm.embedder != nil {
+		semantic, _ = vm.retrieveByVectorSimilarity(query, sessionID, semanticBudget)
+	}
+	if len(semantic) == 0 && semanticBudget > 0 {
+		semantic, _ = vm.retrieveByLexicalScore(query, sessionID, semanticBudget)
 	}
 
 	// 3. Combine and deduplicate
@@ -190,6 +204,10 @@ func (vm *VectorMemory) RetrieveRelevant(query, sessionID string, maxTokens int)
 
 	return results, nil
 }
+
+// minSimilarityThreshold is the minimum cosine similarity score for a vector
+// search result to be included. Results below this threshold are noise.
+const minSimilarityThreshold = 0.15
 
 // retrieveByVectorSimilarity uses cosine similarity between embeddings
 func (vm *VectorMemory) retrieveByVectorSimilarity(query, sessionID string, maxTokens int) ([]Message, error) {
@@ -242,6 +260,9 @@ func (vm *VectorMemory) retrieveByVectorSimilarity(query, sessionID string, maxT
 		msg.score = similarity
 		scored = append(scored, msg)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("vector search rows error: %w", err)
+	}
 
 	if len(scored) == 0 {
 		return nil, fmt.Errorf("no messages with embeddings found")
@@ -261,6 +282,11 @@ func (vm *VectorMemory) retrieveByVectorSimilarity(query, sessionID string, maxT
 	seen := make(map[string]struct{})
 
 	for _, item := range scored {
+		// Skip results below similarity threshold to avoid returning noise
+		if item.score < minSimilarityThreshold {
+			break // scored is sorted descending, so all remaining are below threshold too
+		}
+
 		if _, exists := seen[item.Role+"\x00"+item.Content]; exists {
 			continue
 		}
@@ -280,8 +306,8 @@ func (vm *VectorMemory) retrieveByVectorSimilarity(query, sessionID string, maxT
 		totalTokens += msgTokens
 	}
 
-	log.Printf("[Memory] Vector search found %d relevant messages (~%d tokens, limit %d)",
-		len(results), totalTokens, maxTokens)
+	log.Printf("[Memory] Vector search found %d relevant messages (~%d tokens, limit %d, threshold %.2f)",
+		len(results), totalTokens, maxTokens, minSimilarityThreshold)
 
 	return results, nil
 }
@@ -321,6 +347,9 @@ func (vm *VectorMemory) retrieveByLexicalScore(query, sessionID string, maxToken
 		if msg.score > 0 {
 			scored = append(scored, msg)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lexical search rows error: %w", err)
 	}
 
 	if len(scored) == 0 {
@@ -401,6 +430,41 @@ func (vm *VectorMemory) TrimToTokenLimit(messages []Message, maxTokens int) []Me
 	return result
 }
 
+// RetrieveRecentFromSession gets the most recent N messages from a specific session,
+// returned in chronological order. Used for cross-session memory carry-over.
+func (vm *VectorMemory) RetrieveRecentFromSession(sessionID string, limit int) ([]Message, error) {
+	rows, err := vm.db.Query(`
+		SELECT role, content
+		FROM memory
+		WHERE session_id = ?
+		ORDER BY timestamp DESC
+		LIMIT ?
+	`, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []Message
+	for rows.Next() {
+		var msg Message
+		if err := rows.Scan(&msg.Role, &msg.Content); err != nil {
+			continue
+		}
+		messages = append(messages, msg)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("recent session rows error: %w", err)
+	}
+
+	// Reverse to chronological order
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+
+	return messages, nil
+}
+
 // GetSessionHistory gets full conversation history for a session
 func (vm *VectorMemory) GetSessionHistory(sessionID string) ([]Message, error) {
 	rows, err := vm.db.Query(`
@@ -421,6 +485,9 @@ func (vm *VectorMemory) GetSessionHistory(sessionID string) ([]Message, error) {
 			continue
 		}
 		messages = append(messages, msg)
+	}
+	if err := rows.Err(); err != nil {
+		return messages, fmt.Errorf("session history rows error: %w", err)
 	}
 
 	return messages, nil

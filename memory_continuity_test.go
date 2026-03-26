@@ -174,12 +174,16 @@ func TestMemoryContinuity(t *testing.T) {
 		t.Fatal("Memory was not injected - only got current request message")
 	}
 
-	// Verify the first message is from memory
-	if len(mockProvider.lastRequest.Messages) >= 1 {
-		firstMsg := mockProvider.lastRequest.Messages[0]
-		if firstMsg.Content != "Remember this secret code: XYZZY123" {
-			t.Errorf("Expected first message from memory, got: %s", firstMsg.Content)
+	// Verify memory message is present (may be preceded by a system message from skill preprocessor)
+	foundMemoryMsg := false
+	for _, msg := range mockProvider.lastRequest.Messages {
+		if msg.Content == "Remember this secret code: XYZZY123" {
+			foundMemoryMsg = true
+			break
 		}
+	}
+	if !foundMemoryMsg {
+		t.Errorf("Expected memory message 'Remember this secret code: XYZZY123' to be present in messages")
 	}
 
 	// Verify the last message contains the user's intent (may be refined by intent refinement pipeline)

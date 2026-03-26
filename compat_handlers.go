@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/mux"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/compat"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
@@ -255,11 +254,11 @@ func responsesCompactHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func providerResponsesHandler(w http.ResponseWriter, r *http.Request) {
-	handleResponsesRequest(w, r, mux.Vars(r)["provider"])
+	handleResponsesRequest(w, r, r.PathValue("provider"))
 }
 
 func responseGetHandler(w http.ResponseWriter, r *http.Request) {
-	responseID := strings.TrimSpace(mux.Vars(r)["response_id"])
+	responseID := strings.TrimSpace(r.PathValue("response_id"))
 	payload, ok := getResponsePayload(responseID)
 	if !ok {
 		http.Error(w, "response not found", http.StatusNotFound)
@@ -270,7 +269,7 @@ func responseGetHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func responseDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	responseID := strings.TrimSpace(mux.Vars(r)["response_id"])
+	responseID := strings.TrimSpace(r.PathValue("response_id"))
 	res, err := db.Exec("DELETE FROM responses WHERE id = ?", responseID)
 	if err != nil {
 		http.Error(w, "database error", http.StatusInternalServerError)
@@ -569,7 +568,7 @@ func reconstructConversationChain(previousResponseID string) []providers.Message
 }
 
 func providerModelsHandler(w http.ResponseWriter, r *http.Request) {
-	providerName := strings.TrimSpace(mux.Vars(r)["provider"])
+	providerName := strings.TrimSpace(r.PathValue("provider"))
 	all := availableModels()
 	filtered := make([]map[string]interface{}, 0, len(all))
 	for _, model := range all {
@@ -585,7 +584,7 @@ func providerModelsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func providerChatHandler(w http.ResponseWriter, r *http.Request) {
-	providerName := strings.TrimSpace(mux.Vars(r)["provider"])
+	providerName := strings.TrimSpace(r.PathValue("provider"))
 	var req providers.ChatRequest
 	rawBody, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -633,6 +632,10 @@ func routeChatRequest(r *http.Request, req providers.ChatRequest, sessionID, pre
 	// Validate model compatibility with provider
 	if err := validateModelForProvider(req.Model, preferredProvider); err != nil {
 		return providers.ChatResponse{}, fmt.Errorf("invalid request: %w", err)
+	}
+
+	if r.Header.Get("X-Skip-Skills") == "true" {
+		req.SkipSkillPreprocess = true
 	}
 
 	includeMemoryDebug := r.Header.Get("X-Debug-Memory") == "true"
@@ -1068,7 +1071,7 @@ func availableModels() []map[string]interface{} {
 		}
 	}
 
-	// Merge in models from all registered providers (Vertex, NanoGPT, etc.)
+	// Merge in models from all registered providers (Vertex, Ollama, etc.)
 	for _, p := range providerList {
 		if lm, ok := p.(interface{ ListModels() []map[string]interface{} }); ok {
 			for _, m := range lm.ListModels() {
@@ -1104,8 +1107,6 @@ func modelOwnerAndContext(providerName string) (string, int) {
 		return "qwen", 131072
 	case "ollama-cloud":
 		return "ollama-cloud", 128000
-	case "nanogpt":
-		return "nanogpt", 2000000
 	default:
 		return providerName, 128000
 	}

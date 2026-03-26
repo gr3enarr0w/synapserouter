@@ -89,7 +89,7 @@ func newAnthropicProvider(spec ProviderSpec, timeout time.Duration) provider {
 		credentials:  ensureCredentials(spec),
 		timeout:      timeout,
 		models:       spec.Models,
-		client:       &http.Client{Timeout: timeout},
+		client:       providers.NewLLMClient(timeout),
 	}
 }
 
@@ -104,7 +104,7 @@ func newOpenAIProvider(spec ProviderSpec, timeout time.Duration) provider {
 		credentials:  ensureCredentials(spec),
 		timeout:      timeout,
 		models:       spec.Models,
-		client:       &http.Client{Timeout: timeout},
+		client:       providers.NewLLMClient(timeout),
 	}
 }
 
@@ -119,7 +119,7 @@ func newGeminiProvider(spec ProviderSpec, timeout time.Duration) provider {
 		credentials:  ensureCredentials(spec),
 		timeout:      timeout,
 		models:       spec.Models,
-		client:       &http.Client{Timeout: timeout},
+		client:       providers.NewLLMClient(timeout),
 	}
 }
 
@@ -631,7 +631,7 @@ type geminiChatResponse struct {
 
 func (p *geminiProvider) ChatCompletion(ctx context.Context, req providers.ChatRequest, model, sessionID string) (providers.ChatResponse, error) {
 	if model == "" {
-		model = preferredFallbackModel(p.models, "gemini-3.1-pro-preview")
+		model = preferredFallbackModel(p.models, "gemini-3-flash-preview")
 	}
 
 	// Always prioritize the CLI-mirroring subscription path if possible

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gorilla/mux"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
 )
@@ -41,7 +40,7 @@ func orchestrationAgentsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationAgentHandler(w http.ResponseWriter, r *http.Request) {
-	agentID := mux.Vars(r)["agent_id"]
+	agentID := r.PathValue("agent_id")
 	agent, err := orchestrator.GetAgent(agentID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -65,7 +64,7 @@ func orchestrationAgentHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationAgentStatusHandler(w http.ResponseWriter, r *http.Request) {
-	agentID := mux.Vars(r)["agent_id"]
+	agentID := r.PathValue("agent_id")
 	agent, err := orchestrator.GetAgent(agentID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -85,7 +84,7 @@ func orchestrationAgentStatusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationAgentStopHandler(w http.ResponseWriter, r *http.Request) {
-	agentID := mux.Vars(r)["agent_id"]
+	agentID := r.PathValue("agent_id")
 	agent, err := orchestrator.StopAgent(agentID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -96,7 +95,7 @@ func orchestrationAgentStopHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationAgentMetricsHandler(w http.ResponseWriter, r *http.Request) {
-	agentID := mux.Vars(r)["agent_id"]
+	agentID := r.PathValue("agent_id")
 	metrics, err := orchestrator.AgentMetrics(agentID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -112,7 +111,7 @@ func orchestrationAgentHealthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationAgentLogsHandler(w http.ResponseWriter, r *http.Request) {
-	agentID := mux.Vars(r)["agent_id"]
+	agentID := r.PathValue("agent_id")
 	logs, err := orchestrator.AgentLogs(agentID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -154,7 +153,7 @@ func orchestrationSwarmsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationSwarmHandler(w http.ResponseWriter, r *http.Request) {
-	swarmID := mux.Vars(r)["swarm_id"]
+	swarmID := r.PathValue("swarm_id")
 	w.Header().Set("Content-Type", "application/json")
 	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("include_metrics")), "true") ||
 		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("include_agents")), "true") {
@@ -175,7 +174,7 @@ func orchestrationSwarmHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationSwarmStatusHandler(w http.ResponseWriter, r *http.Request) {
-	swarmID := mux.Vars(r)["swarm_id"]
+	swarmID := r.PathValue("swarm_id")
 	status, err := orchestrator.SwarmStatus(swarmID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -186,7 +185,7 @@ func orchestrationSwarmStatusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationSwarmStartHandler(w http.ResponseWriter, r *http.Request) {
-	swarmID := mux.Vars(r)["swarm_id"]
+	swarmID := r.PathValue("swarm_id")
 	sessionID := strings.TrimSpace(r.Header.Get("X-Session-ID"))
 	task, err := orchestrator.StartSwarm(r.Context(), swarmID, sessionID)
 	if err != nil {
@@ -199,7 +198,7 @@ func orchestrationSwarmStartHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationSwarmStopHandler(w http.ResponseWriter, r *http.Request) {
-	swarmID := mux.Vars(r)["swarm_id"]
+	swarmID := r.PathValue("swarm_id")
 	swarm, err := orchestrator.StopSwarm(swarmID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -210,7 +209,7 @@ func orchestrationSwarmStopHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationSwarmPauseHandler(w http.ResponseWriter, r *http.Request) {
-	swarmID := mux.Vars(r)["swarm_id"]
+	swarmID := r.PathValue("swarm_id")
 	swarm, err := orchestrator.PauseSwarm(swarmID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -221,7 +220,7 @@ func orchestrationSwarmPauseHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationSwarmResumeHandler(w http.ResponseWriter, r *http.Request) {
-	swarmID := mux.Vars(r)["swarm_id"]
+	swarmID := r.PathValue("swarm_id")
 	swarm, err := orchestrator.ResumeSwarm(swarmID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -232,7 +231,7 @@ func orchestrationSwarmResumeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationSwarmScaleHandler(w http.ResponseWriter, r *http.Request) {
-	swarmID := mux.Vars(r)["swarm_id"]
+	swarmID := r.PathValue("swarm_id")
 	var req orchestration.SwarmScaleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -248,7 +247,7 @@ func orchestrationSwarmScaleHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationSwarmCoordinateHandler(w http.ResponseWriter, r *http.Request) {
-	swarmID := mux.Vars(r)["swarm_id"]
+	swarmID := r.PathValue("swarm_id")
 	var req orchestration.SwarmCoordinateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -264,7 +263,7 @@ func orchestrationSwarmCoordinateHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func orchestrationSwarmLoadHandler(w http.ResponseWriter, r *http.Request) {
-	swarmID := mux.Vars(r)["swarm_id"]
+	swarmID := r.PathValue("swarm_id")
 	load, err := orchestrator.SwarmLoad(swarmID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -275,7 +274,7 @@ func orchestrationSwarmLoadHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationSwarmImbalanceHandler(w http.ResponseWriter, r *http.Request) {
-	swarmID := mux.Vars(r)["swarm_id"]
+	swarmID := r.PathValue("swarm_id")
 	report, err := orchestrator.DetectImbalance(swarmID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -286,7 +285,7 @@ func orchestrationSwarmImbalanceHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func orchestrationSwarmRebalancePreviewHandler(w http.ResponseWriter, r *http.Request) {
-	swarmID := mux.Vars(r)["swarm_id"]
+	swarmID := r.PathValue("swarm_id")
 	preview, err := orchestrator.PreviewRebalance(swarmID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -297,7 +296,7 @@ func orchestrationSwarmRebalancePreviewHandler(w http.ResponseWriter, r *http.Re
 }
 
 func orchestrationSwarmStealableTasksHandler(w http.ResponseWriter, r *http.Request) {
-	swarmID := mux.Vars(r)["swarm_id"]
+	swarmID := r.PathValue("swarm_id")
 	stealable, err := orchestrator.ListStealableTasks(swarmID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -339,7 +338,7 @@ func orchestrationWorkflowsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationWorkflowHandler(w http.ResponseWriter, r *http.Request) {
-	templateID := mux.Vars(r)["template_id"]
+	templateID := r.PathValue("template_id")
 	switch r.Method {
 	case http.MethodGet:
 		template, ok := orchestrator.GetWorkflowTemplate(templateID)
@@ -375,7 +374,7 @@ func orchestrationWorkflowHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationWorkflowRunHandler(w http.ResponseWriter, r *http.Request) {
-	templateID := mux.Vars(r)["template_id"]
+	templateID := r.PathValue("template_id")
 	var req orchestration.WorkflowRunRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -399,7 +398,7 @@ func orchestrationWorkflowRunHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationExecutionStateHandler(w http.ResponseWriter, r *http.Request) {
-	workflowID := mux.Vars(r)["workflow_id"]
+	workflowID := r.PathValue("workflow_id")
 	state, err := orchestrator.WorkflowState(workflowID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -410,7 +409,7 @@ func orchestrationExecutionStateHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func orchestrationExecutionMetricsHandler(w http.ResponseWriter, r *http.Request) {
-	workflowID := mux.Vars(r)["workflow_id"]
+	workflowID := r.PathValue("workflow_id")
 	metrics, err := orchestrator.WorkflowMetrics(workflowID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -421,7 +420,7 @@ func orchestrationExecutionMetricsHandler(w http.ResponseWriter, r *http.Request
 }
 
 func orchestrationExecutionDebugHandler(w http.ResponseWriter, r *http.Request) {
-	workflowID := mux.Vars(r)["workflow_id"]
+	workflowID := r.PathValue("workflow_id")
 	debugInfo, err := orchestrator.WorkflowDebugInfo(workflowID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -432,7 +431,7 @@ func orchestrationExecutionDebugHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func orchestrationTaskEventsHandler(w http.ResponseWriter, r *http.Request) {
-	taskID := mux.Vars(r)["task_id"]
+	taskID := r.PathValue("task_id")
 	startRequested := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("start")), "true")
 
 	stream, cancel, err := orchestrator.SubscribeTask(taskID)
@@ -480,7 +479,7 @@ func orchestrationTaskEventsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationTaskAssignHandler(w http.ResponseWriter, r *http.Request) {
-	taskID := mux.Vars(r)["task_id"]
+	taskID := r.PathValue("task_id")
 	var req orchestration.TaskAssignRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -498,7 +497,7 @@ func orchestrationTaskAssignHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationTaskStealHandler(w http.ResponseWriter, r *http.Request) {
-	taskID := mux.Vars(r)["task_id"]
+	taskID := r.PathValue("task_id")
 	var req orchestration.TaskStealRequest
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
@@ -516,7 +515,7 @@ func orchestrationTaskStealHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationTaskContestHandler(w http.ResponseWriter, r *http.Request) {
-	taskID := mux.Vars(r)["task_id"]
+	taskID := r.PathValue("task_id")
 	var req orchestration.TaskContestRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -532,7 +531,7 @@ func orchestrationTaskContestHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func orchestrationTaskContestResolveHandler(w http.ResponseWriter, r *http.Request) {
-	taskID := mux.Vars(r)["task_id"]
+	taskID := r.PathValue("task_id")
 	var req orchestration.TaskContestResolutionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)

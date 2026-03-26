@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ type Router struct {
 	providers       []providers.Provider
 	usageTracker    *usage.Tracker
 	vectorMemory    *memory.VectorMemory
+	sessionTracker  *memory.SessionTracker
 	db              *sql.DB
 	circuitBreakers map[string]*CircuitBreaker
 	healthMu        sync.RWMutex
@@ -81,6 +83,25 @@ func NewRouter(
 	}
 }
 
+// ProviderNames returns the ordered list of provider names in the chain.
+func (r *Router) ProviderNames() []string {
+	names := make([]string, len(r.providers))
+	for i, p := range r.providers {
+		names[i] = p.Name()
+	}
+	return names
+}
+
+// SetSessionTracker sets the session tracker for cross-session memory continuity.
+func (r *Router) SetSessionTracker(st *memory.SessionTracker) {
+	r.sessionTracker = st
+}
+
+// SessionTracker returns the router's session tracker (may be nil).
+func (r *Router) SessionTracker() *memory.SessionTracker {
+	return r.sessionTracker
+}
+
 // isHealthyCached returns cached health status to avoid burning provider API quota
 // on health checks. A successful request resets the cache; a circuit breaker open
 // overrides the cache. Only falls through to a real IsHealthy call if the cache is
@@ -129,7 +150,15 @@ func (r *Router) ChatCompletionForProvider(
 		}
 	}
 
+	// Touch session as active for cross-session tracking
+	if sessionID != "" && r.sessionTracker != nil {
+		if err := r.sessionTracker.Touch(sessionID); err != nil {
+			log.Printf("[Router] Warning: failed to touch session: %v", err)
+		}
+	}
+
 	// Retrieve memory BEFORE storing new messages (to avoid retrieving what we just stored)
+	injectedCount := 0
 	memoryQuery := lastUserMessage(req.Messages)
 	var retrievedMessages []memory.Message
 	var metadata *providers.ProxyMetadata
@@ -141,49 +170,85 @@ func (r *Router) ChatCompletionForProvider(
 		} else {
 			retrievedMessages = relevant
 
+			// Cross-session fallback: carry over context from recently ended session
+			if len(relevant) == 0 && r.sessionTracker != nil {
+				endedSession, findErr := r.sessionTracker.FindRecentEnded(sessionID, 30*time.Minute)
+				if findErr == nil && endedSession != "" {
+					crossMsgs, crossErr := r.vectorMemory.RetrieveRecentFromSession(endedSession, 8)
+					if crossErr == nil && len(crossMsgs) > 0 {
+						retrievedMessages = crossMsgs
+						log.Printf("[Router] Cross-session continuity: carried %d messages from ended session %s",
+							len(crossMsgs), endedSession)
+					}
+				}
+			}
+
 			// Inject retrieved memory into request (prepend to provide context)
-			if len(relevant) > 0 {
-				priorMessages := make([]providers.Message, 0, len(relevant)+len(req.Messages))
-				for _, msg := range relevant {
+			// Filter out: tool-role messages (orphaned without tool_call_id),
+			// empty messages (corrupted assistant messages that lost tool_calls).
+			// Track actual injected count (not len(retrievedMessages)) for correct slice offset later.
+			injectedCount = 0
+			if len(retrievedMessages) > 0 {
+				priorMessages := make([]providers.Message, 0, len(retrievedMessages)+len(req.Messages))
+				for _, msg := range retrievedMessages {
+					if msg.Role == "tool" || msg.Content == "" {
+						continue
+					}
 					priorMessages = append(priorMessages, providers.Message{
 						Role:    msg.Role,
 						Content: msg.Content,
 					})
+					injectedCount++
 				}
 				priorMessages = append(priorMessages, req.Messages...)
 				req.Messages = priorMessages
-				log.Printf("[Router] Injected %d memory messages into request for session %s", len(relevant), sessionID)
+				log.Printf("[Router] Injected %d memory messages into request for session %s", injectedCount, sessionID)
 			}
 
 			// Build debug metadata if requested
 			if includeMemoryDebug {
-				candidates := make([]providers.Message, len(relevant))
-				for i, msg := range relevant {
+				candidates := make([]providers.Message, len(retrievedMessages))
+				for i, msg := range retrievedMessages {
 					candidates[i] = providers.Message{Role: msg.Role, Content: msg.Content}
 				}
 				metadata = &providers.ProxyMetadata{
 					Provider:             "",
 					SessionID:            sessionID,
 					MemoryQuery:          memoryQuery,
-					MemoryCandidateCount: len(relevant),
+					MemoryCandidateCount: len(retrievedMessages),
 					MemoryCandidates:     candidates,
 				}
 			}
 		}
 	}
 
-	// Store the NEW messages
+	// Skill-aware preprocessing: analyze conversation and inject skill context
+	r.PreprocessRequest(&req)
+
+	// Store the NEW messages — synthesize content for tool-call-only assistant messages
+	// so memory preserves what the agent did without storing empty messages that corrupt conversations.
 	if sessionID != "" && !req.SkipMemory {
-		// Normal case: store everything after retrieved memory
-		originalMsgCount := len(req.Messages) - len(retrievedMessages)
+		originalMsgCount := len(req.Messages) - injectedCount
 		if originalMsgCount > 0 {
-			msgsToStore := req.Messages[len(retrievedMessages):]
-			msgs := make([]memory.Message, len(msgsToStore))
-			for i, m := range msgsToStore {
-				msgs[i] = memory.Message{Role: m.Role, Content: m.Content}
+			msgsToStore := req.Messages[injectedCount:]
+			var msgs []memory.Message
+			for _, m := range msgsToStore {
+				if m.Role == "tool" {
+					continue // orphaned without tool_call_id context
+				}
+				content := m.Content
+				if content == "" && len(m.ToolCalls) > 0 {
+					content = summarizeToolCalls(m.ToolCalls)
+				}
+				if content == "" {
+					continue
+				}
+				msgs = append(msgs, memory.Message{Role: m.Role, Content: content})
 			}
-			if err := r.vectorMemory.StoreMessages(msgs, sessionID); err != nil {
-				log.Printf("[Router] Warning: failed to store messages: %v", err)
+			if len(msgs) > 0 {
+				if err := r.vectorMemory.StoreMessages(msgs, sessionID); err != nil {
+					log.Printf("[Router] Warning: failed to store messages: %v", err)
+				}
 			}
 		}
 	}
@@ -193,6 +258,7 @@ func (r *Router) ChatCompletionForProvider(
 		return providers.ChatResponse{}, err
 	}
 
+	startTime := time.Now()
 	resp, err := r.tryProvider(ctx, provider, req, sessionID)
 	attempts := []providerAttempt{{
 		Provider: provider.Name(),
@@ -204,6 +270,9 @@ func (r *Router) ChatCompletionForProvider(
 		r.persistAudit(requestID, sessionID, provider.Name(), "", "", memoryQuery, metadata, attempts, err)
 		return providers.ChatResponse{}, err
 	}
+
+	// Stall detection: if response took too long with minimal output, auto-continue
+	resp, _ = r.handleStall(ctx, req, resp, provider, sessionID, time.Since(startTime), metadata)
 
 	// Store the assistant response in memory for continuity
 	if sessionID != "" && !req.SkipMemory && len(resp.Choices) > 0 {
@@ -219,10 +288,11 @@ func (r *Router) ChatCompletionForProvider(
 		}
 	}
 
-	if metadata != nil {
-		metadata.Provider = provider.Name()
-		resp.XProxyMetadata = metadata
+	if metadata == nil {
+		metadata = &providers.ProxyMetadata{}
 	}
+	metadata.Provider = provider.Name()
+	resp.XProxyMetadata = metadata
 	r.persistAudit(requestID, sessionID, provider.Name(), provider.Name(), resp.Model, memoryQuery, metadata, attempts, nil)
 	return resp, nil
 }
@@ -336,7 +406,15 @@ func (r *Router) ChatCompletionWithDebug(
 		}
 	}
 
+	// Touch session as active for cross-session tracking
+	if sessionID != "" && r.sessionTracker != nil {
+		if err := r.sessionTracker.Touch(sessionID); err != nil {
+			log.Printf("[Router] Warning: failed to touch session: %v", err)
+		}
+	}
+
 	// 1. Retrieve memory BEFORE storing new messages
+	injectedCount2 := 0
 	memoryQuery := lastUserMessage(req.Messages)
 	var retrievedMessages []memory.Message
 	var metadata *providers.ProxyMetadata
@@ -348,49 +426,81 @@ func (r *Router) ChatCompletionWithDebug(
 		} else {
 			retrievedMessages = relevant
 
+			// Cross-session fallback: carry over context from recently ended session
+			if len(relevant) == 0 && r.sessionTracker != nil {
+				endedSession, findErr := r.sessionTracker.FindRecentEnded(sessionID, 30*time.Minute)
+				if findErr == nil && endedSession != "" {
+					crossMsgs, crossErr := r.vectorMemory.RetrieveRecentFromSession(endedSession, 8)
+					if crossErr == nil && len(crossMsgs) > 0 {
+						retrievedMessages = crossMsgs
+						log.Printf("[Router] Cross-session continuity: carried %d messages from ended session %s",
+							len(crossMsgs), endedSession)
+					}
+				}
+			}
+
 			// Inject retrieved memory into request
-			if len(relevant) > 0 {
-				priorMessages := make([]providers.Message, 0, len(relevant)+len(req.Messages))
-				for _, msg := range relevant {
+			// Track actual injected count for correct slice offset in storage.
+			if len(retrievedMessages) > 0 {
+				priorMessages := make([]providers.Message, 0, len(retrievedMessages)+len(req.Messages))
+				for _, msg := range retrievedMessages {
+					if msg.Role == "tool" || msg.Content == "" {
+						continue
+					}
 					priorMessages = append(priorMessages, providers.Message{
 						Role:    msg.Role,
 						Content: msg.Content,
 					})
+					injectedCount2++
 				}
 				priorMessages = append(priorMessages, req.Messages...)
 				req.Messages = priorMessages
-				log.Printf("[Router] Injected %d memory messages into request for session %s", len(relevant), sessionID)
+				log.Printf("[Router] Injected %d memory messages into request for session %s", injectedCount2, sessionID)
 			}
 
 			// Build debug metadata if requested
 			if includeMemoryDebug {
-				candidates := make([]providers.Message, len(relevant))
-				for i, msg := range relevant {
+				candidates := make([]providers.Message, len(retrievedMessages))
+				for i, msg := range retrievedMessages {
 					candidates[i] = providers.Message{Role: msg.Role, Content: msg.Content}
 				}
 				metadata = &providers.ProxyMetadata{
 					Provider:             "",
 					SessionID:            sessionID,
 					MemoryQuery:          memoryQuery,
-					MemoryCandidateCount: len(relevant),
+					MemoryCandidateCount: len(retrievedMessages),
 					MemoryCandidates:     candidates,
 				}
 			}
 		}
 	}
 
-	// 2. Store the NEW messages
+	// Skill-aware preprocessing: analyze conversation and inject skill context
+	r.PreprocessRequest(&req)
+
+	// 2. Store the NEW messages — synthesize content for tool-call-only messages
 	if sessionID != "" && !req.SkipMemory {
-		// Normal case: store everything after retrieved memory
-		originalMsgCount := len(req.Messages) - len(retrievedMessages)
+		originalMsgCount := len(req.Messages) - injectedCount2
 		if originalMsgCount > 0 {
-			msgsToStore := req.Messages[len(retrievedMessages):]
-			msgs := make([]memory.Message, len(msgsToStore))
-			for i, m := range msgsToStore {
-				msgs[i] = memory.Message{Role: m.Role, Content: m.Content}
+			msgsToStore := req.Messages[injectedCount2:]
+			var msgs []memory.Message
+			for _, m := range msgsToStore {
+				if m.Role == "tool" {
+					continue
+				}
+				content := m.Content
+				if content == "" && len(m.ToolCalls) > 0 {
+					content = summarizeToolCalls(m.ToolCalls)
+				}
+				if content == "" {
+					continue
+				}
+				msgs = append(msgs, memory.Message{Role: m.Role, Content: content})
 			}
-			if err := r.vectorMemory.StoreMessages(msgs, sessionID); err != nil {
-				log.Printf("[Router] Warning: failed to store messages: %v", err)
+			if len(msgs) > 0 {
+				if err := r.vectorMemory.StoreMessages(msgs, sessionID); err != nil {
+					log.Printf("[Router] Warning: failed to store messages: %v", err)
+				}
 			}
 		}
 	}
@@ -404,10 +514,16 @@ func (r *Router) ChatCompletionWithDebug(
 	log.Printf("[Router] Selected provider: %s", provider.Name())
 
 	// 3. Try selected provider with fallback using the original request body.
+	startTime := time.Now()
 	resp, finalProvider, attempts, err := r.tryProvidersWithFallback(ctx, req, provider, sessionID)
 	if err != nil {
 		r.persistAudit(requestID, sessionID, provider.Name(), "", "", memoryQuery, metadata, attempts, err)
 		return providers.ChatResponse{}, err
+	}
+
+	// Stall detection: if response took too long with minimal output, auto-continue
+	if finalProv := r.findProviderByName(finalProvider); finalProv != nil {
+		resp, _ = r.handleStall(ctx, req, resp, finalProv, sessionID, time.Since(startTime), metadata)
 	}
 
 	// Store the assistant response in memory for continuity
@@ -632,11 +748,20 @@ func (r *Router) tryProvider(
 	r.healthCache[provider.Name()] = &cachedHealth{healthy: true, checkedAt: time.Now()}
 	r.healthMu.Unlock()
 
-	// Track usage
-	if resp.Usage.TotalTokens > 0 {
+	// Track usage — estimate if provider doesn't report tokens
+	tokens := resp.Usage.TotalTokens
+	estimated := false
+	if tokens == 0 {
+		tokens = estimateTokens(req.Messages)
+		if len(resp.Choices) > 0 {
+			tokens += len(resp.Choices[0].Message.Content) / 4
+		}
+		estimated = true
+	}
+	if tokens > 0 {
 		if err := r.usageTracker.RecordUsage(
 			provider.Name(),
-			int64(resp.Usage.TotalTokens),
+			int64(tokens),
 			resp.ID,
 			resp.Model,
 		); err != nil {
@@ -644,8 +769,95 @@ func (r *Router) tryProvider(
 		}
 	}
 
-	log.Printf("[Router] ✓ Success with %s (tokens: %d)", provider.Name(), resp.Usage.TotalTokens)
+	suffix := ""
+	if estimated {
+		suffix = " estimated"
+	}
+	log.Printf("[Router] ✓ Success with %s (tokens: %d%s)", provider.Name(), tokens, suffix)
 	return resp, nil
+}
+
+const stallContinuePrompt = "Continue where you left off. If you were waiting on a long-running operation, report what you have so far and suggest next steps."
+
+func stallTimeoutSeconds() int {
+	v := os.Getenv("STALL_TIMEOUT_SECONDS")
+	if v == "" {
+		return 180
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 180
+	}
+	return n
+}
+
+// handleStall checks if a response looks stalled (took too long, very short output)
+// and retries once with a continuation prompt. Returns the original or retried response
+// and updates metadata flags.
+func (r *Router) handleStall(
+	ctx context.Context,
+	req providers.ChatRequest,
+	resp providers.ChatResponse,
+	provider providers.Provider,
+	sessionID string,
+	elapsed time.Duration,
+	metadata *providers.ProxyMetadata,
+) (providers.ChatResponse, bool) {
+	threshold := time.Duration(stallTimeoutSeconds()) * time.Second
+	if elapsed < threshold {
+		return resp, false
+	}
+
+	// Check if the response is substantive
+	responseLen := 0
+	if len(resp.Choices) > 0 {
+		responseLen = len(resp.Choices[0].Message.Content)
+	}
+	if responseLen >= 50 {
+		return resp, false
+	}
+
+	log.Printf("[Router] Stall detected: %s took %s with only %d chars output, retrying with continuation prompt",
+		provider.Name(), elapsed, responseLen)
+
+	if metadata != nil {
+		metadata.StallDetected = true
+	}
+
+	// Append continuation prompt and retry
+	retryReq := req
+	retryReq.Messages = append(append([]providers.Message{}, req.Messages...), providers.Message{
+		Role:    "user",
+		Content: stallContinuePrompt,
+	})
+	retryReq.SkipSkillPreprocess = true
+	retryReq.SkipMemory = true
+
+	retryResp, err := provider.ChatCompletion(ctx, retryReq, sessionID)
+	if err != nil {
+		log.Printf("[Router] Stall retry failed: %v, returning original response", err)
+		return resp, true
+	}
+
+	if metadata != nil {
+		metadata.StallRetried = true
+	}
+
+	if len(retryResp.Choices) > 0 {
+		log.Printf("[Router] Stall retry succeeded with %d chars", len(retryResp.Choices[0].Message.Content))
+	} else {
+		log.Printf("[Router] Stall retry returned empty choices")
+	}
+	return retryResp, true
+}
+
+func (r *Router) findProviderByName(name string) providers.Provider {
+	for _, p := range r.providers {
+		if p.Name() == name {
+			return p
+		}
+	}
+	return nil
 }
 
 func estimateTokens(messages []providers.Message) int {
@@ -679,10 +891,6 @@ func rateLimitCooldown(providerName string, err error) time.Duration {
 		return 30 * time.Second
 	case "claude-code":
 		return 60 * time.Second
-	case "nanogpt-sub":
-		return 30 * time.Second
-	case "nanogpt-paid":
-		return 2 * time.Minute
 	default:
 		return 2 * time.Minute
 	}
@@ -714,6 +922,61 @@ func lastUserMessage(messages []providers.Message) string {
 		return ""
 	}
 	return messages[len(messages)-1].Content
+}
+
+// summarizeToolCalls creates a text summary of tool calls for memory storage.
+// When an assistant message has empty content but tool calls, this preserves
+// what the agent did (e.g., "[Tool calls: bash(npm install), file_write(src/app.ts)]").
+func summarizeToolCalls(toolCalls []map[string]interface{}) string {
+	var parts []string
+	for _, tc := range toolCalls {
+		fn, _ := tc["function"].(map[string]interface{})
+		name := ""
+		if fn != nil {
+			name, _ = fn["name"].(string)
+		}
+		if name == "" {
+			name, _ = tc["name"].(string)
+		}
+		if name == "" {
+			name = "unknown"
+		}
+
+		// Extract a brief args summary
+		argsSummary := ""
+		var argsRaw interface{}
+		if fn != nil {
+			argsRaw = fn["arguments"]
+		}
+		if argsRaw == nil {
+			argsRaw = tc["arguments"]
+		}
+		switch v := argsRaw.(type) {
+		case string:
+			if len(v) > 100 {
+				argsSummary = v[:100]
+			} else {
+				argsSummary = v
+			}
+		case map[string]interface{}:
+			// Extract first meaningful arg
+			for k, val := range v {
+				s := fmt.Sprintf("%v", val)
+				if len(s) > 80 {
+					s = s[:80]
+				}
+				argsSummary = k + "=" + s
+				break
+			}
+		}
+
+		if argsSummary != "" {
+			parts = append(parts, fmt.Sprintf("%s(%s)", name, argsSummary))
+		} else {
+			parts = append(parts, name)
+		}
+	}
+	return "[Tool calls: " + strings.Join(parts, ", ") + "]"
 }
 
 func stringifyError(err error) string {

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/mux"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/compat"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
@@ -340,7 +339,7 @@ func messagesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func providerMessagesHandler(w http.ResponseWriter, r *http.Request) {
-	providerName := strings.TrimSpace(mux.Vars(r)["provider"])
+	providerName := strings.TrimSpace(r.PathValue("provider"))
 	handleAnthropicMessages(w, r, providerName)
 }
 

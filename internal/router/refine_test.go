@@ -47,7 +47,7 @@ func TestNeedsRefinement(t *testing.T) {
 		{"word vomit", "can you like fix the auth thing or whatever", refinementLight},
 		{"fragmented", "auth broken whatever", refinementLight},
 		{"vague with trigger", "test stuff", refinementLight},
-		{"lazy fix", "fix it", refinementLight},
+		{"lazy fix", "fix it", refinementFull}, // "fix" no longer triggers any skill
 		{"sloppy docker", "docker thing not right", refinementLight},
 		{"sloppy review", "review this", refinementLight},
 		{"messy implement", "implement something for the api", refinementLight},
@@ -296,7 +296,7 @@ func TestRefineIntent_SloppyWithContext_SkillsMatch(t *testing.T) {
 
 	assertSkillPresent(t, names, "docker-expert", "refined prompt should match docker-expert")
 	assertSkillPresent(t, names, "go-patterns", "refined prompt should match go-patterns (Go API)")
-	assertSkillPresent(t, names, "code-implement", "refined prompt should match code-implement (fix)")
+	// "fix" no longer triggers code-implement
 }
 
 func TestRefineIntent_VagueNoContext_Unchanged(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
 )
 
 type ChatExecutor interface {
@@ -21,13 +22,15 @@ type ChatExecutor interface {
 }
 
 type Manager struct {
-	executor  ChatExecutor
-	memory    *memory.VectorMemory
-	mcpClient *mcp.MCPClient
-	roles     []Role
-	skills    []Skill
-	db        *sql.DB
-	dag       *DAGScheduler
+	executor     ChatExecutor
+	memory       *memory.VectorMemory
+	mcpClient    *mcp.MCPClient
+	toolRegistry *tools.Registry
+	workDir      string
+	roles        []Role
+	skills       []Skill
+	db           *sql.DB
+	dag          *DAGScheduler
 
 	mu                      sync.RWMutex
 	counter                 int
@@ -67,6 +70,27 @@ func (m *Manager) SetMCPClient(client *mcp.MCPClient) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.mcpClient = client
+}
+
+// SetToolRegistry attaches a tool registry for agent tool execution during orchestration.
+func (m *Manager) SetToolRegistry(registry *tools.Registry) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.toolRegistry = registry
+}
+
+// SetWorkDir sets the working directory for tool execution.
+func (m *Manager) SetWorkDir(dir string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.workDir = dir
+}
+
+// ToolRegistry returns the attached tool registry, or nil.
+func (m *Manager) ToolRegistry() *tools.Registry {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.toolRegistry
 }
 
 // Skills returns a copy of the registered skill list.
@@ -122,7 +146,7 @@ func (m *Manager) invokeMCPTools(ctx context.Context, chain []Skill, goal string
 }
 
 // invokeMCPToolsForTask detects skill-dispatched steps and invokes their MCP tools.
-func (m *Manager) invokeMCPToolsForTask(task *Task) string {
+func (m *Manager) invokeMCPToolsForTask(ctx context.Context, task *Task) string {
 	// Reconstruct matched skills from step prompts to find MCP tools
 	m.mu.RLock()
 	skills := m.skills
@@ -134,7 +158,7 @@ func (m *Manager) invokeMCPToolsForTask(task *Task) string {
 	}
 
 	chain := BuildSkillChain(matched)
-	return m.invokeMCPTools(context.Background(), chain, task.Goal)
+	return m.invokeMCPTools(ctx, chain, task.Goal)
 }
 
 func (m *Manager) bootstrapDefaults() {
@@ -311,7 +335,7 @@ func (m *Manager) CreateTask(ctx context.Context, req TaskRequest) (*Task, error
 	m.persistTask(task)
 
 	if req.Execute {
-		go m.runTask(task.ID)
+		go m.runTask(context.Background(), task.ID)
 	}
 
 	copyTask := *task
@@ -350,7 +374,7 @@ func (m *Manager) RefineTask(ctx context.Context, taskID string, req RefineReque
 	m.persistTask(task)
 
 	if req.Execute {
-		go m.runTask(task.ID)
+		go m.runTask(context.Background(), task.ID)
 	}
 
 	return cloneTask(task), nil
@@ -453,7 +477,7 @@ func (m *Manager) StartTask(taskID string) error {
 	if !ok {
 		return fmt.Errorf("task not found: %s", taskID)
 	}
-	go m.runTask(taskID)
+	go m.runTask(context.Background(), taskID)
 	return nil
 }
 
@@ -1557,7 +1581,7 @@ func (m *Manager) SubscribeTask(taskID string) (<-chan AutopilotEvent, func(), e
 	return ch, cancel, nil
 }
 
-func (m *Manager) runTask(taskID string) {
+func (m *Manager) runTask(ctx context.Context, taskID string) {
 	task, err := m.markTaskRunning(taskID)
 	if err != nil {
 		return
@@ -1588,7 +1612,7 @@ func (m *Manager) runTask(taskID string) {
 
 	// Auto-invoke MCP tools if the task was skill-dispatched
 	var previousOutputs []string
-	if mcpContext := m.invokeMCPToolsForTask(task); mcpContext != "" {
+	if mcpContext := m.invokeMCPToolsForTask(ctx, task); mcpContext != "" {
 		previousOutputs = append(previousOutputs, mcpContext)
 		log.Printf("[dispatch] MCP context injected for task %s (%d bytes)", task.ID, len(mcpContext))
 	}
@@ -1624,7 +1648,7 @@ func (m *Manager) runTask(taskID string) {
 			Status:  string(StepStatusPending),
 			Summary: task.Steps[idx].Prompt,
 		})
-		if err := m.runStep(task, idx, previousOutputs); err != nil {
+		if err := m.runStep(ctx, task, idx, previousOutputs); err != nil {
 			m.failTask(task.ID, err)
 			m.publish(task.ID, AutopilotEvent{
 				Type:    "autopilot_error",
@@ -1670,7 +1694,7 @@ func (m *Manager) runTask(taskID string) {
 	m.finishTaskListeners(task.ID)
 }
 
-func (m *Manager) runStep(task *Task, index int, previousOutputs []string) error {
+func (m *Manager) runStep(ctx context.Context, task *Task, index int, previousOutputs []string) error {
 	now := time.Now()
 
 	m.mu.Lock()
@@ -1701,14 +1725,18 @@ func (m *Manager) runStep(task *Task, index int, previousOutputs []string) error
 	if m.memory != nil {
 		relevant, _ = m.memory.RetrieveRelevant(task.Goal, task.SessionID, 2000)
 	}
+	toolDefs := builtInOrchestrationTools()
+	if m.toolRegistry != nil {
+		toolDefs = append(toolDefs, m.toolRegistry.OpenAIToolDefinitions()...)
+	}
 	request := providers.ChatRequest{
 		Model:     "auto",
 		MaxTokens: 1500,
 		Messages:  buildMessages(task, task.Steps[index], relevant, previousOutputs),
-		Tools:     builtInOrchestrationTools(),
+		Tools:     toolDefs,
 	}
 
-	resp, err := m.completeToolCallingStep(context.Background(), task, index, request)
+	resp, err := m.completeToolCallingStep(ctx, task, index, request)
 	if err != nil {
 		m.mu.Lock()
 		task.Steps[index].Status = StepStatusFailed
@@ -1802,7 +1830,7 @@ func (m *Manager) completeToolCallingStep(ctx context.Context, task *Task, stepI
 				},
 			})
 
-			toolName, result, err := m.executeBuiltInToolCall(toolCall)
+			toolName, result, err := m.executeBuiltInToolCall(ctx, toolCall)
 			if err != nil {
 				result = err.Error()
 			}
@@ -2461,7 +2489,7 @@ func builtInOrchestrationTools() []map[string]interface{} {
 	}
 }
 
-func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (string, string, error) {
+func (m *Manager) executeBuiltInToolCall(ctx context.Context, toolCall map[string]interface{}) (string, string, error) {
 	function, _ := toolCall["function"].(map[string]interface{})
 	name := firstNonEmptyString(orchestrationStringValue(function["name"]), orchestrationStringValue(toolCall["name"]))
 	args := parseToolArguments(function["arguments"])
@@ -2501,7 +2529,7 @@ func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (strin
 		})
 		return name, string(result), err
 	case "create_task":
-		task, err := m.CreateTask(context.Background(), TaskRequest{
+		task, err := m.CreateTask(ctx, TaskRequest{
 			Goal:      orchestrationStringValue(args["goal"]),
 			SessionID: orchestrationStringValue(args["session_id"]),
 			Roles:     stringSliceValue(args["roles"]),
@@ -2514,7 +2542,7 @@ func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (strin
 		result, err := json.Marshal(task)
 		return name, string(result), err
 	case "init_swarm":
-		swarm, err := m.InitSwarm(context.Background(), SwarmRequest{
+		swarm, err := m.InitSwarm(ctx, SwarmRequest{
 			Objective:  orchestrationStringValue(args["objective"]),
 			Topology:   orchestrationStringValue(args["topology"]),
 			Strategy:   orchestrationStringValue(args["strategy"]),
@@ -2529,7 +2557,7 @@ func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (strin
 		result, err := json.Marshal(swarm)
 		return name, string(result), err
 	case "run_workflow_template":
-		swarm, task, err := m.RunWorkflowTemplate(context.Background(), orchestrationStringValue(args["template_id"]), WorkflowRunRequest{
+		swarm, task, err := m.RunWorkflowTemplate(ctx, orchestrationStringValue(args["template_id"]), WorkflowRunRequest{
 			Objective: orchestrationStringValue(args["objective"]),
 			SessionID: orchestrationStringValue(args["session_id"]),
 			Execute:   boolValue(args["execute"]),
@@ -2636,7 +2664,7 @@ func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (strin
 		result, err := json.Marshal(agents)
 		return name, string(result), err
 	case "spawn_agent":
-		agent, err := m.SpawnAgent(context.Background(), AgentSpawnRequest{
+		agent, err := m.SpawnAgent(ctx, AgentSpawnRequest{
 			Type:    orchestrationStringValue(args["type"]),
 			Name:    orchestrationStringValue(args["name"]),
 			SwarmID: orchestrationStringValue(args["swarm_id"]),
@@ -2693,7 +2721,7 @@ func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (strin
 	case "start_swarm":
 		swarmID := orchestrationStringValue(args["swarm_id"])
 		sessionID := orchestrationStringValue(args["session_id"])
-		task, err := m.StartSwarm(context.Background(), swarmID, sessionID)
+		task, err := m.StartSwarm(ctx, swarmID, sessionID)
 		if err != nil {
 			return name, "", err
 		}
@@ -2711,7 +2739,7 @@ func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (strin
 		taskID := orchestrationStringValue(args["task_id"])
 		feedback := orchestrationStringValue(args["feedback"])
 		execute := boolValue(args["execute"])
-		task, err := m.RefineTask(context.Background(), taskID, RefineRequest{
+		task, err := m.RefineTask(ctx, taskID, RefineRequest{
 			Feedback: feedback,
 			Execute:  execute,
 		})
@@ -2724,7 +2752,7 @@ func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (strin
 		sessionID := orchestrationStringValue(args["session_id"])
 		goal := orchestrationStringValue(args["goal"])
 		execute := boolValue(args["execute"])
-		task, err := m.ResumeSessionTask(context.Background(), sessionID, goal, execute)
+		task, err := m.ResumeSessionTask(ctx, sessionID, goal, execute)
 		if err != nil {
 			return name, "", err
 		}
@@ -2732,7 +2760,7 @@ func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (strin
 		return name, string(result), err
 	case "fork_session":
 		sourceSessionID := orchestrationStringValue(args["source_session_id"])
-		task, err := m.ForkSessionTask(context.Background(), sourceSessionID, SessionForkRequest{
+		task, err := m.ForkSessionTask(ctx, sourceSessionID, SessionForkRequest{
 			SessionID: orchestrationStringValue(args["session_id"]),
 			Goal:      orchestrationStringValue(args["goal"]),
 			Execute:   boolValue(args["execute"]),
@@ -2753,7 +2781,7 @@ func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (strin
 	case "scale_swarm":
 		swarmID := orchestrationStringValue(args["swarm_id"])
 		count := intValue(args["count"], 0)
-		swarm, err := m.ScaleSwarm(context.Background(), swarmID, count)
+		swarm, err := m.ScaleSwarm(ctx, swarmID, count)
 		if err != nil {
 			return name, "", err
 		}
@@ -2762,7 +2790,7 @@ func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (strin
 	case "coordinate_swarm":
 		swarmID := orchestrationStringValue(args["swarm_id"])
 		agents := intValue(args["agents"], 0)
-		swarm, err := m.CoordinateSwarm(context.Background(), swarmID, agents)
+		swarm, err := m.CoordinateSwarm(ctx, swarmID, agents)
 		if err != nil {
 			return name, "", err
 		}
@@ -2770,7 +2798,7 @@ func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (strin
 		return name, string(result), err
 	case "rebalance_swarm":
 		swarmID := orchestrationStringValue(args["swarm_id"])
-		tasks, err := m.RebalanceSwarm(context.Background(), swarmID)
+		tasks, err := m.RebalanceSwarm(ctx, swarmID)
 		if err != nil {
 			return name, "", err
 		}
@@ -2816,7 +2844,7 @@ func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (strin
 		taskID := orchestrationStringValue(args["task_id"])
 		swarmID := orchestrationStringValue(args["swarm_id"])
 		stealerID := orchestrationStringValue(args["stealer_id"])
-		resultValue, err := m.StealTask(context.Background(), taskID, swarmID, stealerID)
+		resultValue, err := m.StealTask(ctx, taskID, swarmID, stealerID)
 		if err != nil {
 			return name, "", err
 		}
@@ -2892,6 +2920,23 @@ func (m *Manager) executeBuiltInToolCall(toolCall map[string]interface{}) (strin
 		result, err := json.Marshal(results)
 		return name, string(result), err
 	default:
+		// Delegate to tool registry if available
+		if m.toolRegistry != nil {
+			if _, ok := m.toolRegistry.Get(name); ok {
+				workDir := m.workDir
+				if workDir == "" {
+					workDir = "."
+				}
+				result, err := m.toolRegistry.Execute(ctx, name, args, workDir)
+				if err != nil {
+					return name, "", err
+				}
+				if result.Error != "" {
+					return name, result.Error, nil
+				}
+				return name, result.Output, nil
+			}
+		}
 		return name, "", fmt.Errorf("unsupported tool: %s", name)
 	}
 }

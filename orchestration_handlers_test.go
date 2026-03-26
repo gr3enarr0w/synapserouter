@@ -48,7 +48,7 @@ func TestOrchestrationTaskRefineHandlerCreatesRefinementTask(t *testing.T) {
 
 	body := `{"feedback":"Add a stronger review and testing pass","execute":false}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/orchestration/tasks/"+parent.ID+"/refine", strings.NewReader(body))
-	req = muxSetVars(req, map[string]string{"task_id": parent.ID})
+	req.SetPathValue("task_id", parent.ID)
 	rr := httptest.NewRecorder()
 
 	orchestrationTaskRefineHandler(rr, req)
@@ -130,7 +130,7 @@ func TestOrchestrationTaskAssignHandlerAssignsAgent(t *testing.T) {
 
 	body := `{"agent_id":"` + swarm.AgentIDs[0] + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/orchestration/tasks/"+task.ID+"/assign", strings.NewReader(body))
-	req = muxSetVars(req, map[string]string{"task_id": task.ID})
+	req.SetPathValue("task_id", task.ID)
 	rr := httptest.NewRecorder()
 
 	orchestrationTaskAssignHandler(rr, req)
@@ -158,7 +158,7 @@ func TestOrchestrationTaskPauseAndResumeHandlers(t *testing.T) {
 	}
 
 	pauseReq := httptest.NewRequest(http.MethodPost, "/v1/orchestration/tasks/"+task.ID+"/pause", nil)
-	pauseReq = muxSetVars(pauseReq, map[string]string{"task_id": task.ID})
+	pauseReq.SetPathValue("task_id", task.ID)
 	pauseRR := httptest.NewRecorder()
 	orchestrationTaskPauseHandler(pauseRR, pauseReq)
 	if pauseRR.Code != http.StatusOK {
@@ -166,7 +166,7 @@ func TestOrchestrationTaskPauseAndResumeHandlers(t *testing.T) {
 	}
 
 	resumeReq := httptest.NewRequest(http.MethodPost, "/v1/orchestration/tasks/"+task.ID+"/resume", nil)
-	resumeReq = muxSetVars(resumeReq, map[string]string{"task_id": task.ID})
+	resumeReq.SetPathValue("task_id", task.ID)
 	resumeRR := httptest.NewRecorder()
 	orchestrationTaskResumeHandler(resumeRR, resumeReq)
 	if resumeRR.Code != http.StatusOK {
@@ -207,7 +207,7 @@ func TestOrchestrationWorkflowRunHandlerCreatesSwarm(t *testing.T) {
 	orchestrator = orchestration.NewManager(stubChatExecutor{}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/orchestration/workflows/development/run", strings.NewReader(`{"objective":"Ship feature","execute":false}`))
-	req = muxSetVars(req, map[string]string{"template_id": "development"})
+	req.SetPathValue("template_id", "development")
 	rr := httptest.NewRecorder()
 
 	orchestrationWorkflowRunHandler(rr, req)
@@ -230,7 +230,7 @@ func TestOrchestrationWorkflowRunHandlerCreatesSwarm(t *testing.T) {
 func TestOrchestrationWorkflowHandlerReturnsTemplate(t *testing.T) {
 	orchestrator = orchestration.NewManager(stubChatExecutor{}, nil)
 	req := httptest.NewRequest(http.MethodGet, "/v1/orchestration/workflows/development", nil)
-	req = muxSetVars(req, map[string]string{"template_id": "development"})
+	req.SetPathValue("template_id", "development")
 	rr := httptest.NewRecorder()
 
 	orchestrationWorkflowHandler(rr, req)
@@ -275,7 +275,7 @@ func TestOrchestrationWorkflowHandlerUpdatesAndDeletesTemplate(t *testing.T) {
 	}
 
 	updateReq := httptest.NewRequest(http.MethodPut, "/v1/orchestration/workflows/custom-edit", strings.NewReader(`{"name":"Updated Flow","topology":"hierarchical","strategy":"development"}`))
-	updateReq = muxSetVars(updateReq, map[string]string{"template_id": "custom-edit"})
+	updateReq.SetPathValue("template_id", "custom-edit")
 	updateRR := httptest.NewRecorder()
 	orchestrationWorkflowHandler(updateRR, updateReq)
 	if updateRR.Code != http.StatusOK {
@@ -286,7 +286,7 @@ func TestOrchestrationWorkflowHandlerUpdatesAndDeletesTemplate(t *testing.T) {
 	}
 
 	deleteReq := httptest.NewRequest(http.MethodDelete, "/v1/orchestration/workflows/custom-edit", nil)
-	deleteReq = muxSetVars(deleteReq, map[string]string{"template_id": "custom-edit"})
+	deleteReq.SetPathValue("template_id", "custom-edit")
 	deleteRR := httptest.NewRecorder()
 	orchestrationWorkflowHandler(deleteRR, deleteReq)
 	if deleteRR.Code != http.StatusNoContent {
@@ -304,7 +304,7 @@ func TestOrchestrationSwarmHandlerIncludesMetrics(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/orchestration/swarms/"+swarm.ID+"?include_metrics=true", nil)
-	req = muxSetVars(req, map[string]string{"swarm_id": swarm.ID})
+	req.SetPathValue("swarm_id", swarm.ID)
 	rr := httptest.NewRecorder()
 
 	orchestrationSwarmHandler(rr, req)
@@ -332,7 +332,7 @@ func TestOrchestrationAgentHandlerIncludesMetrics(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/orchestration/agents/"+agents[0].ID+"?include_metrics=true", nil)
-	req = muxSetVars(req, map[string]string{"agent_id": agents[0].ID})
+	req.SetPathValue("agent_id", agents[0].ID)
 	rr := httptest.NewRecorder()
 
 	orchestrationAgentHandler(rr, req)
@@ -356,7 +356,7 @@ func TestOrchestrationSessionHandlersResumeAndFork(t *testing.T) {
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/v1/orchestration/sessions/session-z/tasks", nil)
-	listReq = muxSetVars(listReq, map[string]string{"session_id": "session-z"})
+	listReq.SetPathValue("session_id", "session-z")
 	listRR := httptest.NewRecorder()
 	orchestrationSessionTasksHandler(listRR, listReq)
 	if listRR.Code != http.StatusOK {
@@ -364,7 +364,7 @@ func TestOrchestrationSessionHandlersResumeAndFork(t *testing.T) {
 	}
 
 	resumeReq := httptest.NewRequest(http.MethodPost, "/v1/orchestration/sessions/session-z/resume", strings.NewReader(`{}`))
-	resumeReq = muxSetVars(resumeReq, map[string]string{"session_id": "session-z"})
+	resumeReq.SetPathValue("session_id", "session-z")
 	resumeRR := httptest.NewRecorder()
 	orchestrationSessionResumeHandler(resumeRR, resumeReq)
 	if resumeRR.Code != http.StatusAccepted {
@@ -372,7 +372,7 @@ func TestOrchestrationSessionHandlersResumeAndFork(t *testing.T) {
 	}
 
 	forkReq := httptest.NewRequest(http.MethodPost, "/v1/orchestration/sessions/session-z/fork", strings.NewReader(`{"session_id":"session-z-branch","goal":"Branch task"}`))
-	forkReq = muxSetVars(forkReq, map[string]string{"session_id": "session-z"})
+	forkReq.SetPathValue("session_id", "session-z")
 	forkRR := httptest.NewRecorder()
 	orchestrationSessionForkHandler(forkRR, forkReq)
 	if forkRR.Code != http.StatusAccepted {
@@ -427,7 +427,7 @@ func TestOrchestrationTaskCancelHandlerCancelsTask(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/orchestration/tasks/"+task.ID+"/cancel", nil)
-	req = muxSetVars(req, map[string]string{"task_id": task.ID})
+	req.SetPathValue("task_id", task.ID)
 	rr := httptest.NewRecorder()
 
 	orchestrationTaskCancelHandler(rr, req)
@@ -456,7 +456,7 @@ func TestOrchestrationSwarmScaleHandlerScalesSwarm(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/orchestration/swarms/"+swarm.ID+"/scale", strings.NewReader(`{"count":5}`))
-	req = muxSetVars(req, map[string]string{"swarm_id": swarm.ID})
+	req.SetPathValue("swarm_id", swarm.ID)
 	rr := httptest.NewRecorder()
 
 	orchestrationSwarmScaleHandler(rr, req)
@@ -506,7 +506,7 @@ func TestOrchestrationAgentStatusHandlerReturnsAgentStatus(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/orchestration/agents/"+agent.ID+"/status", nil)
-	req = muxSetVars(req, map[string]string{"agent_id": agent.ID})
+	req.SetPathValue("agent_id", agent.ID)
 	rr := httptest.NewRecorder()
 
 	orchestrationAgentStatusHandler(rr, req)
@@ -550,7 +550,7 @@ func TestOrchestrationAgentLogsHandlerReturnsAssignedTaskHistory(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/orchestration/agents/"+swarm.AgentIDs[0]+"/logs", nil)
-	req = muxSetVars(req, map[string]string{"agent_id": swarm.AgentIDs[0]})
+	req.SetPathValue("agent_id", swarm.AgentIDs[0])
 	rr := httptest.NewRecorder()
 
 	orchestrationAgentLogsHandler(rr, req)
@@ -582,7 +582,7 @@ func TestOrchestrationSwarmStatusHandlerReturnsSwarmStatus(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/orchestration/swarms/"+swarm.ID+"/status", nil)
-	req = muxSetVars(req, map[string]string{"swarm_id": swarm.ID})
+	req.SetPathValue("swarm_id", swarm.ID)
 	rr := httptest.NewRecorder()
 
 	orchestrationSwarmStatusHandler(rr, req)
@@ -639,7 +639,7 @@ func TestOrchestrationSwarmLoadAndStealHandlers(t *testing.T) {
 	}
 
 	loadReq := httptest.NewRequest(http.MethodGet, "/v1/orchestration/swarms/"+swarm.ID+"/load", nil)
-	loadReq = muxSetVars(loadReq, map[string]string{"swarm_id": swarm.ID})
+	loadReq.SetPathValue("swarm_id", swarm.ID)
 	loadRR := httptest.NewRecorder()
 	orchestrationSwarmLoadHandler(loadRR, loadReq)
 	if loadRR.Code != http.StatusOK {
@@ -647,7 +647,7 @@ func TestOrchestrationSwarmLoadAndStealHandlers(t *testing.T) {
 	}
 
 	imbalanceReq := httptest.NewRequest(http.MethodGet, "/v1/orchestration/swarms/"+swarm.ID+"/imbalance", nil)
-	imbalanceReq = muxSetVars(imbalanceReq, map[string]string{"swarm_id": swarm.ID})
+	imbalanceReq.SetPathValue("swarm_id", swarm.ID)
 	imbalanceRR := httptest.NewRecorder()
 	orchestrationSwarmImbalanceHandler(imbalanceRR, imbalanceReq)
 	if imbalanceRR.Code != http.StatusOK {
@@ -655,7 +655,7 @@ func TestOrchestrationSwarmLoadAndStealHandlers(t *testing.T) {
 	}
 
 	previewReq := httptest.NewRequest(http.MethodPost, "/v1/orchestration/swarms/"+swarm.ID+"/rebalance/preview", nil)
-	previewReq = muxSetVars(previewReq, map[string]string{"swarm_id": swarm.ID})
+	previewReq.SetPathValue("swarm_id", swarm.ID)
 	previewRR := httptest.NewRecorder()
 	orchestrationSwarmRebalancePreviewHandler(previewRR, previewReq)
 	if previewRR.Code != http.StatusOK {
@@ -663,7 +663,7 @@ func TestOrchestrationSwarmLoadAndStealHandlers(t *testing.T) {
 	}
 
 	stealableReq := httptest.NewRequest(http.MethodGet, "/v1/orchestration/swarms/"+swarm.ID+"/stealable", nil)
-	stealableReq = muxSetVars(stealableReq, map[string]string{"swarm_id": swarm.ID})
+	stealableReq.SetPathValue("swarm_id", swarm.ID)
 	stealableRR := httptest.NewRecorder()
 	orchestrationSwarmStealableTasksHandler(stealableRR, stealableReq)
 	if stealableRR.Code != http.StatusOK {
@@ -674,7 +674,7 @@ func TestOrchestrationSwarmLoadAndStealHandlers(t *testing.T) {
 	}
 
 	stealReq := httptest.NewRequest(http.MethodPost, "/v1/orchestration/tasks/"+queuedTask.ID+"/steal", strings.NewReader(`{"swarm_id":"`+swarm.ID+`","stealer_id":"`+swarm.AgentIDs[1]+`"}`))
-	stealReq = muxSetVars(stealReq, map[string]string{"task_id": queuedTask.ID})
+	stealReq.SetPathValue("task_id", queuedTask.ID)
 	stealRR := httptest.NewRecorder()
 	orchestrationTaskStealHandler(stealRR, stealReq)
 	if stealRR.Code != http.StatusOK {
@@ -696,7 +696,7 @@ func TestOrchestrationExecutionAndSwarmPauseResumeHandlers(t *testing.T) {
 	}
 
 	stateReq := httptest.NewRequest(http.MethodGet, "/v1/orchestration/executions/"+swarm.ID+"/state", nil)
-	stateReq = muxSetVars(stateReq, map[string]string{"workflow_id": swarm.ID})
+	stateReq.SetPathValue("workflow_id", swarm.ID)
 	stateRR := httptest.NewRecorder()
 	orchestrationExecutionStateHandler(stateRR, stateReq)
 	if stateRR.Code != http.StatusOK {
@@ -704,7 +704,7 @@ func TestOrchestrationExecutionAndSwarmPauseResumeHandlers(t *testing.T) {
 	}
 
 	metricsReq := httptest.NewRequest(http.MethodGet, "/v1/orchestration/executions/"+swarm.ID+"/metrics", nil)
-	metricsReq = muxSetVars(metricsReq, map[string]string{"workflow_id": swarm.ID})
+	metricsReq.SetPathValue("workflow_id", swarm.ID)
 	metricsRR := httptest.NewRecorder()
 	orchestrationExecutionMetricsHandler(metricsRR, metricsReq)
 	if metricsRR.Code != http.StatusOK {
@@ -712,7 +712,7 @@ func TestOrchestrationExecutionAndSwarmPauseResumeHandlers(t *testing.T) {
 	}
 
 	debugReq := httptest.NewRequest(http.MethodGet, "/v1/orchestration/executions/"+swarm.ID+"/debug", nil)
-	debugReq = muxSetVars(debugReq, map[string]string{"workflow_id": swarm.ID})
+	debugReq.SetPathValue("workflow_id", swarm.ID)
 	debugRR := httptest.NewRecorder()
 	orchestrationExecutionDebugHandler(debugRR, debugReq)
 	if debugRR.Code != http.StatusOK {
@@ -720,7 +720,7 @@ func TestOrchestrationExecutionAndSwarmPauseResumeHandlers(t *testing.T) {
 	}
 
 	pauseReq := httptest.NewRequest(http.MethodPost, "/v1/orchestration/swarms/"+swarm.ID+"/pause", nil)
-	pauseReq = muxSetVars(pauseReq, map[string]string{"swarm_id": swarm.ID})
+	pauseReq.SetPathValue("swarm_id", swarm.ID)
 	pauseRR := httptest.NewRecorder()
 	orchestrationSwarmPauseHandler(pauseRR, pauseReq)
 	if pauseRR.Code != http.StatusOK {
@@ -728,7 +728,7 @@ func TestOrchestrationExecutionAndSwarmPauseResumeHandlers(t *testing.T) {
 	}
 
 	resumeReq := httptest.NewRequest(http.MethodPost, "/v1/orchestration/swarms/"+swarm.ID+"/resume", nil)
-	resumeReq = muxSetVars(resumeReq, map[string]string{"swarm_id": swarm.ID})
+	resumeReq.SetPathValue("swarm_id", swarm.ID)
 	resumeRR := httptest.NewRecorder()
 	orchestrationSwarmResumeHandler(resumeRR, resumeReq)
 	if resumeRR.Code != http.StatusOK {
@@ -758,7 +758,7 @@ func TestOrchestrationTaskContestHandlers(t *testing.T) {
 	}
 
 	contestReq := httptest.NewRequest(http.MethodPost, "/v1/orchestration/tasks/"+task.ID+"/contest", strings.NewReader(`{"original_agent_id":"`+swarm.AgentIDs[0]+`","reason":"want it back"}`))
-	contestReq = muxSetVars(contestReq, map[string]string{"task_id": task.ID})
+	contestReq.SetPathValue("task_id", task.ID)
 	contestRR := httptest.NewRecorder()
 	orchestrationTaskContestHandler(contestRR, contestReq)
 	if contestRR.Code != http.StatusOK {
@@ -766,7 +766,7 @@ func TestOrchestrationTaskContestHandlers(t *testing.T) {
 	}
 
 	resolveReq := httptest.NewRequest(http.MethodPost, "/v1/orchestration/tasks/"+task.ID+"/contest/resolve", strings.NewReader(`{"winner_agent_id":"`+swarm.AgentIDs[0]+`","reason":"approved"}`))
-	resolveReq = muxSetVars(resolveReq, map[string]string{"task_id": task.ID})
+	resolveReq.SetPathValue("task_id", task.ID)
 	resolveRR := httptest.NewRecorder()
 	orchestrationTaskContestResolveHandler(resolveRR, resolveReq)
 	if resolveRR.Code != http.StatusOK {

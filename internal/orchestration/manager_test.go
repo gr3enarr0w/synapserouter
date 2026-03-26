@@ -18,6 +18,7 @@ import (
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
 )
 
 type stubExecutor struct{}
@@ -787,7 +788,7 @@ func TestManagerPublishesStructuredAutopilotEvents(t *testing.T) {
 	}
 	defer cancel()
 
-	go manager.runTask(task.ID)
+	go manager.runTask(context.Background(), task.ID)
 
 	var eventTypes []string
 	deadline := time.After(2 * time.Second)
@@ -874,7 +875,7 @@ func TestExecuteBuiltInToolCallSupportsRefineTask(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	name, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	name, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "refine_task",
 			"arguments": fmt.Sprintf(`{"task_id":"%s","feedback":"Add testing","execute":false}`, task.ID),
@@ -904,7 +905,7 @@ func TestExecuteBuiltInToolCallSupportsCoordinateSwarm(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	name, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	name, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "coordinate_swarm",
 			"arguments": fmt.Sprintf(`{"swarm_id":"%s","agents":4}`, swarm.ID),
@@ -933,7 +934,7 @@ func TestExecuteBuiltInToolCallSupportsResumeAndForkSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, resumeResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, resumeResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "resume_session",
 			"arguments": `{"session_id":"sess-a","goal":"Resume session work","execute":false}`,
@@ -946,7 +947,7 @@ func TestExecuteBuiltInToolCallSupportsResumeAndForkSession(t *testing.T) {
 		t.Fatalf("expected resumed session result, got %s", resumeResult)
 	}
 
-	_, forkResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, forkResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "fork_session",
 			"arguments": `{"source_session_id":"sess-a","session_id":"sess-b","goal":"Forked branch","execute":false}`,
@@ -976,7 +977,7 @@ func TestExecuteBuiltInToolCallSupportsAssignStartAndCancelTask(t *testing.T) {
 		t.Fatal("expected default agents")
 	}
 
-	_, assignResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, assignResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "assign_task",
 			"arguments": fmt.Sprintf(`{"task_id":"%s","agent_id":"%s"}`, task.ID, agents[0].ID),
@@ -989,7 +990,7 @@ func TestExecuteBuiltInToolCallSupportsAssignStartAndCancelTask(t *testing.T) {
 		t.Fatalf("expected assigned task result, got %s", assignResult)
 	}
 
-	_, startResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, startResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "start_task",
 			"arguments": fmt.Sprintf(`{"task_id":"%s"}`, task.ID),
@@ -1008,7 +1009,7 @@ func TestExecuteBuiltInToolCallSupportsAssignStartAndCancelTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, cancelResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, cancelResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "cancel_task",
 			"arguments": fmt.Sprintf(`{"task_id":"%s"}`, cancelTask.ID),
@@ -1027,7 +1028,7 @@ func TestExecuteBuiltInToolCallSupportsAgentAndSwarmManagement(t *testing.T) {
 	vm := memory.NewVectorMemory(db)
 	manager := NewManager(stubExecutor{}, vm)
 
-	_, spawnResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, spawnResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "spawn_agent",
 			"arguments": `{"type":"designer","name":"ui-worker"}`,
@@ -1042,7 +1043,7 @@ func TestExecuteBuiltInToolCallSupportsAgentAndSwarmManagement(t *testing.T) {
 
 	agents := manager.ListAgents()
 	agentID := agents[len(agents)-1].ID
-	_, stopResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, stopResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "stop_agent",
 			"arguments": fmt.Sprintf(`{"agent_id":"%s"}`, agentID),
@@ -1055,7 +1056,7 @@ func TestExecuteBuiltInToolCallSupportsAgentAndSwarmManagement(t *testing.T) {
 		t.Fatalf("expected stopped agent result, got %s", stopResult)
 	}
 
-	if _, listAgentsResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	if _, listAgentsResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "list_agents",
 			"arguments": `{"status":"stopped"}`,
@@ -1066,7 +1067,7 @@ func TestExecuteBuiltInToolCallSupportsAgentAndSwarmManagement(t *testing.T) {
 		t.Fatalf("expected stopped agents in result, got %s", listAgentsResult)
 	}
 
-	if _, listSwarmsResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	if _, listSwarmsResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "list_swarms",
 			"arguments": `{}`,
@@ -1099,7 +1100,7 @@ func TestExecuteBuiltInToolCallSupportsDelegationAndSwarmLifecycle(t *testing.T)
 		t.Fatal(err)
 	}
 
-	_, delegatedResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, delegatedResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "delegate_task",
 			"arguments": fmt.Sprintf(`{"task_id":"%s","swarm_id":"%s"}`, task.ID, swarm.ID),
@@ -1112,7 +1113,7 @@ func TestExecuteBuiltInToolCallSupportsDelegationAndSwarmLifecycle(t *testing.T)
 		t.Fatalf("expected delegated task assignment, got %s", delegatedResult)
 	}
 
-	_, startResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, startResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "start_swarm",
 			"arguments": fmt.Sprintf(`{"swarm_id":"%s","session_id":"swarm-session"}`, swarm.ID),
@@ -1125,7 +1126,7 @@ func TestExecuteBuiltInToolCallSupportsDelegationAndSwarmLifecycle(t *testing.T)
 		t.Fatalf("expected started swarm task, got %s", startResult)
 	}
 
-	_, stopResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, stopResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "stop_swarm",
 			"arguments": fmt.Sprintf(`{"swarm_id":"%s"}`, swarm.ID),
@@ -1144,7 +1145,7 @@ func TestExecuteBuiltInToolCallSupportsCreationFlows(t *testing.T) {
 	vm := memory.NewVectorMemory(db)
 	manager := NewManagerWithStore(stubExecutor{}, vm, db)
 
-	_, createResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, createResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "create_task",
 			"arguments": `{"goal":"Plan a release","session_id":"sess-create","roles":["architect","reviewer"],"execute":false,"max_steps":2}`,
@@ -1157,7 +1158,7 @@ func TestExecuteBuiltInToolCallSupportsCreationFlows(t *testing.T) {
 		t.Fatalf("expected created task result, got %s", createResult)
 	}
 
-	_, initResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, initResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "init_swarm",
 			"arguments": `{"objective":"Ship a feature","topology":"delivery","strategy":"shipping","max_agents":3,"execute":false,"agent_types":["queen-coordinator","coder","tester"]}`,
@@ -1170,7 +1171,7 @@ func TestExecuteBuiltInToolCallSupportsCreationFlows(t *testing.T) {
 		t.Fatalf("expected initialized swarm result, got %s", initResult)
 	}
 
-	_, runResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, runResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "run_workflow_template",
 			"arguments": `{"template_id":"development","objective":"Build a release candidate","session_id":"wf-dev","execute":false}`,
@@ -1189,7 +1190,7 @@ func TestExecuteBuiltInToolCallSupportsWorkflowTemplateLifecycle(t *testing.T) {
 	vm := memory.NewVectorMemory(db)
 	manager := NewManagerWithStore(stubExecutor{}, vm, db)
 
-	_, saveResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, saveResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "save_workflow_template",
 			"arguments": `{"id":"release-train","name":"Release Train","description":"Ship in coordinated stages","topology":"delivery","strategy":"release","agent_types":["queen-coordinator","coder","tester","deployer"],"roles":["architect","coder","tester","documenter"]}`,
@@ -1202,7 +1203,7 @@ func TestExecuteBuiltInToolCallSupportsWorkflowTemplateLifecycle(t *testing.T) {
 		t.Fatalf("expected saved workflow template, got %s", saveResult)
 	}
 
-	_, getResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, getResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "get_workflow_template",
 			"arguments": `{"template_id":"release-train"}`,
@@ -1215,7 +1216,7 @@ func TestExecuteBuiltInToolCallSupportsWorkflowTemplateLifecycle(t *testing.T) {
 		t.Fatalf("expected fetched workflow template, got %s", getResult)
 	}
 
-	_, deleteResult, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, deleteResult, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "delete_workflow_template",
 			"arguments": `{"template_id":"release-train"}`,
@@ -1263,7 +1264,7 @@ func TestExecuteBuiltInToolCallSupportsSwarmRebalancing(t *testing.T) {
 	manager.swarms[swarm.ID].TaskIDs = append(manager.swarms[swarm.ID].TaskIDs, task.ID)
 	manager.mu.Unlock()
 
-	_, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "rebalance_swarm",
 			"arguments": fmt.Sprintf(`{"swarm_id":"%s"}`, swarm.ID),
@@ -1348,7 +1349,7 @@ func TestSwarmLoadPreviewAndWorkStealing(t *testing.T) {
 		t.Fatalf("unexpected steal result: %+v", stealResult)
 	}
 
-	if _, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	if _, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "get_swarm_load",
 			"arguments": fmt.Sprintf(`{"swarm_id":"%s"}`, swarm.ID),
@@ -1359,7 +1360,7 @@ func TestSwarmLoadPreviewAndWorkStealing(t *testing.T) {
 		t.Fatalf("expected swarm load result, got %s", result)
 	}
 
-	if _, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	if _, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "detect_swarm_imbalance",
 			"arguments": fmt.Sprintf(`{"swarm_id":"%s"}`, swarm.ID),
@@ -1370,7 +1371,7 @@ func TestSwarmLoadPreviewAndWorkStealing(t *testing.T) {
 		t.Fatalf("expected imbalance result, got %s", result)
 	}
 
-	if _, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	if _, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "preview_rebalance",
 			"arguments": fmt.Sprintf(`{"swarm_id":"%s"}`, swarm.ID),
@@ -1381,7 +1382,7 @@ func TestSwarmLoadPreviewAndWorkStealing(t *testing.T) {
 		t.Fatalf("expected preview result, got %s", result)
 	}
 
-	if _, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	if _, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "list_stealable_tasks",
 			"arguments": fmt.Sprintf(`{"swarm_id":"%s"}`, swarm.ID),
@@ -1406,7 +1407,7 @@ func TestSwarmLoadPreviewAndWorkStealing(t *testing.T) {
 	manager.mu.Lock()
 	manager.swarms[swarm.ID].TaskIDs = append(manager.swarms[swarm.ID].TaskIDs, task2.ID)
 	manager.mu.Unlock()
-	if _, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	if _, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "steal_task",
 			"arguments": fmt.Sprintf(`{"task_id":"%s","swarm_id":"%s","stealer_id":"%s"}`, task2.ID, swarm.ID, swarm.AgentIDs[2]),
@@ -1469,7 +1470,7 @@ func TestWorkflowStateMetricsDebugAndSwarmPauseResume(t *testing.T) {
 		t.Fatal("expected workflow debug trace")
 	}
 
-	if _, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	if _, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "get_workflow_state",
 			"arguments": fmt.Sprintf(`{"workflow_id":"%s"}`, swarm.ID),
@@ -1480,7 +1481,7 @@ func TestWorkflowStateMetricsDebugAndSwarmPauseResume(t *testing.T) {
 		t.Fatalf("expected workflow state result, got %s", result)
 	}
 
-	if _, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	if _, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "get_workflow_metrics",
 			"arguments": fmt.Sprintf(`{"workflow_id":"%s"}`, swarm.ID),
@@ -1491,7 +1492,7 @@ func TestWorkflowStateMetricsDebugAndSwarmPauseResume(t *testing.T) {
 		t.Fatalf("expected workflow metrics result, got %s", result)
 	}
 
-	if _, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	if _, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "get_workflow_debug_info",
 			"arguments": fmt.Sprintf(`{"workflow_id":"%s"}`, swarm.ID),
@@ -1574,7 +1575,7 @@ func TestTaskStealContestAndStaleDetection(t *testing.T) {
 		t.Fatal("expected stale task detection")
 	}
 
-	if _, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	if _, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "contest_task_steal",
 			"arguments": fmt.Sprintf(`{"task_id":"%s","original_agent_id":"%s","reason":"contest again"}`, task.ID, swarm.AgentIDs[0]),
@@ -1585,7 +1586,7 @@ func TestTaskStealContestAndStaleDetection(t *testing.T) {
 		t.Fatalf("expected contest tool result, got %s", result)
 	}
 
-	if _, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	if _, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "resolve_task_contest",
 			"arguments": fmt.Sprintf(`{"task_id":"%s","winner_agent_id":"%s","reason":"resolved"}`, task.ID, swarm.AgentIDs[1]),
@@ -1596,7 +1597,7 @@ func TestTaskStealContestAndStaleDetection(t *testing.T) {
 		t.Fatalf("expected contest resolution tool result, got %s", result)
 	}
 
-	if _, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	if _, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "detect_stale_tasks",
 			"arguments": fmt.Sprintf(`{"swarm_id":"%s","stale_after_minutes":1}`, swarm.ID),
@@ -1657,7 +1658,7 @@ func TestExecuteBuiltInToolCallSupportsConsensus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, result, err := manager.executeBuiltInToolCall(map[string]interface{}{
+	_, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
 		"function": map[string]interface{}{
 			"name":      "propose_consensus",
 			"arguments": fmt.Sprintf(`{"swarm_id":"%s"}`, swarm.ID),
@@ -2028,4 +2029,247 @@ func newOrchestrationTestDB(t *testing.T) *sql.DB {
 	}
 
 	return db
+}
+
+// --- Tool Registry Integration Tests ---
+
+func TestToolRegistryDelegation(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	manager := NewManager(stubExecutor{}, vm)
+
+	dir := t.TempDir()
+	registry := tools.DefaultRegistry()
+	manager.SetToolRegistry(registry)
+	manager.SetWorkDir(dir)
+
+	t.Run("bash tool delegation", func(t *testing.T) {
+		name, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
+			"function": map[string]interface{}{
+				"name":      "bash",
+				"arguments": `{"command": "echo tool-registry-works"}`,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "bash" {
+			t.Errorf("expected name 'bash', got %q", name)
+		}
+		if !strings.Contains(result, "tool-registry-works") {
+			t.Errorf("expected 'tool-registry-works' in result, got %q", result)
+		}
+	})
+
+	t.Run("file_write delegation", func(t *testing.T) {
+		name, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
+			"function": map[string]interface{}{
+				"name":      "file_write",
+				"arguments": `{"path": "delegated.txt", "content": "hello from orchestration"}`,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "file_write" {
+			t.Errorf("expected name 'file_write', got %q", name)
+		}
+		if result == "" {
+			t.Error("expected non-empty result")
+		}
+	})
+
+	t.Run("file_read delegation", func(t *testing.T) {
+		name, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
+			"function": map[string]interface{}{
+				"name":      "file_read",
+				"arguments": `{"path": "delegated.txt"}`,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "file_read" {
+			t.Errorf("expected name 'file_read', got %q", name)
+		}
+		if !strings.Contains(result, "hello from orchestration") {
+			t.Errorf("expected file content in result, got %q", result)
+		}
+	})
+
+	t.Run("glob delegation", func(t *testing.T) {
+		name, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
+			"function": map[string]interface{}{
+				"name":      "glob",
+				"arguments": `{"pattern": "*.txt"}`,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "glob" {
+			t.Errorf("expected name 'glob', got %q", name)
+		}
+		if !strings.Contains(result, "delegated.txt") {
+			t.Errorf("expected 'delegated.txt' in glob results, got %q", result)
+		}
+	})
+
+	t.Run("unknown tool still fails", func(t *testing.T) {
+		_, _, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
+			"function": map[string]interface{}{
+				"name":      "totally_unknown_tool",
+				"arguments": `{}`,
+			},
+		})
+		if err == nil {
+			t.Error("expected error for unknown tool")
+		}
+	})
+
+	t.Run("builtin tools still take precedence", func(t *testing.T) {
+		// create_task is a built-in — should NOT delegate to registry
+		name, result, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
+			"function": map[string]interface{}{
+				"name":      "create_task",
+				"arguments": `{"goal": "test precedence", "execute": false}`,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "create_task" {
+			t.Errorf("expected name 'create_task', got %q", name)
+		}
+		if !strings.Contains(result, "test precedence") {
+			t.Errorf("expected goal in result, got %q", result)
+		}
+	})
+}
+
+func TestToolRegistryNilDoesNotPanic(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	manager := NewManager(stubExecutor{}, vm)
+	// Don't set tool registry — should fall through to error
+
+	_, _, err := manager.executeBuiltInToolCall(context.Background(), map[string]interface{}{
+		"function": map[string]interface{}{
+			"name":      "bash",
+			"arguments": `{"command": "echo test"}`,
+		},
+	})
+	if err == nil {
+		t.Error("expected error when no registry set and tool not built-in")
+	}
+}
+
+func TestToolRegistryAccessors(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+	manager := NewManager(stubExecutor{}, vm)
+
+	if manager.ToolRegistry() != nil {
+		t.Error("expected nil registry initially")
+	}
+
+	registry := tools.DefaultRegistry()
+	manager.SetToolRegistry(registry)
+
+	if manager.ToolRegistry() == nil {
+		t.Error("expected non-nil registry after set")
+	}
+	if manager.ToolRegistry() != registry {
+		t.Error("expected same registry instance")
+	}
+}
+
+func TestToolDefsIncludedInRunStep(t *testing.T) {
+	db := newOrchestrationTestDB(t)
+	vm := memory.NewVectorMemory(db)
+
+	// Custom executor that captures the request to verify tool defs
+	var capturedTools []map[string]interface{}
+	executor := &toolCapturingExecutor{
+		onChat: func(req providers.ChatRequest) {
+			capturedTools = req.Tools
+		},
+	}
+
+	manager := NewManagerWithStore(executor, vm, db)
+	registry := tools.DefaultRegistry()
+	manager.SetToolRegistry(registry)
+	manager.SetWorkDir(t.TempDir())
+
+	// Create a task to trigger runStep
+	task, err := manager.CreateTask(context.Background(), TaskRequest{
+		Goal:    "Test tool defs in runStep",
+		Execute: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for task to complete
+	for i := 0; i < 50; i++ {
+		time.Sleep(50 * time.Millisecond)
+		task, err = manager.GetTask(task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed {
+			break
+		}
+	}
+
+	// Verify tool definitions were passed to LLM
+	if len(capturedTools) == 0 {
+		t.Fatal("no tools were passed to LLM request")
+	}
+
+	// Should have built-in orchestration tools + registry tools
+	builtInCount := len(builtInOrchestrationTools())
+	registryCount := len(registry.OpenAIToolDefinitions())
+	expectedCount := builtInCount + registryCount
+
+	if len(capturedTools) != expectedCount {
+		t.Errorf("expected %d tools (builtin=%d + registry=%d), got %d",
+			expectedCount, builtInCount, registryCount, len(capturedTools))
+	}
+
+	// Verify registry tools are present by checking for known tool names
+	toolNames := make(map[string]bool)
+	for _, td := range capturedTools {
+		fn, _ := td["function"].(map[string]interface{})
+		if fn != nil {
+			name, _ := fn["name"].(string)
+			toolNames[name] = true
+		}
+	}
+	for _, expected := range []string{"bash", "file_read", "file_write", "file_edit", "grep", "glob", "git"} {
+		if !toolNames[expected] {
+			t.Errorf("missing expected tool %q in LLM request", expected)
+		}
+	}
+}
+
+type toolCapturingExecutor struct {
+	onChat func(req providers.ChatRequest)
+}
+
+func (e *toolCapturingExecutor) ChatCompletion(ctx context.Context, req providers.ChatRequest, sessionID string) (providers.ChatResponse, error) {
+	if e.onChat != nil {
+		e.onChat(req)
+	}
+	return providers.ChatResponse{
+		ID:    "capture",
+		Model: "stub",
+		Choices: []providers.Choice{{
+			Message: providers.Message{
+				Role:    "assistant",
+				Content: "I used the tools to complete the task.",
+			},
+			FinishReason: "stop",
+		}},
+	}, nil
 }

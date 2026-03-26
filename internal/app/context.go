@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/agent"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/router"
@@ -20,13 +22,14 @@ import (
 
 // AppContext holds shared state for CLI commands and API handlers.
 type AppContext struct {
-	DB           *sql.DB
-	UsageTracker *usage.Tracker
-	VectorMemory *memory.VectorMemory
-	Providers    []providers.Provider
-	ProxyRouter  *router.Router
-	Profile      string
-	Port         string
+	DB              *sql.DB
+	UsageTracker    *usage.Tracker
+	VectorMemory    *memory.VectorMemory
+	Providers       []providers.Provider
+	ProxyRouter     *router.Router
+	EscalationChain []agent.EscalationLevel
+	Profile         string
+	Port            string
 }
 
 // InitLight loads .env, opens DB, runs migrations, and initializes providers.
@@ -72,14 +75,16 @@ func InitLight(ctx context.Context) (*AppContext, error) {
 
 	vm := memory.NewVectorMemory(db)
 	providerList := initializeProviders(profile)
+	escalationChain := buildEscalationChain(profile)
 
 	return &AppContext{
-		DB:           db,
-		UsageTracker: tracker,
-		VectorMemory: vm,
-		Providers:    providerList,
-		Profile:      profile,
-		Port:         port,
+		DB:              db,
+		UsageTracker:    tracker,
+		VectorMemory:    vm,
+		Providers:       providerList,
+		EscalationChain: escalationChain,
+		Profile:         profile,
+		Port:            port,
 	}, nil
 }
 
@@ -101,33 +106,98 @@ func (ac *AppContext) Close() {
 func initializeProviders(profile string) []providers.Provider {
 	var providerList []providers.Provider
 
-	// NanoGPT subscription (first — free, zero-cost models)
-	nanogptAPIKey := os.Getenv("NANOGPT_API_KEY")
-	if nanogptAPIKey != "" {
-		providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "subscription"))
-	}
-
 	switch profile {
 	case "work":
 		providerList = append(providerList, initializeWorkProviders()...)
 	default:
-		providerList = append(providerList, initializePersonalProviders()...)
-	}
+		// Ollama Cloud — supports multiple API keys for concurrent subscriptions
+		apiKeys := ParseOllamaAPIKeys()
+		ollamaBaseURL := os.Getenv("OLLAMA_BASE_URL")
+		if len(apiKeys) == 0 && ollamaBaseURL != "" {
+			apiKeys = []string{""} // local Ollama, no key needed
+		}
+		if len(apiKeys) > 0 {
+			registered := 0
+			keyIdx := 0
 
-	// Ollama Cloud (available in all profiles)
-	ollamaAPIKey := os.Getenv("OLLAMA_API_KEY")
-	ollamaBaseURL := os.Getenv("OLLAMA_BASE_URL")
-	ollamaModel := os.Getenv("OLLAMA_MODEL")
-	if ollamaAPIKey != "" {
-		providerList = append(providerList, providers.NewOllamaCloudProvider(ollamaBaseURL, ollamaAPIKey, ollamaModel))
-	}
+			// Planners (unique — planning is a separate phase)
+			for _, m := range []struct{ envVar, name string }{
+				{"OLLAMA_PLANNER_1", "ollama-planner-1"},
+				{"OLLAMA_PLANNER_2", "ollama-planner-2"},
+			} {
+				model := os.Getenv(m.envVar)
+				if model == "" {
+					continue
+				}
+				apiKey := apiKeys[keyIdx%len(apiKeys)]
+				keyIdx++
+				providerList = append(providerList,
+					providers.NewOllamaCloudProvider(ollamaBaseURL, apiKey, model, m.name))
+				log.Printf("✓ %s provider initialized (model=%s, key=%d/%d)", m.name, model, (keyIdx-1)%len(apiKeys)+1, len(apiKeys))
+				registered++
+			}
 
-	// NanoGPT paid (last — costs money, only used as fallback)
-	if nanogptAPIKey != "" {
-		providerList = append(providerList, providers.NewNanoGPTProvider(nanogptAPIKey, "paid"))
+			// Chain models — grouped by level with | separator
+			// Each | group is a level, models within rotate/cross-review
+			chainLevels := ParseOllamaChain(os.Getenv("OLLAMA_CHAIN"))
+			modelIdx := 0
+			for _, models := range chainLevels {
+				for _, model := range models {
+					modelIdx++
+					apiKey := apiKeys[keyIdx%len(apiKeys)]
+					keyIdx++
+					name := fmt.Sprintf("ollama-chain-%d", modelIdx)
+					providerList = append(providerList,
+						providers.NewOllamaCloudProvider(ollamaBaseURL, apiKey, model, name))
+					log.Printf("✓ %s provider initialized (model=%s, key=%d/%d)", name, model, (keyIdx-1)%len(apiKeys)+1, len(apiKeys))
+					registered++
+				}
+			}
+
+			// Fallback: single OLLAMA_MODEL if no chain configured
+			if registered == 0 {
+				ollamaModel := os.Getenv("OLLAMA_MODEL")
+				if ollamaModel != "" {
+					providerList = append(providerList,
+						providers.NewOllamaCloudProvider(ollamaBaseURL, apiKeys[0], ollamaModel, "ollama-cloud"))
+					log.Printf("✓ ollama-cloud provider initialized (model=%s)", ollamaModel)
+				}
+			}
+
+			if registered > 0 {
+				log.Printf("✓ Ollama Cloud: %d API keys, %d models", len(apiKeys), registered)
+			}
+		}
+
+		// Subscription providers (gemini, codex, claude-code) — disable with SUBSCRIPTIONS_DISABLED=true
+		if os.Getenv("SUBSCRIPTIONS_DISABLED") != "true" {
+			providerList = append(providerList, initializePersonalProviders()...)
+		}
 	}
 
 	return providerList
+}
+
+// ParseOllamaAPIKeys returns all available Ollama API keys.
+// Supports OLLAMA_API_KEYS (comma-separated, for multiple subscriptions)
+// and falls back to single OLLAMA_API_KEY.
+func ParseOllamaAPIKeys() []string {
+	if keys := os.Getenv("OLLAMA_API_KEYS"); keys != "" {
+		var parsed []string
+		for _, k := range strings.Split(keys, ",") {
+			k = strings.TrimSpace(k)
+			if k != "" {
+				parsed = append(parsed, k)
+			}
+		}
+		if len(parsed) > 0 {
+			return parsed
+		}
+	}
+	if key := os.Getenv("OLLAMA_API_KEY"); key != "" {
+		return []string{key}
+	}
+	return nil
 }
 
 func initializePersonalProviders() []providers.Provider {
@@ -179,6 +249,67 @@ func initializeWorkProviders() []providers.Provider {
 	}
 
 	return providerList
+}
+
+// buildEscalationChain creates the escalation chain from OLLAMA_CHAIN env var.
+// Format: model1,model2|model3,model4|model5 — pipe separates levels, comma separates models within a level.
+// Each level's models rotate (cross-review). Each level = 2 stages of work.
+func buildEscalationChain(profile string) []agent.EscalationLevel {
+	var chain []agent.EscalationLevel
+
+	chainLevels := ParseOllamaChain(os.Getenv("OLLAMA_CHAIN"))
+	modelIdx := 0
+	for _, models := range chainLevels {
+		var levelProviders []string
+		for range models {
+			modelIdx++
+			levelProviders = append(levelProviders, fmt.Sprintf("ollama-chain-%d", modelIdx))
+		}
+		if len(levelProviders) > 0 {
+			chain = append(chain, agent.EscalationLevel{Providers: levelProviders})
+		}
+	}
+
+	// Subscription providers — disable with SUBSCRIPTIONS_DISABLED=true
+	if profile != "work" && os.Getenv("SUBSCRIPTIONS_DISABLED") != "true" {
+		sps, err := subscriptions.LoadRuntimeProviders(context.Background())
+		if err == nil {
+			for _, p := range sps {
+				chain = append(chain, agent.EscalationLevel{Providers: []string{p.Name()}})
+			}
+		}
+	}
+
+	var names []string
+	for _, level := range chain {
+		names = append(names, fmt.Sprintf("%v", level.Providers))
+	}
+	log.Printf("[Agent] escalation chain (%d levels): %s", len(chain), strings.Join(names, " → "))
+
+	return chain
+}
+
+// ParseOllamaChain parses the OLLAMA_CHAIN env var format.
+// Pipe separates levels, comma separates models within a level.
+// Returns grouped model names: [[model1,model2],[model3,model4],...]
+func ParseOllamaChain(chainStr string) [][]string {
+	if chainStr == "" {
+		return nil
+	}
+	var levels [][]string
+	for _, levelStr := range strings.Split(chainStr, "|") {
+		var models []string
+		for _, model := range strings.Split(levelStr, ",") {
+			model = strings.TrimSpace(model)
+			if model != "" {
+				models = append(models, model)
+			}
+		}
+		if len(models) > 0 {
+			levels = append(levels, models)
+		}
+	}
+	return levels
 }
 
 // LoadDotEnv searches for .env files in standard locations.

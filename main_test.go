@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gorilla/mux"
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
@@ -69,7 +68,7 @@ func TestMemorySessionHandler(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/memory/session/session-2", nil)
-	req = muxSetVars(req, map[string]string{"session_id": "session-2"})
+	req.SetPathValue("session_id", "session-2")
 	rr := httptest.NewRecorder()
 
 	memorySessionHandler(rr, req)
@@ -170,7 +169,7 @@ func TestAuditSessionHandler(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/audit/session/session-a?limit=10", nil)
-	req = muxSetVars(req, map[string]string{"session_id": "session-a"})
+	req.SetPathValue("session_id", "session-a")
 	rr := httptest.NewRecorder()
 
 	auditSessionHandler(rr, req)
@@ -215,7 +214,7 @@ func TestAuditRequestHandler(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/audit/request/req-2", nil)
-	req = muxSetVars(req, map[string]string{"request_id": "req-2"})
+	req.SetPathValue("request_id", "req-2")
 	rr := httptest.NewRecorder()
 
 	auditRequestHandler(rr, req)
@@ -444,8 +443,4 @@ func newAuditTestDB(t *testing.T) *sql.DB {
 	})
 
 	return testDB
-}
-
-func muxSetVars(r *http.Request, vars map[string]string) *http.Request {
-	return mux.SetURLVars(r, vars)
 }

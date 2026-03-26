@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/mux"
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
@@ -108,16 +107,19 @@ func setupIntegrationTest(t *testing.T) (*httptest.Server, *sql.DB, func()) {
 	db = testDB
 	providerList = mockProviders
 
-	// Create HTTP router
-	r := mux.NewRouter()
-	r.HandleFunc("/health", healthHandler).Methods("GET")
-	r.HandleFunc("/v1/models", modelsHandler).Methods("GET")
-	r.HandleFunc("/v1/chat/completions", chatHandler).Methods("POST")
-	r.HandleFunc("/v1/providers", providersHandler).Methods("GET")
-	r.Handle("/v1/orchestration/tasks", withAdminAuth(http.HandlerFunc(orchestrationTasksHandler))).Methods("GET", "POST")
-	r.Handle("/v1/orchestration/tasks/{task_id}", withAdminAuth(http.HandlerFunc(orchestrationTaskHandler))).Methods("GET")
-	r.Handle("/v1/orchestration/agents", withAdminAuth(http.HandlerFunc(orchestrationAgentsHandler))).Methods("GET", "POST")
-	r.Handle("/v1/orchestration/swarms", withAdminAuth(http.HandlerFunc(orchestrationSwarmsHandler))).Methods("GET", "POST")
+	// Create HTTP router (Go 1.22+ stdlib routing)
+	r := http.NewServeMux()
+	r.HandleFunc("GET /health", healthHandler)
+	r.HandleFunc("GET /v1/models", modelsHandler)
+	r.HandleFunc("POST /v1/chat/completions", chatHandler)
+	r.HandleFunc("GET /v1/providers", providersHandler)
+	r.Handle("GET /v1/orchestration/tasks", withAdminAuth(http.HandlerFunc(orchestrationTasksHandler)))
+	r.Handle("POST /v1/orchestration/tasks", withAdminAuth(http.HandlerFunc(orchestrationTasksHandler)))
+	r.Handle("GET /v1/orchestration/tasks/{task_id}", withAdminAuth(http.HandlerFunc(orchestrationTaskHandler)))
+	r.Handle("GET /v1/orchestration/agents", withAdminAuth(http.HandlerFunc(orchestrationAgentsHandler)))
+	r.Handle("POST /v1/orchestration/agents", withAdminAuth(http.HandlerFunc(orchestrationAgentsHandler)))
+	r.Handle("GET /v1/orchestration/swarms", withAdminAuth(http.HandlerFunc(orchestrationSwarmsHandler)))
+	r.Handle("POST /v1/orchestration/swarms", withAdminAuth(http.HandlerFunc(orchestrationSwarmsHandler)))
 
 	// Create test server
 	server := httptest.NewServer(r)

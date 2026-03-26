@@ -1,15 +1,45 @@
 package orchestration
 
+import (
+	"embed"
+	"log"
+	"strings"
+	"sync"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration/skilldata"
+)
+
+var (
+	cachedSkills     []Skill
+	cachedSkillsOnce sync.Once
+)
+
 // Skill is a named unit of work with trigger conditions, a role mapping,
 // optional MCP tool bindings, and phase-based ordering for DAG execution.
 type Skill struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Triggers    []string `json:"triggers"`
-	Role        string   `json:"role"`
-	MCPTools    []string `json:"mcp_tools,omitempty"`
-	DependsOn   []string `json:"depends_on,omitempty"`
-	Phase       string   `json:"phase"`
+	Name         string          `json:"name" yaml:"name"`
+	Description  string          `json:"description" yaml:"description"`
+	Triggers     []string        `json:"triggers" yaml:"triggers"`
+	Role         string          `json:"role" yaml:"role"`
+	MCPTools     []string        `json:"mcp_tools,omitempty" yaml:"mcp_tools"`
+	DependsOn    []string        `json:"depends_on,omitempty" yaml:"depends_on"`
+	Phase        string          `json:"phase" yaml:"phase"`
+	Language     string          `json:"language,omitempty" yaml:"language"`
+	Pipeline     string          `json:"pipeline,omitempty" yaml:"pipeline"`
+	Instructions string          `json:"instructions,omitempty" yaml:"-"`
+	Verify       []VerifyCommand `json:"verify,omitempty" yaml:"verify"`
+}
+
+// VerifyCommand is a concrete shell command the reviewer must execute
+// to verify skill compliance. Turns skill documentation into executable checks.
+type VerifyCommand struct {
+	Name      string `json:"name" yaml:"name"`
+	Command   string `json:"command" yaml:"command"`
+	Expect    string `json:"expect,omitempty" yaml:"expect"`
+	ExpectNot string `json:"expect_not,omitempty" yaml:"expect_not"`
+	Manual    string `json:"manual,omitempty" yaml:"manual"`
 }
 
 // PhaseOrder defines the execution ordering of skill phases.
@@ -20,108 +50,83 @@ var PhaseOrder = map[string]int{
 	"review":    3,
 }
 
-// DefaultSkills returns the built-in skill registry.
-// Skills with MCPTools bindings auto-invoke those tools at execution time,
-// injecting results as context so the LLM doesn't burn tokens discovering
-// library APIs or patterns from scratch.
+// DefaultSkills returns the built-in skill registry by parsing all embedded
+// markdown files in skilldata/. Each .md file is self-contained: YAML
+// frontmatter defines metadata (name, triggers, role, phase, mcp_tools)
+// and the body after frontmatter becomes the Instructions field.
 //
-// Trigger design rules:
-//   - Short words (<=4 chars) use exact word matching to avoid false positives
-//   - Multi-word phrases use substring matching
-//   - Include natural human phrasing, not just developer jargon
+// To add a new skill: create a .md file in internal/orchestration/skilldata/
+// with proper frontmatter and rebuild. No Go code changes needed.
 func DefaultSkills() []Skill {
-	return []Skill{
-		{
-			Name:        "go-patterns",
-			Description: "Idiomatic Go development patterns and conventions",
-			Triggers:    []string{"go", "golang", ".go"},
-			Role:        "coder",
-			MCPTools:    []string{"context7.query-docs"},
-			Phase:       "analyze",
-		},
-		{
-			Name:        "python-patterns",
-			Description: "Idiomatic Python development patterns",
-			Triggers:    []string{"python", ".py", "pip", "pytest"},
-			Role:        "coder",
-			MCPTools:    []string{"context7.query-docs"},
-			Phase:       "analyze",
-		},
-		{
-			Name:        "security-review",
-			Description: "Security vulnerability detection and audit",
-			Triggers: []string{
-				"auth", "credential", "token", "oauth", "secret", "password",
-				"api key", "apikey", "secure", "security", "vulnerability",
-				"permission", "encrypt", "decrypt",
-			},
-			Role:     "reviewer",
-			MCPTools: []string{"research-mcp.research_search"},
-			Phase:    "analyze",
-		},
-		{
-			Name:        "code-implement",
-			Description: "Produce implementation-ready code changes",
-			Triggers: []string{
-				"implement", "build", "write", "refactor", "create", "fix",
-				"add", "update", "change", "modify", "set up", "setup",
-			},
-			Role:  "coder",
-			Phase: "implement",
-		},
-		{
-			Name:        "go-testing",
-			Description: "Go testing — table-driven tests, race detection, benchmarks",
-			Triggers:    []string{"test", "verify", "validate", "coverage"},
-			Role:        "tester",
-			MCPTools:    []string{"context7.query-docs"},
-			Phase:       "verify",
-			DependsOn:   []string{"code-implement"},
-		},
-		{
-			Name:        "python-testing",
-			Description: "Python testing — pytest, fixtures, mocking",
-			Triggers:    []string{"test", "verify", "validate", "coverage"},
-			Role:        "tester",
-			MCPTools:    []string{"context7.query-docs"},
-			Phase:       "verify",
-			DependsOn:   []string{"code-implement"},
-		},
-		{
-			Name:        "code-review",
-			Description: "Structured code review for quality and correctness",
-			Triggers: []string{
-				"review", "clean", "quality", "check",
-			},
-			Role:  "reviewer",
-			Phase: "review",
-		},
-		{
-			Name:        "api-design",
-			Description: "REST/OpenAPI endpoint design patterns",
-			Triggers:    []string{"endpoint", "handler", "rest", "route", "api"},
-			Role:        "architect",
-			MCPTools:    []string{"context7.query-docs"},
-			Phase:       "analyze",
-		},
-		{
-			Name:        "docker-expert",
-			Description: "Docker and container best practices",
-			Triggers:    []string{"docker", "container", "dockerfile", "compose"},
-			Role:        "coder",
-			MCPTools:    []string{"context7.query-docs"},
-			Phase:       "implement",
-		},
-		{
-			Name:        "research",
-			Description: "Investigate context, alternatives, and constraints",
-			Triggers: []string{
-				"research", "investigate", "explain",
-				"debug", "diagnose", "troubleshoot",
-			},
-			Role:     "researcher",
-			MCPTools: []string{"research-mcp.research_search", "context7.query-docs"},
-			Phase:    "analyze",
-		},
+	cachedSkillsOnce.Do(func() {
+		cachedSkills = ParseSkillsFromFS(skilldata.Skills)
+	})
+	return cachedSkills
+}
+
+// ParseSkillsFromFS reads all .md files from an embedded filesystem,
+// parses YAML frontmatter into Skill metadata, and uses the body as
+// Instructions. Files without valid frontmatter are skipped with a warning.
+func ParseSkillsFromFS(fs embed.FS) []Skill {
+	entries, err := fs.ReadDir(".")
+	if err != nil {
+		log.Printf("[skills] failed to read embedded skill directory: %v", err)
+		return nil
 	}
+
+	var skills []Skill
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+
+		data, err := fs.ReadFile(entry.Name())
+		if err != nil {
+			log.Printf("[skills] failed to read %s: %v", entry.Name(), err)
+			continue
+		}
+
+		skill, ok := parseSkillMarkdown(string(data))
+		if !ok {
+			log.Printf("[skills] skipping %s: invalid or missing frontmatter", entry.Name())
+			continue
+		}
+
+		skills = append(skills, skill)
+	}
+
+	return skills
+}
+
+// parseSkillMarkdown extracts YAML frontmatter and body from a markdown
+// string. Frontmatter must be delimited by --- lines. Returns the parsed
+// Skill and true on success, or zero Skill and false on failure.
+func parseSkillMarkdown(content string) (Skill, bool) {
+	// Must start with ---
+	if !strings.HasPrefix(content, "---") {
+		return Skill{}, false
+	}
+
+	// Find the closing ---
+	rest := content[3:]
+	idx := strings.Index(rest, "\n---")
+	if idx < 0 {
+		return Skill{}, false
+	}
+
+	frontmatter := rest[:idx]
+	body := strings.TrimLeft(rest[idx+4:], "\n")
+
+	var skill Skill
+	if err := yaml.Unmarshal([]byte(frontmatter), &skill); err != nil {
+		return Skill{}, false
+	}
+
+	// Require at minimum name and phase
+	if skill.Name == "" || skill.Phase == "" {
+		return Skill{}, false
+	}
+
+	skill.Instructions = body
+	return skill, true
 }

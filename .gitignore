@@ -43,3 +43,17 @@ Thumbs.db
 
 # Runtime data
 ~/.mcp/proxy/
+
+# Large benchmark data (kept local, not committed)
+benchmarks/dare-bench/data/eval/databases/
+benchmarks/pptarena/Original/
+benchmarks/pptarena/GroundTruth/
+benchmarks/ds1000/data/ds1000.jsonl
+# Runna sync tool binaries and secrets (source tracked)
+runna-sync-test/runna-sync
+runna-sync-test/runna-sync-test
+runna-sync-test/*.bak
+runna-sync-test/.env
+.parallel-*
+runna-sync-test/test-build
+.claude/worktrees/
