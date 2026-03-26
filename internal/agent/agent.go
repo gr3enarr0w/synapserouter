@@ -855,11 +855,16 @@ YOU MUST USE TOOLS TO COMPLETE TASKS. Do not describe what you would do — actu
 
 %s
 
+RULES:
+- To fix existing files: file_read THEN file_edit. NEVER create duplicate files.
+- After writing tests: ALWAYS run them. If they fail, fix and re-run until all pass.
+- Never claim success without running the actual command and seeing output.
+
 WORKFLOW — start immediately with tool calls:
 1. bash: create directories (mkdir -p src)
-2. file_write: create source files with full content
-3. bash: install dependencies and run code
-4. file_read: inspect output and fix issues
+2. file_write: create NEW source files with full content
+3. bash: install dependencies, build, and run tests
+4. If tests fail: file_edit to fix, then re-run
 
 Do NOT output plans, descriptions, or JSON without tool calls. Every response must include at least one tool call.`, workDir, langDirective, toolBlock)
 	}
@@ -881,6 +886,18 @@ RESEARCH BEFORE CODING:
   inspect a real response BEFORE writing code against it.
 - Never guess at auth methods, endpoints, or payload formats.
 - When you encounter unknowns: STOP → RESEARCH → APPLY. Never guess and ship.
+
+EDITING EXISTING FILES:
+- When fixing bugs or modifying existing code, ALWAYS use file_edit on the existing file.
+- NEVER create a new file with corrections when the original file already exists.
+- Read the file first with file_read, then edit it in place with file_edit.
+- Only use file_write for genuinely NEW files that don't exist yet.
+
+VERIFY YOUR WORK:
+- After writing code, ALWAYS run the build/compile command to verify it compiles.
+- After writing tests, ALWAYS run them. If any test fails, fix it before reporting success.
+- Never claim "tests pass" without actually running them and seeing the output.
+- If a test fails, read the error, fix the code or test, and re-run until all pass.
 
 PRODUCTION QUALITY:
 - Would a senior engineer ship this? No stubs, no flat structures, no missing edge cases.
