@@ -33,9 +33,9 @@ Synapserouter is an active, early-stage project. The core router and agent are f
 | 5 | Continuous Improvement | PLANNED | 0 of 1 stories done | Phase 2 |
 | 6 | Future Infrastructure | PLANNED | 0 of 9 stories done | Phase 3 |
 | 7 | Chat Backend API | PLANNED | 0 of 3 stories done | Phase 3 |
-| 8 | Rich Content | PLANNED | 0 of 2 stories done | Phase 4 |
-| 9 | CLI Terminal UI | PLANNED | 0 of 3 stories done | Phase 4 |
-| 10 | Scale | PLANNED | 0 of 2 stories done | Phase 5 |
+| 8 | Rich Content | PLANNED | 0 of 2 stories done | Future |
+| 9 | CLI Terminal UI | PLANNED | 0 of 3 stories done | Future |
+| 10 | Scale | PLANNED | 0 of 2 stories done | Future |
 
 **Overall: ~1 of 36 stories complete. Most work is ahead.**
 
@@ -65,8 +65,6 @@ Phase 1 focuses on fixing known bugs and stabilizing the foundation before build
 
 - **Phase 2:** DevOps pipeline, CI/CD, self-improving agent patterns
 - **Phase 3:** Real embedding model, MCP client management, chat backend API, smart routing
-- **Phase 4:** Rich content creation, terminal UI with chat and code modes
-- **Phase 5:** Postgres migration, multi-user scale, branding
 
 ---
 

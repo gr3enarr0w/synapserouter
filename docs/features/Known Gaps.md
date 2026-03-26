@@ -46,7 +46,7 @@ Gaps are ordered by when they will be addressed. Phase 1 is active work; later p
 | No stateful chat sessions via API | High | 7.1 |
 | Gemini thought_signature errors on tool calls | High | 7.1 |
 
-### Phase 4+ -- Future
+### Future
 
 | Gap | Severity | Story |
 |---|---|---|

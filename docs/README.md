@@ -2,7 +2,7 @@
 
 Go-based LLM proxy router and coding agent that distributes requests across multiple providers with automatic escalation, skill-based dispatch, and an interactive agent REPL.
 
-**Status: Early development (Phase 1 of 5)**
+**Status: Early development (Phase 1)**
 
 The core router and agent are functional. Most of the roadmap -- chat backend, terminal UI, rich content, scale -- is still ahead. See [[Synapserouter]] for the full project overview.
 
