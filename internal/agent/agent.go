@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/environment"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
@@ -91,6 +92,10 @@ type Agent struct {
 	// Hallucination detection
 	factTracker              *FactTracker // in-memory ground-truth accumulator
 	hallucinationRecallCount int          // consecutive auto-corrections (rate limited at 3)
+
+	// Toolchain detection
+	toolchainSetup    string // install instructions for missing tools
+	resolvedBuildCmds string // resolved build/test/install commands for detected language
 
 	// Event bus for real-time observability
 	bus *EventBus
@@ -225,6 +230,23 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 			recall.WithSemanticSearcher(searcher)
 		}
 		a.registry.Register(recall)
+	}
+
+	// Detect missing build tools and prepare install instructions for the system prompt
+	if a.config.WorkDir != "" {
+		env := environment.Detect(a.config.WorkDir)
+		if env != nil {
+			missing := environment.MissingTools(env, a.config.WorkDir)
+			if len(missing) > 0 {
+				a.toolchainSetup = environment.SetupInstructions(env, a.config.WorkDir)
+				log.Printf("[Agent] missing tools detected: %v", missing)
+			}
+			// Also resolve dynamic build commands (e.g., Maven vs Gradle for Java)
+			install, test, build := environment.ResolveBuildCommands(env.Language, a.config.WorkDir)
+			if install != "" || test != "" || build != "" {
+				a.resolvedBuildCmds = fmt.Sprintf("Build: %s | Test: %s | Install: %s", build, test, install)
+			}
+		}
 	}
 
 	// Input guardrails
@@ -678,6 +700,15 @@ func (a *Agent) buildMessages() []providers.Message {
 			sysPrompt += "\n\n# Project Instructions\n" + projectInstr
 		}
 
+		// Inject toolchain setup instructions if missing tools detected
+		if a.toolchainSetup != "" {
+			sysPrompt += "\n\n# TOOLCHAIN SETUP REQUIRED\n" + a.toolchainSetup +
+				"\nInstall these tools FIRST before attempting to build or test."
+		}
+		if a.resolvedBuildCmds != "" {
+			sysPrompt += "\n\n# Resolved Build Commands\n" + a.resolvedBuildCmds
+		}
+
 		a.cachedSystemPrompt = sysPrompt
 		a.cachedPromptLevel = a.providerIdx
 	}
@@ -859,6 +890,7 @@ RULES:
 - To fix existing files: file_read THEN file_edit. NEVER create duplicate files.
 - After writing tests: ALWAYS run them. If they fail, fix and re-run until all pass.
 - Never claim success without running the actual command and seeing output.
+- If a build tool is missing (mvn, go, npm, etc.), install it first: bash(brew install <tool>).
 
 WORKFLOW — start immediately with tool calls:
 1. bash: create directories (mkdir -p src)
@@ -892,6 +924,16 @@ EDITING EXISTING FILES:
 - NEVER create a new file with corrections when the original file already exists.
 - Read the file first with file_read, then edit it in place with file_edit.
 - Only use file_write for genuinely NEW files that don't exist yet.
+
+ENVIRONMENT SETUP:
+- Before building, check that required tools are installed (e.g., bash: which mvn, which go, which python3).
+- If a required tool is missing, install it before proceeding:
+  - macOS: use brew install (e.g., brew install maven, brew install go, brew install node)
+  - If brew is not available, try the tool's official installer
+  - For Java projects: ensure JDK 17+ is installed (brew install openjdk@17)
+  - For Node projects: ensure node/npm are installed (brew install node)
+  - For Python projects: ensure python3 and pip are available
+- Do NOT skip the build step because a tool is missing — install it first.
 
 VERIFY YOUR WORK:
 - After writing code, ALWAYS run the build/compile command to verify it compiles.

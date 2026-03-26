@@ -42,10 +42,10 @@ var RuntimeSpecs = map[string]RuntimeSpec{
 	"java": {
 		Language:       "java",
 		StableVersions: []string{"21", "17", "11"},
-		SetupCommand:   "",
-		InstallCommand: "./gradlew build",
-		TestCommand:    "./gradlew test",
-		BuildCommand:   "./gradlew build",
+		SetupCommand:   "", // resolved dynamically by JavaBuildTool()
+		InstallCommand: "", // resolved dynamically by JavaBuildTool()
+		TestCommand:    "", // resolved dynamically by JavaBuildTool()
+		BuildCommand:   "", // resolved dynamically by JavaBuildTool()
 	},
 	"ruby": {
 		Language:       "ruby",
