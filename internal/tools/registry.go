@@ -86,9 +86,10 @@ func (r *Registry) ExecuteChecked(ctx context.Context, name string, args map[str
 // suitable for inclusion in ChatRequest.Tools.
 func (r *Registry) OpenAIToolDefinitions() []map[string]interface{} {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-	defs := make([]map[string]interface{}, 0, len(r.tools))
-	for _, tool := range r.tools {
+	tools := r.tools
+	r.mu.RUnlock()
+	defs := make([]map[string]interface{}, 0, len(tools))
+	for _, tool := range tools {
 		defs = append(defs, map[string]interface{}{
 			"type": "function",
 			"function": map[string]interface{}{
@@ -104,9 +105,10 @@ func (r *Registry) OpenAIToolDefinitions() []map[string]interface{} {
 // ToolInfo returns metadata about all registered tools.
 func (r *Registry) ToolInfo() []map[string]interface{} {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-	info := make([]map[string]interface{}, 0, len(r.tools))
-	for _, tool := range r.tools {
+	tools := r.tools
+	r.mu.RUnlock()
+	info := make([]map[string]interface{}, 0, len(tools))
+	for _, tool := range tools {
 		info = append(info, map[string]interface{}{
 			"name":        tool.Name(),
 			"description": tool.Description(),

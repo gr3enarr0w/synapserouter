@@ -1149,7 +1149,9 @@ func TestE2E_ConcurrentRefinement_NoRaceConditions(t *testing.T) {
 				Model:    "auto",
 				Messages: []providers.Message{{Role: "user", Content: "whats happening"}},
 			}
-			refined, err := router.RefineIntent(context.Background(), &req, sessionID)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			refined, err := router.RefineIntent(ctx, &req, sessionID)
 			results <- result{
 				sessionIdx: idx,
 				refined:    refined,

@@ -57,3 +57,4 @@ runna-sync-test/.env
 .parallel-*
 runna-sync-test/test-build
 .claude/worktrees/
+.mcp.json

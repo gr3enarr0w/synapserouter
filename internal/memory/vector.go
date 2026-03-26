@@ -19,6 +19,20 @@ type VectorMemory struct {
 	embedder EmbeddingProvider
 }
 
+// generateEmbeddingWithTimeout creates an embedding with a 10-second timeout.
+// This helper function ensures proper context cancellation without defer inside conditional blocks.
+func generateEmbeddingWithTimeout(embedder EmbeddingProvider, content string) []byte {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	embedding, err := embedder.Embed(ctx, content)
+	if err != nil {
+		log.Printf("[Memory] Failed to generate embedding: %v (storing without embedding)", err)
+		return nil
+	}
+	return EncodeEmbedding(embedding)
+}
+
 type MemoryEntry struct {
 	ID        int64
 	Content   string
@@ -67,15 +81,7 @@ func (vm *VectorMemory) Store(content, role, sessionID string, metadata map[stri
 	// Generate embedding for the content
 	var embeddingBytes []byte
 	if vm.embedder != nil && content != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		embedding, err := vm.embedder.Embed(ctx, content)
-		if err != nil {
-			log.Printf("[Memory] Failed to generate embedding: %v (storing without embedding)", err)
-		} else {
-			embeddingBytes = EncodeEmbedding(embedding)
-		}
+		embeddingBytes = generateEmbeddingWithTimeout(vm.embedder, content)
 	}
 
 	_, err = vm.db.Exec(`
