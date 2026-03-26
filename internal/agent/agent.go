@@ -1334,6 +1334,7 @@ func (a *Agent) advancePipeline(content string) bool {
 			// Go back to self-check — after the fix, self-check re-runs, then code-review with next reviewer
 			a.pipelinePhase = a.findPhaseIndex("self-check", a.pipelinePhase-1)
 			a.phaseToolCalls = 0
+			a.phaseTurns = 0 // reset turn cap for the new phase
 			return true
 		}
 
@@ -1362,6 +1363,7 @@ func (a *Agent) advancePipeline(content string) bool {
 		log.Printf("[Agent] pipeline: phase %s FAILED (cycle %d/8), escalated to provider idx %d",
 			currentPhase.Name, a.pipelineCycles, a.providerIdx)
 		a.phaseToolCalls = 0
+		a.phaseTurns = 0 // reset turn cap for retry
 
 		a.conversation.Add(providers.Message{
 			Role: "user",
