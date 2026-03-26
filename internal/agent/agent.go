@@ -88,6 +88,10 @@ type Agent struct {
 	// Context retrieval after compaction
 	hasCompacted bool // set true after compactConversation; triggers auto-context injection
 
+	// Hallucination detection
+	factTracker              *FactTracker // in-memory ground-truth accumulator
+	hallucinationRecallCount int          // consecutive auto-corrections (rate limited at 3)
+
 	// Event bus for real-time observability
 	bus *EventBus
 }
@@ -203,6 +207,9 @@ func (a *Agent) setupTrimHook() {
 func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 	// Wire trim hook so messages are persisted to DB before being dropped
 	a.setupTrimHook()
+
+	// Initialize hallucination detection
+	a.factTracker = NewFactTracker()
 
 	// Set model-aware conversation limit so large-context models compact less aggressively
 	a.conversation.MaxMessages = modelMaxMessages(a.config.Model)
