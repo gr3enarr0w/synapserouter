@@ -421,6 +421,30 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		}
 		a.conversation.Add(msg)
 
+		// Hallucination check: verify LLM claims against ground-truth facts.
+		// Only check text-only responses (tool-call-only messages have nothing to hallucinate about).
+		// Skip first 3 turns (not enough facts accumulated).
+		if msg.Content != "" && len(msg.ToolCalls) == 0 && a.factTracker != nil && a.toolCallCount > 3 {
+			checkResult := CheckForHallucinations(msg.Content, a.factTracker)
+			if checkResult.Detected {
+				corrective := a.autoRecall(checkResult)
+				if corrective != "" {
+					log.Printf("[Agent] hallucination detected (confidence %.2f, %d signals) — injecting correction",
+						checkResult.Confidence, len(checkResult.Signals))
+					a.conversation.Add(providers.Message{
+						Role:    "user",
+						Content: corrective,
+					})
+					continue // re-run LLM with corrective context
+				}
+			}
+		}
+
+		// Reset hallucination recall count when agent makes tool calls (it moved on)
+		if len(msg.ToolCalls) > 0 {
+			a.hallucinationRecallCount = 0
+		}
+
 		// No tool calls → stall detection + pipeline advancement
 		if len(msg.ToolCalls) == 0 {
 			a.noToolTurns++
@@ -620,6 +644,11 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		} else {
 			// Still apply safety truncation for very large outputs that slip through
 			conversationContent = truncateToolOutput(resultContent, 32*1024)
+		}
+
+		// Record ground-truth facts for hallucination detection
+		if a.factTracker != nil {
+			a.factTracker.RecordToolOutput(name, args, resultContent, exitCode, storedOutputID)
 		}
 
 		a.conversation.Add(providers.Message{
