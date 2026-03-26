@@ -125,6 +125,10 @@ func parseProjectFile(env *ProjectEnv, path string) {
 
 var goModVersionRe = regexp.MustCompile(`^go\s+([\d.]+)`)
 
+// Compile once at package level for Java version parsing
+var javaVersionRegex = regexp.MustCompile(`>(\d+)</`)
+var sourceCompatRegex = regexp.MustCompile(`['"](\d+)['"]`)
+
 func parseGoMod(env *ProjectEnv, path string) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -273,15 +277,13 @@ func parseJavaProject(env *ProjectEnv, path string) {
 		line := strings.TrimSpace(scanner.Text())
 		// Maven: <java.version>17</java.version> or <maven.compiler.source>17</maven.compiler.source>
 		if strings.Contains(line, "java.version") || strings.Contains(line, "maven.compiler.source") {
-			re := regexp.MustCompile(`>(\d+)</`)
-			if m := re.FindStringSubmatch(line); m != nil {
+			if m := javaVersionRegex.FindStringSubmatch(line); m != nil {
 				env.Version = m[1]
 			}
 		}
 		// Gradle: sourceCompatibility = '17'
 		if strings.Contains(line, "sourceCompatibility") {
-			re := regexp.MustCompile(`['"](\d+)['"]`)
-			if m := re.FindStringSubmatch(line); m != nil {
+			if m := sourceCompatRegex.FindStringSubmatch(line); m != nil {
 				env.Version = m[1]
 			}
 		}

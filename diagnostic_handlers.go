@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -198,6 +199,8 @@ func agentChatHandler(registry *tools.Registry) http.HandlerFunc {
 			MaxTurns    int    `json:"max_turns"`
 			MaxTokens   int64  `json:"max_tokens"`
 			SessionID   string `json:"session_id"`
+			WorkDir     string `json:"work_dir"`
+			Project     string `json:"project"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -219,15 +222,32 @@ func agentChatHandler(registry *tools.Registry) http.HandlerFunc {
 			config.MaxTurns = req.MaxTurns
 		}
 
-		// Use temp directory to avoid writing files into the project root
-		tmpDir, tmpErr := os.MkdirTemp("", "synroute-agent-*")
-		if tmpErr == nil {
-			config.WorkDir = tmpDir
-			defer os.RemoveAll(tmpDir)
-		} else {
-			cwd, _ := os.Getwd()
-			config.WorkDir = cwd
+		// Determine working directory:
+		// 1. Explicit work_dir from request (absolute path)
+		// 2. project name → ~/Development/<project>/
+		// 3. Temp directory (cleaned up after request)
+		switch {
+		case req.WorkDir != "":
+			config.WorkDir = req.WorkDir
+			os.MkdirAll(config.WorkDir, 0755)
+		case req.Project != "":
+			home, _ := os.UserHomeDir()
+			config.WorkDir = filepath.Join(home, "Development", req.Project)
+			os.MkdirAll(config.WorkDir, 0755)
+		default:
+			tmpDir, tmpErr := os.MkdirTemp("", "synroute-agent-*")
+			if tmpErr == nil {
+				config.WorkDir = tmpDir
+				// Don't delete — files must persist after agent exits
+			} else {
+				cwd, _ := os.Getwd()
+				config.WorkDir = cwd
+			}
 		}
+
+		// Wire memory systems for unlimited context + recall + hallucination detection
+		config.VectorMemory = vectorMemory
+		config.ToolStore = agent.NewToolOutputStore(db)
 
 		// Create agent with tracing enabled
 		ag := agent.New(proxyRouter, registry, nil, config)

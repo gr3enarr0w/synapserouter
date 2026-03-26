@@ -491,8 +491,12 @@ func runMigrations(db *sql.DB) error {
 			return fmt.Errorf("failed to read embedded migration file %s: %w", file.Name(), err)
 		}
 
-		// Execute migration
+		// Execute migration — ignore "duplicate column" errors from re-running ALTER TABLE
 		if _, err := db.Exec(string(migrationSQL)); err != nil {
+			if strings.Contains(err.Error(), "duplicate column") {
+				log.Printf("✓ Database migration skipped (already applied): %s", file.Name())
+				continue
+			}
 			return fmt.Errorf("failed to execute migration %s: %w", file.Name(), err)
 		}
 		log.Printf("✓ Database migration applied (embedded): %s", file.Name())
