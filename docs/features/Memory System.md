@@ -12,38 +12,63 @@ Three subsystems work together: **VectorMemory** stores compacted conversation w
 
 ## Data Flow
 
+### Writing to Storage
+
 ```mermaid
 graph TD
-    subgraph "In-Memory Conversation"
-        A[User Message] --> B[Conversation Buffer]
-        C[LLM Response] --> B
-        D[Tool Result] --> S{">2KB?"}
-        S -->|No| B
-        S -->|Yes| SUM[SummarizeToolOutput]
+    subgraph "Tool Outputs"
+        D[Tool Result] --> S{"> 2KB?"}
+        S -->|No| B[Conversation Buffer]
+        S -->|Yes| SUM[Summarize Output]
         SUM --> B
-        SUM -->|"[full output: ref:N]"| B
     end
 
-    subgraph "Persistent Storage (SQLite)"
+    subgraph "Persistent Storage"
         D -->|All outputs| TS[(tool_outputs)]
-        B -->|BeforeTrimHook| VM[(memory)]
-        B -->|compactConversation| VM
-        B -->|context overflow trim| VM
-        AG[(agent_sessions)] -->|"--resume"| B
+    end
+```
+
+### Compaction to Memory
+
+```mermaid
+graph TD
+    subgraph Triggers
+        Trim[BeforeTrimHook]
+        Phase[Phase Compaction]
+        Emerg[Overflow Trim]
     end
 
-    subgraph "Retrieval"
-        RC[recall tool] --> US[UnifiedSearcher]
-        US --> TS
-        US --> VM
-        AUTO[Auto-Context Injection] --> VM
-        VM -->|semantic| VEC[Vector Similarity]
-        VM -->|fallback| LEX[Lexical Scoring]
+    subgraph Storage
+        VM[(memory table)]
     end
 
-    style TS fill:#e1f5fe
-    style VM fill:#e8f5e9
-    style AG fill:#fff3e0
+    Trim --> VM
+    Phase --> VM
+    Emerg --> VM
+```
+
+### Retrieval
+
+```mermaid
+graph LR
+    subgraph Query
+        RC[recall tool]
+        AUTO[Auto-Context]
+    end
+
+    subgraph Search
+        US[UnifiedSearcher]
+    end
+
+    subgraph Sources
+        TS[(tool_outputs)]
+        VM[(memory)]
+    end
+
+    RC --> US
+    US --> TS
+    US --> VM
+    AUTO --> VM
 ```
 
 ## Storage Layer
