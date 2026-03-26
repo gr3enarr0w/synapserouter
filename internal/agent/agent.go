@@ -1559,6 +1559,7 @@ Say VERIFIED_CORRECT if everything passes, or NEEDS_FIX with remaining issues.`,
 			Role:     fmt.Sprintf("%s-step-%d", phase.Name, step+1),
 			Model:    model,
 			Provider: provider,
+			Budget:   &AgentBudget{MaxTurns: maxPhaseTurns},
 		}, task)
 
 		if err != nil {
@@ -1619,6 +1620,7 @@ Your job:
 		Role:     phase.Name,
 		Model:    model,
 		Provider: provider,
+		Budget:   &AgentBudget{MaxTurns: maxPhaseTurns},
 	}, task)
 
 	if err != nil {
@@ -2087,6 +2089,7 @@ When done, say IMPLEMENT_COMPLETE.`,
 			cfg := SpawnConfig{
 				Role:     role,
 				Provider: provider,
+				Budget:   &AgentBudget{MaxTurns: maxPhaseTurns},
 			}
 			if workDir != "" {
 				cfg.WorkDir = workDir
