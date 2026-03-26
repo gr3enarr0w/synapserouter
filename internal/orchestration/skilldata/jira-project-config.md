@@ -32,11 +32,11 @@ curl -s -X POST "https://issues.redhat.com/rest/api/2/component" \
     "name": "component-name",
     "project": "PROJ",
     "description": "Component description",
-    "lead": {"name": "rhn-support-ceverson"}
+    "lead": {"name": "your-username"}
   }'
 ```
 
-Token is stored in `/Users/ceverson/Development/.env.atlassian` as `JIRA_PERSONAL_TOKEN`.
+Token is stored in `~/.env.atlassian` as `JIRA_PERSONAL_TOKEN`.
 
 ### List Components (MCP)
 
@@ -105,7 +105,7 @@ fields: {"fixVersions": [{"name": "comp-0.2"}]}
 
 ## Auth Reference
 
-- Token file: `/Users/ceverson/Development/.env.atlassian`
+- Token file: `~/.env.atlassian`
 - Key: `JIRA_PERSONAL_TOKEN`
 - DC URL: `https://issues.redhat.com`
-- Default user: `rhn-support-ceverson`
+- Default user: `your-username`
