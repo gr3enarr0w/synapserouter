@@ -15,6 +15,61 @@ All epics, stories, and acceptance criteria for the synapserouter project. For i
 
 ---
 
+## Project Status
+
+Synapserouter is an active, early-stage project. The core router and agent are functional, but most of the roadmap is still ahead. This document covers the full vision -- what works today, what's next, and what's further out.
+
+**Current Phase: Phase 1 -- Core Router + Agent**
+
+### Epic Progress
+
+| Epic | Name | Status | Progress | Phase |
+|---|---|---|---|---|
+| 0 | Foundation | IN PROGRESS | 1 of 7 stories done | Phase 1 |
+| 1 | Pipeline Architecture | PLANNED | 0 of 3 stories done | Phase 1 |
+| 2 | Code Quality | PLANNED | 0 of 2 stories done | Phase 1 |
+| 3 | Skill System | PLANNED | 0 of 2 stories done | Phase 1 |
+| 4 | DevOps | PLANNED | 0 of 2 stories done | Phase 2 |
+| 5 | Continuous Improvement | PLANNED | 0 of 1 stories done | Phase 2 |
+| 6 | Future Infrastructure | PLANNED | 0 of 9 stories done | Phase 3 |
+| 7 | Chat Backend API | PLANNED | 0 of 3 stories done | Phase 3 |
+| 8 | Rich Content | PLANNED | 0 of 2 stories done | Phase 4 |
+| 9 | CLI Terminal UI | PLANNED | 0 of 3 stories done | Phase 4 |
+| 10 | Scale | PLANNED | 0 of 2 stories done | Phase 5 |
+
+**Overall: ~1 of 36 stories complete. Most work is ahead.**
+
+### What Works Today
+
+- 7-level Ollama Cloud provider chain with 19+ models and automatic escalation
+- Circuit breakers with rate-limit-aware cooldowns
+- Interactive agent REPL with tool execution (bash, file I/O, grep, glob, git)
+- Skill system with 38+ embedded skills parsed from YAML frontmatter
+- Worktree isolation for safe code changes
+- MCP server mode for tool exposure over HTTP
+- Recall tool and conversation compaction (basic, with known bugs)
+- Two profiles: personal (Ollama Cloud + subscriptions) and work (Vertex AI)
+- Eval framework with 11 benchmark sources and 4 eval modes
+
+### What's Next (Phase 1 -- Active)
+
+Phase 1 focuses on fixing known bugs and stabilizing the foundation before building new features:
+
+- **Wave 1 (now):** Bug fixes (memory pollution, data loss, secret scrubbing, trigger quality)
+- **Wave 2:** Recall scoping for sub-agents, compaction improvements, skill budget, thread safety
+- **Wave 3:** Review pipeline, cycle detection, skill verification, DevOps basics
+- **Wave 4:** Test generation, test coverage, documentation cleanup
+- **Wave 5:** Full test suite and merge
+
+### What's Further Out
+
+- **Phase 2:** DevOps pipeline, CI/CD, self-improving agent patterns
+- **Phase 3:** Real embedding model, MCP client management, chat backend API, smart routing
+- **Phase 4:** Rich content creation, terminal UI with chat and code modes
+- **Phase 5:** Postgres migration, multi-user scale, branding
+
+---
+
 ## Execution Waves
 
 Stories are grouped into waves based on dependencies. With [[Dev Guide#Adding a Pipeline Phase|worktree isolation]], waves can run in parallel.

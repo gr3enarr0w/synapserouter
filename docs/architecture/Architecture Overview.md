@@ -10,24 +10,67 @@ Synapserouter is a Go-based LLM proxy router and coding agent. It distributes re
 
 ## Core Components
 
+### Entry Points
+
 ```mermaid
 graph TD
-    User[User / LibreChat] -->|HTTP| Router[Router<br>provider selection + memory]
-    User -->|CLI| Agent[Agent Loop<br>tools + pipeline]
+    subgraph Clients
+        User[User / LibreChat]
+    end
 
-    Router --> Ollama[Ollama Cloud<br>7-level chain, 21 models]
-    Router --> Gemini[Gemini<br>subscription]
-    Router --> Codex[Codex<br>subscription]
-    Router --> Claude[Claude Code<br>subscription]
+    subgraph Entry
+        HTTP[HTTP API]
+        CLI[CLI: synroute chat]
+    end
 
+    User --> HTTP
+    User --> CLI
+
+    HTTP --> Router[Router]
+    CLI --> Agent[Agent Loop]
     Agent -->|ChatCompletion| Router
-    Agent --> Tools[Tool Registry<br>bash, file_read/write/edit, grep, glob, git]
-    Agent --> Memory[Memory System<br>VectorMemory + ToolOutputStore]
-    Agent --> Pipeline[Pipeline<br>plan > implement > verify > review]
-    Agent --> Facts[FactTracker<br>hallucination detection]
+```
 
-    Memory --> SQLite[(SQLite DB<br>memory + tool_outputs + agent_sessions)]
-    Memory --> Embeddings[TF-IDF Embeddings<br>384-dim hash vectors]
+### Router and Providers
+
+```mermaid
+graph TD
+    Router[Router] --> Chain[Ollama Cloud<br>7 levels, 19+ models]
+    Router --> Subs[Subscription Fallback]
+
+    subgraph Subscriptions
+        Gemini[Gemini]
+        Codex[Codex]
+        Claude[Claude Code]
+    end
+
+    Subs --> Gemini
+    Subs --> Codex
+    Subs --> Claude
+```
+
+### Agent Internals
+
+```mermaid
+graph LR
+    subgraph Core
+        Agent[Agent Loop]
+        Tools[Tool Registry]
+        Pipeline[Pipeline]
+    end
+
+    subgraph Persistence
+        Memory[VectorMemory]
+        ToolStore[ToolOutputStore]
+        DB[(SQLite)]
+    end
+
+    Agent --> Tools
+    Agent --> Pipeline
+    Agent --> Memory
+    Agent --> ToolStore
+    Memory --> DB
+    ToolStore --> DB
 ```
 
 ## Provider Chain (Personal Profile)
@@ -49,18 +92,43 @@ graph TD
 
 See [[Memory System]] for full details.
 
+### Storage Path
+
 ```mermaid
 graph LR
-    ToolExec[Tool Execution] -->|ALL outputs| ToolStore[(tool_outputs table)]
-    Conversation[In-Memory<br>Conversation] -->|BeforeTrimHook| VectorMem[(memory table)]
-    Compaction[Phase Compaction] -->|ALL roles incl. tool| VectorMem
-    EmergencyTrim[Overflow Trim] -->|store first| VectorMem
+    subgraph Writes
+        ToolExec[Tool Execution]
+        Trim[Trim / Compaction]
+    end
 
-    RecallTool[Recall Tool] -->|UnifiedSearcher| ToolStore
-    RecallTool -->|UnifiedSearcher| VectorMem
-    AutoContext[Auto-Context<br>Injection] -->|RetrieveRelevant| VectorMem
+    subgraph DB
+        TS[(tool_outputs)]
+        VM[(memory)]
+    end
 
-    SubAgent[Sub-Agent] -->|ParentSessionIDs| RecallTool
+    ToolExec --> TS
+    Trim --> VM
+```
+
+### Retrieval Path
+
+```mermaid
+graph LR
+    subgraph Callers
+        Recall[Recall Tool]
+        Auto[Auto-Context]
+        Sub[Sub-Agent]
+    end
+
+    subgraph DB
+        TS[(tool_outputs)]
+        VM[(memory)]
+    end
+
+    Sub -->|ParentSessionIDs| Recall
+    Recall --> TS
+    Recall --> VM
+    Auto --> VM
 ```
 
 **Key design:** Zero information loss. Every message and tool output reaches the DB before being dropped from conversation. See [[Memory System#Loss Points Fixed]].
@@ -105,9 +173,9 @@ See [[Skill System]].
 
 See [[Hallucination Detection]] for full details.
 
-- **FactTracker** — accumulates ground truth from tool outputs (paths, exit codes, test results)
-- **HallucinationChecker** — 5 pattern-based rules, <1ms, no LLM calls
-- **AutoRecall** — retrieves contradicting evidence, injects corrective message
+- **FactTracker** -- accumulates ground truth from tool outputs (paths, exit codes, test results)
+- **HallucinationChecker** -- 5 pattern-based rules, <1ms, no LLM calls
+- **AutoRecall** -- retrieves contradicting evidence, injects corrective message
 - Rate limited at 3 corrections per session
 - All corrective messages pass through `scrubSecrets()`
 
