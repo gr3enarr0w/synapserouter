@@ -219,6 +219,11 @@ func (a *Agent) setupTrimHook() {
 
 // Run processes a user message through the agent loop and returns the final text response.
 func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
+	// Protect spec file from agent overwrite (tool-layer enforcement)
+	if a.config.SpecFilePath != "" {
+		tools.SetProtectedPaths([]string{a.config.SpecFilePath})
+	}
+
 	// Wire trim hook so messages are persisted to DB before being dropped
 	a.setupTrimHook()
 

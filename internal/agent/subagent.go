@@ -80,6 +80,7 @@ func (a *Agent) SpawnChild(cfg SpawnConfig) *Agent {
 		// 6-phase pipeline. The PARENT orchestrates phases; children execute.
 		Skills:           a.config.Skills,           // inherit parent's skill registry for dynamic matching
 		EventBus:         a.config.EventBus,
+		SpecFilePath:     a.config.SpecFilePath,      // inherit so sub-agents can't overwrite spec
 		ProjectLanguage:  a.config.ProjectLanguage,  // inherit so sub-agents use correct language context
 		ToolStore:        a.config.ToolStore,         // inherit so sub-agents store tool outputs in same DB
 		VectorMemory:     a.config.VectorMemory,      // inherit for recall tool access

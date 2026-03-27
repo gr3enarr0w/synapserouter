@@ -460,6 +460,10 @@ func cmdChat(args []string) {
 			fmt.Fprintf(os.Stderr, "Error reading spec file: %v\n", err)
 			os.Exit(1)
 		}
+		// Track spec file path for tool-layer protection
+		if absPath, err := filepath.Abs(*specFile); err == nil {
+			config.SpecFilePath = absPath
+		}
 
 		// Extract language from spec content (e.g., "Language: TypeScript" or "next.js")
 		if lang := detectLanguageFromSpec(string(specContent)); lang != "" {

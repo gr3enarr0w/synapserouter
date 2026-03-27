@@ -5,7 +5,35 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
+
+// Protected paths — files the agent cannot overwrite (e.g., user's spec file).
+// Enforced at the tool layer, not the prompt layer.
+var (
+	protectedPaths []string
+	protectedMu    sync.RWMutex
+)
+
+// SetProtectedPaths sets the list of absolute paths that file_write/file_edit
+// must refuse to modify. Called at agent startup with the --spec-file path.
+func SetProtectedPaths(paths []string) {
+	protectedMu.Lock()
+	defer protectedMu.Unlock()
+	protectedPaths = paths
+}
+
+// IsProtectedPath returns true if the resolved path matches a protected file.
+func IsProtectedPath(path string) bool {
+	protectedMu.RLock()
+	defer protectedMu.RUnlock()
+	for _, p := range protectedPaths {
+		if path == p {
+			return true
+		}
+	}
+	return false
+}
 
 // stringArg extracts a string argument from the args map.
 func stringArg(args map[string]interface{}, key string) string {

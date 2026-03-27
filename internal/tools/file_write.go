@@ -39,6 +39,12 @@ func (t *FileWriteTool) Execute(ctx context.Context, args map[string]interface{}
 	if err != nil {
 		return &ToolResult{Error: err.Error()}, nil
 	}
+
+	// Spec file protection — enforced at tool layer, not prompt layer
+	if IsProtectedPath(path) {
+		return &ToolResult{Error: fmt.Sprintf("Cannot overwrite protected file '%s'. This is the source spec — write plan output to synroute.md instead.", filepath.Base(path))}, nil
+	}
+
 	content := stringArg(args, "content")
 
 	// Check for duplicate files with the same basename in the work directory
