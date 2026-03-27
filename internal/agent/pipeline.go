@@ -44,6 +44,15 @@ var DefaultPipeline = Pipeline{
 			CoderProviders:    []string{"ollama-planner-1", "ollama-planner-2"},
 			MergeProvider:     "codex",
 			Prompt: `PHASE: PLAN
+0. SPEC PERCEPTION (do this FIRST):
+   Before planning, restate the spec's key architectural decisions:
+   - Required package/directory structure?
+   - IN SCOPE and OUT OF SCOPE?
+   - Mandated/prohibited design patterns?
+   - Technology constraints?
+   If the spec has an "Acceptance Criteria" section, EXTRACT those criteria verbatim — do not generate your own.
+   If no spec is provided, skip this step.
+
 Before implementing, create:
 1. TASK DECOMPOSITION: ordered subtasks with dependencies
 2. ACCEPTANCE CRITERIA for each subtask AND the overall deliverable:

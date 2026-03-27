@@ -2154,6 +2154,15 @@ TASK:
 SKILL REFERENCE (use these as authoritative guides for formats, APIs, patterns):
 %s
 
+0. SPEC PERCEPTION (do this FIRST):
+   Before planning, restate the spec's key architectural decisions:
+   - Required package/directory structure?
+   - IN SCOPE and OUT OF SCOPE?
+   - Mandated/prohibited design patterns?
+   - Technology constraints?
+   If the spec has an "Acceptance Criteria" section, EXTRACT those criteria verbatim — do not generate your own.
+   If no spec is provided, skip this step.
+
 Produce:
 1. TASK DECOMPOSITION: ordered subtasks with dependencies
 2. ACCEPTANCE CRITERIA for each subtask AND overall deliverable
