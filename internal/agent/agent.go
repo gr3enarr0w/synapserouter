@@ -237,6 +237,11 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 	if a.config.WorkDir != "" {
 		env := environment.Detect(a.config.WorkDir)
 		if env != nil {
+			// Auto-set ProjectLanguage from environment detection (before pipeline init)
+			if a.config.ProjectLanguage == "" && env.Language != "" {
+				a.config.ProjectLanguage = env.Language
+				log.Printf("[Agent] auto-detected project language: %s", env.Language)
+			}
 			missing := environment.MissingTools(env, a.config.WorkDir)
 			if len(missing) > 0 {
 				a.toolchainSetup = environment.SetupInstructions(env, a.config.WorkDir)
@@ -270,7 +275,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 	// Initialize pipeline immediately on first message (if AutoOrchestrate enabled)
 	// This fires parallel planners BEFORE the main agent starts making tool calls
 	if a.config.AutoOrchestrate && a.pipeline == nil {
-		matched := orchestration.MatchSkills(a.originalRequest, a.config.Skills)
+		matched := orchestration.MatchSkillsForLanguage(a.originalRequest, a.config.Skills, a.config.ProjectLanguage)
 		a.pipeline = DetectPipelineType(matched, a.config.ProjectLanguage)
 		a.pipelinePhase = 0
 		a.initializeImplementPhase()
@@ -795,7 +800,7 @@ func (a *Agent) computeSkillContext() string {
 		return ""
 	}
 
-	matched := orchestration.MatchSkills(query, a.config.Skills)
+	matched := orchestration.MatchSkillsForLanguage(query, a.config.Skills, a.config.ProjectLanguage)
 	if len(matched) == 0 {
 		return ""
 	}
@@ -872,6 +877,11 @@ func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query strin
 // Prevents infinite loops when self-check or review phases can't converge.
 // 25 turns is enough for: read errors (1) + fix files (5-10) + rebuild (1) + verify (1) + iterate (5-10).
 const maxPhaseTurns = 25
+
+// maxPipelineCycles is the hard cap on fail-back cycles (review → implement → review).
+// 3 cycles is enough: initial attempt + 2 fix iterations. Beyond that, accept the result
+// and let later pipeline phases still run.
+const maxPipelineCycles = 3
 
 // toolBlock is the canonical tool reference shared across all prompt levels.
 const toolBlock = `AVAILABLE TOOLS (use exact names):
@@ -1108,7 +1118,7 @@ func (a *Agent) executeForCurrentProvider(ctx context.Context, req providers.Cha
 func (a *Agent) advancePipeline(content string) bool {
 	// Initialize pipeline on first call
 	if a.pipeline == nil {
-		matched := orchestration.MatchSkills(a.originalRequest, a.config.Skills)
+		matched := orchestration.MatchSkillsForLanguage(a.originalRequest, a.config.Skills, a.config.ProjectLanguage)
 		a.pipeline = DetectPipelineType(matched, a.config.ProjectLanguage)
 		a.pipelinePhase = 0
 		log.Printf("[Agent] pipeline: %s (%d phases) | language: %s", a.pipeline.Name, len(a.pipeline.Phases), a.config.ProjectLanguage)
@@ -1313,8 +1323,9 @@ func (a *Agent) advancePipeline(content string) bool {
 				return a.advancePipeline("PHASE_PASSED")
 			}
 
-			if a.pipelineCycles > 8 {
+			if a.pipelineCycles > maxPipelineCycles {
 				log.Printf("[Agent] pipeline: max review cycles reached (%d), accepting result", a.pipelineCycles)
+				a.pipelineCycles = 0
 				a.conversation.Add(providers.Message{
 					Role: "user",
 					Content: fmt.Sprintf("Review found issues but max cycles reached. Delivering current state:\n%s", reviewResult),
@@ -1330,11 +1341,11 @@ func (a *Agent) advancePipeline(content string) bool {
 					providerName = level.Providers[0]
 				}
 			}
-			log.Printf("[Agent] pipeline: review cycle %d/8 — fixing on %s (provider idx %d, escalated=%v)",
-				a.pipelineCycles, providerName, a.providerIdx, escalated)
+			log.Printf("[Agent] pipeline: review cycle %d/%d — fixing on %s (provider idx %d, escalated=%v)",
+				a.pipelineCycles, maxPipelineCycles, providerName, a.providerIdx, escalated)
 			a.conversation.Add(providers.Message{
 				Role: "user",
-				Content: fmt.Sprintf("The %s review found issues (cycle %d/8). Fix ALL these issues using tools, then say IMPLEMENT_COMPLETE:\n---\n%s", nextPhase.Name, a.pipelineCycles, reviewResult),
+				Content: fmt.Sprintf("The %s review found issues (cycle %d/%d). Fix ALL these issues using tools, then say IMPLEMENT_COMPLETE:\n---\n%s", nextPhase.Name, a.pipelineCycles, maxPipelineCycles, reviewResult),
 			})
 			// Go back to self-check — after the fix, self-check re-runs, then code-review with next reviewer
 			a.pipelinePhase = a.findPhaseIndex("self-check", a.pipelinePhase-1)
@@ -1360,19 +1371,20 @@ func (a *Agent) advancePipeline(content string) bool {
 			return false
 		}
 
-		if a.pipelineCycles > 8 {
+		if a.pipelineCycles > maxPipelineCycles {
 			log.Printf("[Agent] pipeline: max review cycles reached, accepting result")
+			a.pipelineCycles = 0
 			return false
 		}
 		a.escalateProvider()
-		log.Printf("[Agent] pipeline: phase %s FAILED (cycle %d/8), escalated to provider idx %d",
-			currentPhase.Name, a.pipelineCycles, a.providerIdx)
+		log.Printf("[Agent] pipeline: phase %s FAILED (cycle %d/%d), escalated to provider idx %d",
+			currentPhase.Name, a.pipelineCycles, maxPipelineCycles, a.providerIdx)
 		a.phaseToolCalls = 0
 		a.phaseTurns = 0 // reset turn cap for retry
 
 		a.conversation.Add(providers.Message{
 			Role: "user",
-			Content: fmt.Sprintf("The %s phase found issues (cycle %d/8). Fix them now using tools, then say IMPLEMENT_COMPLETE.", currentPhase.Name, a.pipelineCycles),
+			Content: fmt.Sprintf("The %s phase found issues (cycle %d/%d). Fix them now using tools, then say IMPLEMENT_COMPLETE.", currentPhase.Name, a.pipelineCycles, maxPipelineCycles),
 		})
 		return true
 	}
@@ -1420,7 +1432,7 @@ func (a *Agent) runSubAgentPhase(phase PipelinePhase) string {
 	if query == "" {
 		query = a.conversation.LastUserMessage()
 	}
-	matched := orchestration.MatchSkills(query, a.config.Skills)
+	matched := orchestration.MatchSkillsForLanguage(query, a.config.Skills, a.config.ProjectLanguage)
 	chain := orchestration.BuildSkillChain(matched)
 	skillContext := a.matchedSkillContext()
 	verifyCommands := orchestration.VerifyCommandsForChain(chain)

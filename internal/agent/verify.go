@@ -124,7 +124,7 @@ func (a *Agent) runVerifyCommand(name, command string) VerifyResult {
 
 // runSkillVerifyCommands collects and executes verify commands from all matched skills.
 func (a *Agent) runSkillVerifyCommands() []VerifyResult {
-	matched := orchestration.MatchSkills(a.originalRequest, a.config.Skills)
+	matched := orchestration.MatchSkillsForLanguage(a.originalRequest, a.config.Skills, a.config.ProjectLanguage)
 	var results []VerifyResult
 
 	for _, skill := range matched {

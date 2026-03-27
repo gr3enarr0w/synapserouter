@@ -34,6 +34,32 @@ func MatchSkills(goal string, registry []Skill) []Skill {
 	return matched
 }
 
+// MatchSkillsForLanguage filters MatchSkills results by project language.
+// Language-specific skills (Language != "") only match if their language equals
+// projectLanguage (case-insensitive). Language-agnostic skills (Language == "")
+// always pass. If filtering removes all matches, the unfiltered set is returned
+// so the agent still gets generic skills.
+func MatchSkillsForLanguage(goal string, registry []Skill, projectLanguage string) []Skill {
+	all := MatchSkills(goal, registry)
+	if projectLanguage == "" || len(all) == 0 {
+		return all
+	}
+
+	lang := strings.ToLower(projectLanguage)
+	var filtered []Skill
+	for _, s := range all {
+		if s.Language == "" || strings.ToLower(s.Language) == lang {
+			filtered = append(filtered, s)
+		}
+	}
+
+	// If filtering removed everything, return the unfiltered set
+	if len(filtered) == 0 {
+		return all
+	}
+	return filtered
+}
+
 // ambiguousWords are short words that commonly appear as prefixes in unrelated
 // words (e.g. "go" in "going"/"got", "do" in "doing"/"done").
 // These require exact word-boundary matching.
