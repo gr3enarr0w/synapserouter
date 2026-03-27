@@ -109,6 +109,9 @@ type Agent struct {
 	// Regression detection
 	regressionTracker *RegressionTracker
 
+	// Intent-based pipeline routing
+	intentPromptAdjustment string // mode-specific system prompt addition (review, implement, etc.)
+
 	// Event bus for real-time observability
 	bus *EventBus
 }
@@ -282,6 +285,14 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		}
 	}
 
+	// Parse file attachments from @references and absolute paths in the message
+	cleanedMessage, attachments := ParseAttachments(userMessage, a.config.WorkDir)
+	if len(attachments) > 0 {
+		userMessage = cleanedMessage + FormatAttachments(attachments)
+		log.Printf("[Agent] attached %d file(s) to message", len(attachments))
+	}
+
+
 	a.conversation.Add(providers.Message{
 		Role:    "user",
 		Content: userMessage,
@@ -324,26 +335,36 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		a.pipelinePhase = 0
 		a.initializeImplementPhase()
 
+		// Intent-based phase routing: determine starting phase from project state.
+		// The pipeline becomes a menu of capabilities, not a forced sequence.
+		intentEntry := DetectPipelineEntry(userMessage, a.config.WorkDir, a.pipeline, false)
+		a.ApplyIntentEntry(intentEntry)
+
 		skillNames := make([]string, len(matched))
 		for i, s := range matched {
 			skillNames[i] = s.Name
 		}
-		log.Printf("[Agent] pipeline: %s (%d phases) | language: %s | skills: %v",
-			a.pipeline.Name, len(a.pipeline.Phases), a.config.ProjectLanguage, skillNames)
+		log.Printf("[Agent] pipeline: %s (%d phases, entry: %d/%s) | language: %s | skills: %v",
+			a.pipeline.Name, len(a.pipeline.Phases), intentEntry.Phase, intentEntry.Mode,
+			a.config.ProjectLanguage, skillNames)
 
 		a.emit(EventPipelineStart, "", map[string]any{
 			"pipeline_name":  a.pipeline.Name,
 			"phase_count":    len(a.pipeline.Phases),
 			"matched_skills": skillNames,
+			"intent_phase":   intentEntry.Phase,
+			"intent_mode":    intentEntry.Mode,
+			"intent_reason":  intentEntry.Reason,
 		})
 		a.emit(EventSkillMatch, "", map[string]any{
 			"skill_names":   skillNames,
 			"trigger_count": len(matched),
 		})
 
-		// Fire parallel plan phase immediately if configured
-		firstPhase := a.pipeline.Phases[0]
-		if firstPhase.ParallelSubAgents > 0 && len(firstPhase.CoderProviders) > 0 && a.hasProviders(firstPhase.CoderProviders) {
+		// Fire parallel plan phase immediately if configured AND intent didn't skip past it
+		firstPhase := a.pipeline.Phases[a.pipelinePhase]
+		if a.pipelinePhase == 0 && firstPhase.Name == "plan" &&
+			firstPhase.ParallelSubAgents > 0 && len(firstPhase.CoderProviders) > 0 && a.hasProviders(firstPhase.CoderProviders) {
 			log.Printf("[Agent] pipeline: firing parallel %s phase immediately", firstPhase.Name)
 			parallelResult := a.runParallelPhase(firstPhase)
 			if firstPhase.StoreAs == "criteria" {
@@ -359,17 +380,22 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 					parallelResult, a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)),
 			})
 		} else {
-			// No parallel plan phase — inject the first phase prompt so the
-			// pipeline actively steers the agent from turn 1, not just when
-			// the agent stops making tool calls.
-			phasePrompt := a.pipeline.PhasePrompt(0, a.acceptanceCriteria, a.originalRequest)
+			// No parallel plan phase (or intent skipped it) — inject the current
+			// phase prompt so the pipeline actively steers the agent from turn 1.
+			var phasePrompt string
+			if intentEntry.Phase > 0 {
+				phasePrompt = phasePromptForEntry(a.pipeline, intentEntry, a.acceptanceCriteria)
+			} else {
+				phasePrompt = a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)
+			}
 			if phasePrompt != "" {
-				log.Printf("[Agent] pipeline: injecting phase 1/%d prompt: %s",
-					len(a.pipeline.Phases), firstPhase.Name)
+				currentPhase := a.pipeline.Phases[a.pipelinePhase]
+				log.Printf("[Agent] pipeline: injecting phase %d/%d prompt: %s",
+					a.pipelinePhase+1, len(a.pipeline.Phases), currentPhase.Name)
 				a.conversation.Add(providers.Message{
 					Role:    "user",
 					Content: fmt.Sprintf("You are working in phases. Current phase: %s\n\n%s\n\nComplete this phase using tools, then say %s_COMPLETE before moving on.",
-						firstPhase.Name, phasePrompt, strings.ToUpper(strings.ReplaceAll(firstPhase.Name, "-", "_"))),
+						currentPhase.Name, phasePrompt, strings.ToUpper(strings.ReplaceAll(currentPhase.Name, "-", "_"))),
 				})
 			}
 		}
@@ -843,6 +869,11 @@ func (a *Agent) buildMessages() []providers.Message {
 		}
 		if a.resolvedBuildCmds != "" {
 			sysPrompt += "\n\n# Resolved Build Commands\n" + a.resolvedBuildCmds
+		}
+
+		// Inject intent-based mode adjustment (review, implement, single)
+		if a.intentPromptAdjustment != "" {
+			sysPrompt += "\n\n" + a.intentPromptAdjustment
 		}
 
 		a.cachedSystemPrompt = sysPrompt

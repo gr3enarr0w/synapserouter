@@ -267,6 +267,15 @@ var phaseFailSignals = []string{
 	"model_review_fail", "verify_fail", "needs_fix",
 }
 
+// SinglePhase creates a pipeline with just one phase. Used for targeted operations
+// like "review my code" where running the full pipeline would be wrong.
+func SinglePhase(phase PipelinePhase) *Pipeline {
+	return &Pipeline{
+		Name:   "single-" + phase.Name,
+		Phases: []PipelinePhase{phase},
+	}
+}
+
 // PhasePrompt returns the prompt for a phase, with acceptance criteria and
 // the original spec/request injected into review phases.
 func (p *Pipeline) PhasePrompt(phaseIdx int, criteria, spec string) string {
