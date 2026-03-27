@@ -454,15 +454,18 @@ func cmdChat(args []string) {
 
 	// If --spec-file provided, read file and compose message.
 	// Also detect project language from spec content for pipeline routing.
+	// Track spec file path for tool-layer protection — regardless of --message flag
+	if *specFile != "" {
+		if absPath, err := filepath.Abs(*specFile); err == nil {
+			config.SpecFilePath = absPath
+		}
+	}
+
 	if *specFile != "" && *message == "" {
 		specContent, err := os.ReadFile(*specFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading spec file: %v\n", err)
 			os.Exit(1)
-		}
-		// Track spec file path for tool-layer protection
-		if absPath, err := filepath.Abs(*specFile); err == nil {
-			config.SpecFilePath = absPath
 		}
 
 		// Extract language from spec content (e.g., "Language: TypeScript" or "next.js")
@@ -492,6 +495,14 @@ func cmdChat(args []string) {
 	}
 
 	if *message != "" {
+		// If --spec-file provided with --message, prepend spec content to message
+		if *specFile != "" {
+			specContent, err := os.ReadFile(*specFile)
+			if err == nil {
+				composed := "Implement the following specification:\n\n" + string(specContent) + "\n\nUser instruction: " + *message
+				message = &composed
+			}
+		}
 		// One-shot mode: work in the current directory so created files persist.
 		response, err := agent.RunOneShot(ctx, ac.ProxyRouter, registry, config, *message)
 		if err != nil {
