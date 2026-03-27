@@ -146,14 +146,22 @@ ORIGINAL SPEC/REQUEST:
 			UseSubAgent:  true,
 			Prompt: `PHASE: ACCEPTANCE TEST
 Run the actual deliverable end-to-end from the USER'S perspective:
+
+ORIGINAL SPEC/REQUEST:
+---
+%SPEC%
+---
+
 1. Execute/call/open the output as a user would
 2. Check every aspect of the end-user experience
 3. Verify against acceptance criteria:
 ---
-%s
+%CRITERIA%
 ---
-4. Is anything null, broken, missing, or incomplete that a user would notice?
-5. Say ACCEPTANCE_PASS if the user would be satisfied, or ACCEPTANCE_FAIL with what's wrong.`,
+4. Verify the implementation matches the spec's architecture, package structure, and scope
+5. Check for OUT OF SCOPE violations (features added that spec excludes)
+6. Is anything null, broken, missing, or incomplete that a user would notice?
+7. Say ACCEPTANCE_PASS if the user would be satisfied, or ACCEPTANCE_FAIL with what's wrong.`,
 		},
 		{
 			Name: "deploy",
