@@ -307,7 +307,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 
 	// Extract spec constraints (package structure, scope, prohibited patterns)
 	// for injection into all agent prompts — runs once at session start.
-	if a.specConstraints == nil && len(a.originalRequest) > 1000 {
+	if a.specConstraints == nil && len(a.originalRequest) > 100 {
 		a.specConstraints = ExtractSpecConstraints(a.originalRequest)
 		if !a.specConstraints.IsEmpty() {
 			log.Printf("[Agent] extracted spec constraints: package=%s, in_scope=%d, out_of_scope=%d, prohibited=%d",

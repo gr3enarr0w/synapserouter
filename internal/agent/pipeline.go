@@ -121,7 +121,7 @@ If anything fails and you can't fix it, say SELF_CHECK_FAIL.`,
 		},
 		{
 			Name:         "code-review",
-			Escalate:     false, // escalation happens on FAILURE only
+			Escalate:     true, // force escalation — reviewer must be a DIFFERENT (bigger) model than implementer
 			MinToolCalls: 2,
 			UseSubAgent:  true,
 			Prompt: `PHASE: CODE REVIEW (independent reviewer)
@@ -148,6 +148,7 @@ ORIGINAL SPEC/REQUEST:
 		},
 		{
 			Name:         "acceptance-test",
+			Escalate:     true, // force escalation — acceptance tester must be bigger model
 			MinToolCalls: 1,
 			UseSubAgent:  true,
 			Prompt: `PHASE: ACCEPTANCE TEST
