@@ -1736,15 +1736,19 @@ ACCEPTANCE CRITERIA:
 SKILLS TO CHECK AGAINST:
 %s
 %s
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — flag any violations):
+%s
+
 Your job:
 1. Run EVERY verification command listed above. Report the output and PASS/FAIL for each.
 2. Use tools (file_read, grep, bash) to inspect ALL actual outputs. Trust NOTHING without evidence.
 3. Compare each output against the original request and acceptance criteria.
 4. For [MANUAL] checks: read the relevant code and verify the stated condition.
 5. Check for: null values, zero values, empty fields, missing structure.
-6. Say VERIFIED_CORRECT only if ALL verification commands pass AND all criteria are met.
+6. Check all spec constraints above — any violation is a FAIL.
+7. Say VERIFIED_CORRECT only if ALL verification commands pass AND all criteria are met.
    Otherwise say NEEDS_FIX with every specific issue listed.`,
-				step+1, n, a.originalRequest, a.acceptanceCriteria, skillContext, verifySection)
+				step+1, n, a.originalRequest, a.acceptanceCriteria, skillContext, verifySection, a.formatConstraintsBlock())
 		} else if step%2 == 1 {
 			// Odd steps: fix issues found by previous reviewer
 			prevReview := lastResult
@@ -1772,9 +1776,12 @@ REVIEW FINDINGS TO FIX:
 SKILL REFERENCE:
 %s
 
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — fixes must respect these):
+%s
+
 Fix every issue. Run verification commands to confirm fixes work.
 Say VERIFIED_CORRECT if all fixed, or NEEDS_FIX if you couldn't fix something.`,
-				step+1, n, a.originalRequest, a.acceptanceCriteria, prevReview, skillContext)
+				step+1, n, a.originalRequest, a.acceptanceCriteria, prevReview, skillContext, a.formatConstraintsBlock())
 		} else {
 			// Even steps (2, 4, ...): review the previous agent's fixes
 			prevFix := lastResult
@@ -1801,9 +1808,13 @@ PREVIOUS AGENT'S FIX REPORT:
 SKILLS TO CHECK AGAINST:
 %s
 %s
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — flag any violations):
+%s
+
 Verify the fixes are correct. Run ALL verification commands.
+Check all spec constraints above — any violation is a FAIL.
 Say VERIFIED_CORRECT if everything passes, or NEEDS_FIX with remaining issues.`,
-				step+1, n, a.originalRequest, a.acceptanceCriteria, prevFix, skillContext, verifySection)
+				step+1, n, a.originalRequest, a.acceptanceCriteria, prevFix, skillContext, verifySection, a.formatConstraintsBlock())
 		}
 
 		log.Printf("[Agent] sub-agent %s step %d/%d: provider %s (%s)",
@@ -1880,15 +1891,19 @@ ACCEPTANCE CRITERIA:
 SKILLS TO CHECK AGAINST:
 %s
 %s
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — flag any violations):
+%s
+
 Your job:
 1. Run EVERY verification command listed above. Report the output and PASS/FAIL for each.
 2. Use tools (file_read, grep, bash) to inspect ALL actual outputs. Trust NOTHING without evidence.
 3. Compare each output against the original request and acceptance criteria.
 4. For [MANUAL] checks: read the relevant code and verify the stated condition.
 5. Check for: null values, zero values, empty fields, missing structure.
-6. Say VERIFIED_CORRECT only if ALL verification commands pass AND all criteria are met.
+6. Check all spec constraints above — any violation is a FAIL.
+7. Say VERIFIED_CORRECT only if ALL verification commands pass AND all criteria are met.
    Otherwise say NEEDS_FIX with every specific issue listed.`,
-		a.originalRequest, a.acceptanceCriteria, skillContext, verifySection)
+		a.originalRequest, a.acceptanceCriteria, skillContext, verifySection, a.formatConstraintsBlock())
 
 	log.Printf("[Agent] spawning independent %s sub-agent (no shared context)", phase.Name)
 
@@ -2216,6 +2231,11 @@ func (a *Agent) runParallelPhase(phase PipelinePhase) string {
 	// the parent agent has, passed to every sub-agent for domain awareness
 	skillContext := a.matchedSkillContext()
 
+	constraintsBlock := ""
+	if a.specConstraints != nil {
+		constraintsBlock = a.specConstraints.FormatConstraints()
+	}
+
 	if phase.Name == "plan" {
 		for i := 0; i < n; i++ {
 			tasks = append(tasks, taskDef{
@@ -2229,6 +2249,9 @@ TASK:
 ---
 
 SKILL REFERENCE (use these as authoritative guides for formats, APIs, patterns):
+%s
+
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — your plan must respect these):
 %s
 
 Your plan MUST begin with a SPEC CONSTRAINTS section that explicitly lists:
@@ -2253,7 +2276,7 @@ Produce:
 3. UNKNOWNS and ASSUMPTIONS
 4. DEFINITION OF DONE
 
-Be thorough and specific. Output your complete plan, then say PLAN_COMPLETE.`, a.originalRequest, skillContext),
+Be thorough and specific. Output your complete plan, then say PLAN_COMPLETE.`, a.originalRequest, skillContext, constraintsBlock),
 			})
 		}
 	} else {
@@ -2273,6 +2296,9 @@ ACCEPTANCE CRITERIA:
 ---
 
 SKILL REFERENCE (use as reference patterns — spec requirements and acceptance criteria take priority):
+%s
+
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — your implementation must respect these):
 %s
 
 BEFORE WRITING ANY CODE, verify these spec requirements:
@@ -2301,6 +2327,9 @@ ACCEPTANCE CRITERIA:
 SKILL REFERENCE (use as reference patterns — spec requirements and acceptance criteria take priority):
 %s
 
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — your tests must validate these):
+%s
+
 Focus on: unit tests, edge cases, integration tests, test fixtures.
 The main implementation is being written by another agent concurrently.
 Write tests based on the requirements and skill reference, not the implementation.
@@ -2321,8 +2350,11 @@ ACCEPTANCE CRITERIA:
 SKILL REFERENCE (check code against these patterns):
 %s
 
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — flag any violations):
+%s
+
 Focus on: reading all code written so far, finding bugs, logic errors, missing edge cases,
-violations of the skill reference patterns, and potential runtime failures.
+violations of the skill reference patterns and spec constraints, and potential runtime failures.
 List every issue found with file path and line. Do NOT fix — just report.
 When done, say IMPLEMENT_COMPLETE.`,
 		}
@@ -2335,7 +2367,7 @@ When done, say IMPLEMENT_COMPLETE.`,
 			tasks = append(tasks, taskDef{
 				role:     fmt.Sprintf("agent-%d", i+1),
 				provider: levelProviders[i],
-				task:     fmt.Sprintf(rolePrompts[roleIdx], i+1, n, a.originalRequest, a.acceptanceCriteria, skillContext),
+				task:     fmt.Sprintf(rolePrompts[roleIdx], i+1, n, a.originalRequest, a.acceptanceCriteria, skillContext, constraintsBlock),
 			})
 		}
 	}
@@ -2497,6 +2529,9 @@ ACCEPTANCE CRITERIA:
 SKILL REFERENCE (check code against these patterns and formats):
 %s
 
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — flag any violations):
+%s
+
 WORK TO REVIEW (from %s):
 ---
 %s
@@ -2509,7 +2544,7 @@ Your job:
 4. If you find issues, fix them directly in the codebase
 5. Say IMPLEMENT_COMPLETE when done.`, i+1, n, reviewTarget,
 				a.originalRequest, a.acceptanceCriteria,
-				skillContext,
+				skillContext, constraintsBlock,
 				reviewTarget, reviewOutput)
 
 			go func(idx int, task string) {
@@ -2566,7 +2601,10 @@ PLANS FROM MULTIPLE MODELS:
 SKILL REFERENCE (the merged plan MUST incorporate these):
 %s
 
-Output the MERGED plan with complete acceptance criteria that reference the skill specs. Say PLAN_COMPLETE.`, a.originalRequest, combined.String(), skillContext)
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — the merged plan must respect these):
+%s
+
+Output the MERGED plan with complete acceptance criteria that reference the skill specs. Say PLAN_COMPLETE.`, a.originalRequest, combined.String(), skillContext, constraintsBlock)
 
 		merged, err := a.RunChild(ctx, SpawnConfig{
 			Role:     "plan-merger",

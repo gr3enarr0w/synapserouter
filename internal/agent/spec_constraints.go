@@ -151,6 +151,15 @@ func (c *SpecConstraints) FormatConstraints() string {
 	return b.String()
 }
 
+// formatConstraintsBlock returns the formatted constraints block for the agent,
+// or an empty string if no constraints are set. Used by task prompt templates.
+func (a *Agent) formatConstraintsBlock() string {
+	if a.specConstraints != nil {
+		return a.specConstraints.FormatConstraints()
+	}
+	return ""
+}
+
 // IsEmpty returns true if no constraints were extracted.
 func (c *SpecConstraints) IsEmpty() bool {
 	if c == nil {
