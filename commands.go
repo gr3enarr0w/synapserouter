@@ -411,6 +411,13 @@ func cmdChat(args []string) {
 	config.Resume = *resume
 	config.SessionID = *sessionID
 	config.EscalationChain = ac.EscalationChain
+	// Pass full provider list so hasProviders() can find standalone providers
+	// (e.g., planner models) that aren't in the escalation chain.
+	providerNames := make([]string, len(ac.Providers))
+	for i, p := range ac.Providers {
+		providerNames[i] = p.Name()
+	}
+	config.Providers = providerNames
 	config.AutoOrchestrate = true
 
 	// Event bus for real-time observability

@@ -35,6 +35,10 @@ type Config struct {
 	// Each level's models rotate (cross-review in 2 stages).
 	EscalationChain []EscalationLevel
 
+	// Providers is the full list of registered provider names (including
+	// standalone providers like planners that aren't in the escalation chain).
+	Providers []string
+
 	// Observability
 	EventBus  *EventBus // Real-time event bus (nil = no events)
 	Verbosity int       // 0=compact, 1=normal, 2=verbose

@@ -1885,18 +1885,24 @@ func (a *Agent) findPhaseIndex(name string, fallback int) int {
 	return 0
 }
 
-// hasProviders checks if all named providers exist in the escalation chain.
-// Returns false if any are missing, causing parallel phases to fall back to sequential.
-// hasProviders checks if all named providers exist in any escalation level.
+// hasProviders checks if all named providers exist in the escalation chain
+// OR the full registered provider list. Planner providers (e.g., ollama-planner-1)
+// are registered as standalone providers but not in the escalation chain, so both
+// must be checked.
 func (a *Agent) hasProviders(names []string) bool {
-	chainSet := make(map[string]bool)
+	knownSet := make(map[string]bool)
+	// Check escalation chain
 	for _, level := range a.config.EscalationChain {
 		for _, p := range level.Providers {
-			chainSet[p] = true
+			knownSet[p] = true
 		}
 	}
+	// Check full provider list (includes planners and other standalone providers)
+	for _, p := range a.config.Providers {
+		knownSet[p] = true
+	}
 	for _, name := range names {
-		if !chainSet[name] {
+		if !knownSet[name] {
 			return false
 		}
 	}
