@@ -51,11 +51,11 @@ Source: [Spring Boot Engineer](https://mcpmarket.com/es/tools/skills/spring-boot
 ### Constructor injection
 ```java
 @Service
-public class TicketService {
-    private final TicketRepository repository;
+public class ItemService {
+    private final ItemRepository repository;
     private final ClassificationService classifier;
 
-    public TicketService(TicketRepository repository, ClassificationService classifier) {
+    public ItemService(ItemRepository repository, ClassificationService classifier) {
         this.repository = repository;
         this.classifier = classifier;
     }
@@ -64,17 +64,17 @@ public class TicketService {
 
 ### JPA repository
 ```java
-public interface TicketRepository extends JpaRepository<Ticket, String> {
-    List<Ticket> findByStatusAndCategory(String status, String category);
+public interface ItemRepository extends JpaRepository<Item, String> {
+    List<Item> findByStatusAndCategory(String status, String category);
 
-    @Query("SELECT t FROM Ticket t WHERE t.createdAt > :since ORDER BY t.createdAt DESC")
-    List<Ticket> findRecentTickets(@Param("since") LocalDateTime since);
+    @Query("SELECT t FROM Item t WHERE t.createdAt > :since ORDER BY t.createdAt DESC")
+    List<Item> findRecentItems(@Param("since") LocalDateTime since);
 }
 ```
 
 ### Record DTO
 ```java
-public record TicketResponse(
+public record ItemResponse(
     String key,
     String summary,
     String status,
@@ -86,8 +86,8 @@ public record TicketResponse(
 ```java
 @ControllerAdvice
 public class GlobalExceptionHandler {
-    @ExceptionHandler(TicketNotFoundException.class)
-    public ResponseEntity<ErrorResponse> handleNotFound(TicketNotFoundException ex) {
+    @ExceptionHandler(ItemNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNotFound(ItemNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
             .body(new ErrorResponse(ex.getMessage()));
     }

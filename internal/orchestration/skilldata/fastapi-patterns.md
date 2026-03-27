@@ -62,9 +62,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
-@router.get("/{key}", response_model=TicketResponse)
+@router.get("/{key}", response_model=ItemResponse)
 async def get_ticket(key: str, db: AsyncSession = Depends(get_db)):
-    ticket = await db.get(Ticket, key)
+    ticket = await db.get(Item, key)
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     return ticket

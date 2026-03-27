@@ -100,7 +100,7 @@ WHERE updated_at > (SELECT MAX(updated_at) FROM {{ this }})
 ```yaml
 models:
   - name: dim_tickets
-    description: "Ticket dimension table"
+    description: "Item dimension table"
     columns:
       - name: ticket_id
         tests: [unique, not_null]

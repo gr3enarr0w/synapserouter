@@ -82,7 +82,7 @@ project/
 ```python
 from pydantic import BaseModel, Field
 
-class TicketClassification(BaseModel):
+class ItemClassification(BaseModel):
     category: str = Field(description="High-level category")
     issue_type: str = Field(description="Specific issue type")
     confidence: float = Field(ge=0.0, le=1.0)

@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -281,6 +282,19 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 	// Capture original request for domain-specific review
 	if a.originalRequest == "" {
 		a.originalRequest = userMessage
+	}
+
+	// Store large specs in ToolOutputStore for recall after compaction
+	if a.config.ToolStore != nil && a.originalRequest == userMessage && len(userMessage) > 2048 {
+		summary := "Project specification loaded (" + strconv.Itoa(len(userMessage)) + " bytes)"
+		_, storeErr := a.config.ToolStore.Store(
+			a.sessionID, "spec_load", "initial_request", summary,
+			userMessage, 0, len(userMessage))
+		if storeErr != nil {
+			log.Printf("[Agent] warning: failed to store spec: %v", storeErr)
+		} else {
+			log.Printf("[Agent] stored spec (%d bytes) as spec_load for recall", len(userMessage))
+		}
 	}
 
 	// Initialize pipeline immediately on first message (if AutoOrchestrate enabled)
@@ -783,14 +797,16 @@ func (a *Agent) buildMessages() []providers.Message {
 			sysPrompt = defaultSystemPrompt(a.config.WorkDir, a.providerIdx, a.config.ProjectLanguage)
 		}
 
-		// Inject matched skill instructions
-		if skillCtx := a.matchedSkillContext(); skillCtx != "" {
-			sysPrompt += "\n\n" + skillCtx
-		}
-
-		// Inject project-level instructions (CLAUDE.md / AGENTS.md from working directory)
+		// Inject project-level instructions FIRST (CLAUDE.md / AGENTS.md from working directory)
+		// Project instructions take priority over skill patterns.
 		if projectInstr := LoadProjectInstructions(a.config.WorkDir); projectInstr != "" {
 			sysPrompt += "\n\n# Project Instructions\n" + projectInstr
+		}
+
+		// Inject matched skill instructions (reference patterns, not overrides)
+		if skillCtx := a.matchedSkillContext(); skillCtx != "" {
+			sysPrompt += "\n\n" + skillCtx
+			sysPrompt += "\n\nNOTE: Skill patterns are reference examples. When they conflict with the original request, the request takes priority."
 		}
 
 		// Inject toolchain setup instructions if missing tools detected
@@ -2161,11 +2177,11 @@ ACCEPTANCE CRITERIA:
 %s
 ---
 
-SKILL REFERENCE (follow these exactly for formats, APIs, patterns):
+SKILL REFERENCE (use as reference patterns — spec requirements and acceptance criteria take priority):
 %s
 
 Focus on: main implementation files, data structures, core logic, API integration.
-Follow the skill reference documentation precisely.
+Use skill patterns as references — the original request takes priority over examples.
 Do NOT write tests — another agent handles that concurrently.
 When done, say IMPLEMENT_COMPLETE.`,
 			// Role 1: test
@@ -2181,7 +2197,7 @@ ACCEPTANCE CRITERIA:
 %s
 ---
 
-SKILL REFERENCE (follow these for testing patterns and expected formats):
+SKILL REFERENCE (use as reference patterns — spec requirements and acceptance criteria take priority):
 %s
 
 Focus on: unit tests, edge cases, integration tests, test fixtures.

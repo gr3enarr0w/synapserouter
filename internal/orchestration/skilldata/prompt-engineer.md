@@ -51,15 +51,15 @@ Analyze this ticket and classify it step by step:
 ```
 Classify these tickets:
 
-Ticket: "Can't log in to Confluence after migration"
+Request: "Can't log in to Confluence after migration"
 Category: Access
 Issue Type: Login Failure
 
-Ticket: "Dashboard widgets missing in Cloud"
+Request: "Dashboard widgets missing in Cloud"
 Category: Configuration
 Issue Type: Dashboard Migration
 
-Ticket: "<new ticket>"
+Request: "<new ticket>"
 Category:
 ```
 
@@ -72,7 +72,7 @@ Category:
   - Confidence must be 0.0-1.0
   - Include evidence from the ticket text
 </constraints>
-<output_format>JSON matching the TicketClassification schema</output_format>
+<output_format>JSON matching the ItemClassification schema</output_format>
 ```
 
 ### Role-Based

@@ -160,13 +160,13 @@ func NewServer(opts ...Option) *Server {
 
 ### Interface-based testing
 ```go
-type TicketStore interface {
-    Get(ctx context.Context, key string) (*Ticket, error)
+type ItemStore interface {
+    Get(ctx context.Context, key string) (*Item, error)
 }
 
 // In tests:
-type mockStore struct{ tickets map[string]*Ticket }
-func (m *mockStore) Get(_ context.Context, key string) (*Ticket, error) {
+type mockStore struct{ tickets map[string]*Item }
+func (m *mockStore) Get(_ context.Context, key string) (*Item, error) {
     t, ok := m.tickets[key]
     if !ok { return nil, ErrNotFound }
     return t, nil

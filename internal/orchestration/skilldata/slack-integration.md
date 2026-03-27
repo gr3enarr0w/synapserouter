@@ -47,7 +47,7 @@ curl -s -X POST https://slack.com/api/chat.postMessage \
     "channel": "C0123456789",
     "text": "New ticket classified: JIRACONFSD-100",
     "blocks": [
-      {"type": "header", "text": {"type": "plain_text", "text": "New Ticket Alert"}},
+      {"type": "header", "text": {"type": "plain_text", "text": "New Item Alert"}},
       {"type": "section", "text": {"type": "mrkdwn", "text": "*JIRACONFSD-100*: SSO login failing"}}
     ]
   }'

@@ -77,7 +77,7 @@ df['category_encoded'] = te.fit_transform(df[['category']], df['resolution_days'
 
 ### Aggregation features
 ```python
-# Ticket-level features from comments
+# Item-level features from comments
 comment_stats = comments.groupby('ticket_key').agg(
     comment_count=('comment_id', 'count'),
     avg_comment_length=('body', lambda x: x.str.len().mean()),
