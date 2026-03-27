@@ -19,14 +19,30 @@ type SpecConstraints struct {
 func ExtractSpecConstraints(spec string) *SpecConstraints {
 	c := &SpecConstraints{}
 
-	// Extract package structure
-	// Matches: "package: org.xxx", "Package: org.xxx", directory paths like "java/org/xxx/yyy/"
-	pkgRe := regexp.MustCompile(`(?i)(?:package[:\s]+|java/)([a-z][a-z0-9_.]+(?:\.[a-z][a-z0-9_]+){2,})`)
+	// Extract package structure — supports all languages:
+	// - Java/Kotlin: "org.springframework.samples.petclinic" (dot-separated, 3+ segments)
+	// - Go/Python/Rust: "calc", "my_app", "petclinic" (single word after "Package:")
+	// - Directory paths: "java/org/springframework/samples/petclinic/"
+
+	// Try dot-separated first (Java-style: org.xxx.yyy)
+	pkgRe := regexp.MustCompile(`(?i)(?:package[:\s]+)([a-z][a-z0-9_.]+(?:\.[a-z][a-z0-9_]+){2,})`)
 	if m := pkgRe.FindStringSubmatch(spec); len(m) > 1 {
 		c.PackageStructure = m[1]
 	}
 
-	// Also try path-based extraction: java/org/springframework/samples/petclinic/
+	// Try single-word package (Go/Python/Rust: "Package: calc")
+	if c.PackageStructure == "" {
+		singlePkgRe := regexp.MustCompile(`(?im)^(?:\*\*)?Package(?:\*\*)?[:\s]+([a-zA-Z][a-zA-Z0-9_-]+)`)
+		if m := singlePkgRe.FindStringSubmatch(spec); len(m) > 1 {
+			// Don't capture generic words
+			pkg := strings.TrimSpace(m[1])
+			if pkg != "structure" && pkg != "name" && pkg != "manager" && pkg != "the" {
+				c.PackageStructure = pkg
+			}
+		}
+	}
+
+	// Try path-based extraction: java/org/springframework/samples/petclinic/
 	if c.PackageStructure == "" {
 		pathRe := regexp.MustCompile(`java/([a-z][a-z0-9_]+(?:/[a-z][a-z0-9_]+){2,})`)
 		if m := pathRe.FindStringSubmatch(spec); len(m) > 1 {
@@ -34,7 +50,7 @@ func ExtractSpecConstraints(spec string) *SpecConstraints {
 		}
 	}
 
-	// Extract OUT OF SCOPE section
+	// Extract OUT OF SCOPE — supports both bullet lists AND inline comma-separated
 	outRe := regexp.MustCompile(`(?i)(?:OUT\s+OF\s+SCOPE|OUT.SCOPE)[:\s]*\n((?:[-*]\s+.+\n?)+)`)
 	if m := outRe.FindStringSubmatch(spec); len(m) > 1 {
 		for _, line := range strings.Split(m[1], "\n") {
@@ -45,8 +61,20 @@ func ExtractSpecConstraints(spec string) *SpecConstraints {
 			}
 		}
 	}
+	// Fallback: inline format "OUT OF SCOPE: item1, item2, item3"
+	if len(c.OutOfScope) == 0 {
+		inlineOutRe := regexp.MustCompile(`(?i)OUT\s+OF\s+SCOPE[:\s]+([^\n]+)`)
+		if m := inlineOutRe.FindStringSubmatch(spec); len(m) > 1 {
+			for _, item := range strings.Split(m[1], ",") {
+				item = strings.TrimSpace(item)
+				if item != "" {
+					c.OutOfScope = append(c.OutOfScope, item)
+				}
+			}
+		}
+	}
 
-	// Extract IN SCOPE section
+	// Extract IN SCOPE — supports both bullet lists AND inline
 	inRe := regexp.MustCompile(`(?i)(?:IN\s+SCOPE|IN.SCOPE)[:\s]*\n((?:[-*]\s+.+\n?)+)`)
 	if m := inRe.FindStringSubmatch(spec); len(m) > 1 {
 		for _, line := range strings.Split(m[1], "\n") {
@@ -54,6 +82,18 @@ func ExtractSpecConstraints(spec string) *SpecConstraints {
 			line = strings.TrimLeft(line, "-* ")
 			if line != "" {
 				c.InScope = append(c.InScope, line)
+			}
+		}
+	}
+	// Fallback: inline format "IN SCOPE: item1, item2"
+	if len(c.InScope) == 0 {
+		inlineInRe := regexp.MustCompile(`(?i)IN\s+SCOPE[:\s]+([^\n]+)`)
+		if m := inlineInRe.FindStringSubmatch(spec); len(m) > 1 {
+			for _, item := range strings.Split(m[1], ",") {
+				item = strings.TrimSpace(item)
+				if item != "" {
+					c.InScope = append(c.InScope, item)
+				}
 			}
 		}
 	}
