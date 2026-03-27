@@ -7,9 +7,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// ollamaTimeout returns the HTTP client timeout for Ollama requests.
+// Configurable via OLLAMA_TIMEOUT_SECONDS. Default 300s (5 min) to handle
+// large models on cold start (both cloud and local ollama serve).
+func ollamaTimeout() time.Duration {
+	if v := os.Getenv("OLLAMA_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 300 * time.Second
+}
 
 // OllamaCloudProvider for Ollama Cloud API
 type OllamaCloudProvider struct {
@@ -35,9 +49,9 @@ func NewOllamaCloudProvider(baseURL, apiKey, model, name string) *OllamaCloudPro
 			baseURL:    strings.TrimSuffix(baseURL, "/"),
 			apiKey:     apiKey,
 			maxContext: 256000,
-			timeout:    180 * time.Second,
+			timeout:    ollamaTimeout(),
 		},
-		client: NewLLMClient(180 * time.Second),
+		client: NewLLMClient(ollamaTimeout()),
 		model:  model,
 	}
 }
@@ -96,7 +110,8 @@ func (p *OllamaCloudProvider) SupportsModel(model string) bool {
 }
 
 func (p *OllamaCloudProvider) IsHealthy(ctx context.Context) bool {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	healthTimeout := 10 * time.Second // large models need more time for cold starts
+	ctx, cancel := context.WithTimeout(ctx, healthTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/api/tags", nil)

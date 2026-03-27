@@ -8,10 +8,23 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+// vertexTimeout returns the HTTP client timeout for Vertex AI requests.
+// Configurable via VERTEX_TIMEOUT_SECONDS. Default 120s.
+func vertexTimeout() time.Duration {
+	if v := os.Getenv("VERTEX_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 120 * time.Second
+}
 
 // VertexProvider routes requests to Vertex AI (Claude via rawPredict, Gemini via generateContent).
 type VertexProvider struct {
@@ -50,9 +63,9 @@ func NewVertexProvider(cfg VertexConfig) *VertexProvider {
 			baseURL:    vertexBaseURL(cfg.Location, cfg.Project),
 			apiKey:     "", // unused — auth via token
 			maxContext: maxCtx,
-			timeout:    120 * time.Second,
+			timeout:    vertexTimeout(),
 		},
-		client:      NewLLMClient(120 * time.Second),
+		client:      NewLLMClient(vertexTimeout()),
 		project:     cfg.Project,
 		location:    cfg.Location,
 		publisher:   cfg.Publisher,
