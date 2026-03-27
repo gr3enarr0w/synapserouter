@@ -1199,8 +1199,23 @@ func (a *Agent) advancePipeline(content string) bool {
 
 	currentPhase := a.pipeline.Phases[a.pipelinePhase]
 
+	// Turn cap force-advance: when a phase exceeds maxPhaseTurns, skip it entirely.
+	// This MUST be handled before normal signal detection to prevent the "first time
+	// entering" fallback from re-injecting the same phase prompt.
+	if content == "PHASE_SKIPPED_TURN_CAP" || content == "PHASE_SKIPPED_LOOP" {
+		a.pipelineCycles++
+		log.Printf("[Agent] force-skipping phase %s (cycle %d/%d)",
+			currentPhase.Name, a.pipelineCycles, maxPipelineCycles)
+		if a.pipelineCycles > maxPipelineCycles {
+			log.Printf("[Agent] max cycles reached (%d) — force-advancing past all review phases",
+				a.pipelineCycles)
+			a.pipelineCycles = 0
+		}
+		// Fall through to the normal advance logic below (shouldAdvance = true)
+	}
+
 	// shouldContinue only applies to implement phase — prevents false advances in review phases
-	shouldAdvance := IsPassSignal(content)
+	shouldAdvance := IsPassSignal(content) || content == "PHASE_SKIPPED_TURN_CAP" || content == "PHASE_SKIPPED_LOOP"
 	if !shouldAdvance && (currentPhase.Name == "implement" || currentPhase.Name == "data-prep" || currentPhase.Name == "model") {
 		shouldAdvance = a.shouldContinue(content)
 	}
