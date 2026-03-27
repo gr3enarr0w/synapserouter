@@ -22,7 +22,7 @@ func ollamaTimeout() time.Duration {
 			return time.Duration(n) * time.Second
 		}
 	}
-	return 300 * time.Second
+	return 600 * time.Second // 10 min — cloud models processing large specs need time
 }
 
 // OllamaCloudProvider for Ollama Cloud API

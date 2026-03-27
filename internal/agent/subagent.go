@@ -233,6 +233,23 @@ func (a *Agent) buildChildSystemPrompt(role, workDir string) string {
 	}
 	prompt := fmt.Sprintf("You are a %s agent working in: %s\n\n%s", role, workDir, base)
 
+	// Inject language directive so children know the project language
+	if a.config.ProjectLanguage != "" {
+		prompt += fmt.Sprintf("\n\nPROJECT LANGUAGE: %s — all source files MUST be in this language.", a.config.ProjectLanguage)
+	}
+
+	// Inject spec compliance — children MUST follow spec architecture
+	prompt += `
+
+SPEC COMPLIANCE:
+- If the ORIGINAL REQUEST defines IN SCOPE / OUT OF SCOPE: follow strictly.
+- Match the spec's package/directory structure EXACTLY. Do NOT reorganize or rename packages.
+- Do NOT add layers, services, controllers, DTOs, or components the spec excludes.
+- Do NOT use default package names (com.example, main) — use what the spec defines.
+- Skill patterns are reference examples. Spec directives override any conflicting pattern.
+
+WORKING DIRECTORY: All files MUST be created in ` + workDir + `. Do NOT create wrapper subdirectories.`
+
 	// Load role-specific instructions from .claude/agents/{role}.md
 	if roleInstr := LoadRoleInstructions(workDir, role); roleInstr != "" {
 		prompt += "\n\n# Role Instructions\n" + roleInstr
