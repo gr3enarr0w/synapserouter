@@ -38,6 +38,12 @@ func boolArg(args map[string]interface{}, key string) bool {
 // containment — the resolved path must be within workDir. Returns an error
 // if the path escapes the work directory.
 func resolveToolPath(path, workDir string) string {
+	// Expand ~ to home directory
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	}
 	resolved := filepath.Clean(path)
 	if !filepath.IsAbs(resolved) {
 		resolved = filepath.Join(workDir, resolved)

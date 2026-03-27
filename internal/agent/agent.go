@@ -1066,10 +1066,15 @@ func (a *Agent) writeSynrouteMD() {
 // which lets the router pick the best provider. If escalated, targets a specific
 // provider so the agent can use a different model for review/retry.
 func (a *Agent) executeForCurrentProvider(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
-	// If a target provider is set (sub-agent targeting specific Ollama model), use it directly
+	// If a target provider is set (sub-agent targeting specific Ollama model), try it first
 	if a.config.TargetProvider != "" {
 		if pae, ok := a.executor.(ProviderAwareExecutor); ok {
-			return pae.ChatCompletionForProvider(ctx, req, a.sessionID, a.config.TargetProvider, false)
+			resp, err := pae.ChatCompletionForProvider(ctx, req, a.sessionID, a.config.TargetProvider, false)
+			if err == nil {
+				return resp, nil
+			}
+			// Target provider failed (circuit-open, timeout, etc.) — fall through to escalation chain
+			log.Printf("[Agent] target provider %s failed: %v — falling through to chain", a.config.TargetProvider, err)
 		}
 	}
 
