@@ -98,6 +98,10 @@ type Agent struct {
 	toolchainSetup    string // install instructions for missing tools
 	resolvedBuildCmds string // resolved build/test/install commands for detected language
 
+	// File read dedup cache — avoids re-reading unchanged files within a session.
+	// Invalidated when file_write or file_edit modifies a cached path.
+	fileReadCache map[string]string
+
 	// Regression detection
 	regressionTracker *RegressionTracker
 
@@ -596,6 +600,23 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			"args_summary": formatToolCallSummary(name, args),
 		})
 
+		// File read dedup: return cached content if the file hasn't been modified
+		if name == "file_read" {
+			readPath, _ := args["path"].(string)
+			if readPath != "" {
+				resolvedPath := resolvePathForCache(readPath, a.config.WorkDir)
+				if cached, ok := a.fileReadCache[resolvedPath]; ok {
+					log.Printf("[Agent] file_read cache hit: %s", resolvedPath)
+					a.conversation.Add(providers.Message{
+						Role:       "tool",
+						ToolCallID: callID,
+						Content:    cached,
+					})
+					continue
+				}
+			}
+		}
+
 		// Per-tool-call timeout as a safety net. Even if the bash tool's internal
 		// timeout fails, the agent won't hang forever on a single tool call.
 		toolCtx, toolCancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -709,6 +730,25 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			ToolCallID: callID,
 			Content:    conversationContent,
 		})
+
+		// File read cache: populate on successful read, invalidate on write/edit
+		if name == "file_read" && !isError {
+			readPath, _ := args["path"].(string)
+			if readPath != "" {
+				resolvedPath := resolvePathForCache(readPath, a.config.WorkDir)
+				if a.fileReadCache == nil {
+					a.fileReadCache = make(map[string]string)
+				}
+				a.fileReadCache[resolvedPath] = conversationContent
+			}
+		}
+		if (name == "file_write" || name == "file_edit") && !isError {
+			writePath, _ := args["path"].(string)
+			if writePath != "" {
+				resolvedPath := resolvePathForCache(writePath, a.config.WorkDir)
+				delete(a.fileReadCache, resolvedPath)
+			}
+		}
 
 		// Regression detection: check if a bash command produced MORE compilation
 		// errors than the previous build. Injects a warning into conversation so
@@ -1384,16 +1424,56 @@ func (a *Agent) advancePipeline(content string) bool {
 	if IsFailSignal(content) {
 		a.pipelineCycles++
 
-		// Check for stability — if code and issues unchanged for 2 cycles, accept
+		// Check for stability — if code and issues unchanged for 2 cycles, force-advance
 		if a.reviewTracker.CheckStability(a.config.WorkDir, content) {
-			log.Printf("[Agent] pipeline: review stable — accepting result after %d cycles", a.pipelineCycles)
-			return false
+			log.Printf("[Agent] pipeline: review stable — force-advancing past phase after %d cycles", a.pipelineCycles)
+			a.pipelinePhase++
+			a.phaseToolCalls = 0
+			a.phaseTurns = 0
+			a.phaseRetries = 0
+			a.lastGateScore = 0
+			a.plateauCount = 0
+			a.toolFingerprints = nil
+			a.loopWarningCount = 0
+			a.reviewTracker.Reset()
+			if a.pipelinePhase >= len(a.pipeline.Phases) {
+				return false
+			}
+			nextPhase := a.pipeline.Phases[a.pipelinePhase]
+			log.Printf("[Agent] pipeline: force-advancing to phase %d/%d: %s",
+				a.pipelinePhase+1, len(a.pipeline.Phases), nextPhase.Name)
+			prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria)
+			a.conversation.Add(providers.Message{
+				Role:    "user",
+				Content: prompt,
+			})
+			return true
 		}
 
 		if a.pipelineCycles > maxPipelineCycles {
-			log.Printf("[Agent] pipeline: max review cycles reached, accepting result")
+			log.Printf("[Agent] pipeline: max review cycles reached, force-advancing past failing phase")
 			a.pipelineCycles = 0
-			return false
+			a.pipelinePhase++
+			a.phaseToolCalls = 0
+			a.phaseTurns = 0
+			a.phaseRetries = 0
+			a.lastGateScore = 0
+			a.plateauCount = 0
+			a.toolFingerprints = nil
+			a.loopWarningCount = 0
+			a.reviewTracker.Reset()
+			if a.pipelinePhase >= len(a.pipeline.Phases) {
+				return false
+			}
+			nextPhase := a.pipeline.Phases[a.pipelinePhase]
+			log.Printf("[Agent] pipeline: force-advancing to phase %d/%d: %s",
+				a.pipelinePhase+1, len(a.pipeline.Phases), nextPhase.Name)
+			prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria)
+			a.conversation.Add(providers.Message{
+				Role:    "user",
+				Content: prompt,
+			})
+			return true
 		}
 		a.escalateProvider()
 		log.Printf("[Agent] pipeline: phase %s FAILED (cycle %d/%d), escalated to provider idx %d",
@@ -2635,4 +2715,19 @@ func modelMaxMessages(model string) int {
 
 func uniqueID() int64 {
 	return atomic.AddInt64(&idCounter, 1)
+}
+
+// resolvePathForCache resolves a tool path to an absolute canonical form for cache keying.
+// Mirrors the logic in tools.resolveToolPath but is agent-local to avoid exporting internals.
+func resolvePathForCache(path, workDir string) string {
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	}
+	resolved := filepath.Clean(path)
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(workDir, resolved)
+	}
+	return resolved
 }
