@@ -524,6 +524,16 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 				if a.advancePipeline(msg.Content) {
 					continue
 				}
+				// If pipeline has remaining phases, don't exit — force the agent
+				// to keep working. Without this, the agent exits after implement
+				// phase without running self-check/code-review/acceptance-test.
+				if a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
+					phaseName := a.pipeline.Phases[a.pipelinePhase].Name
+					log.Printf("[Agent] pipeline has %d phases remaining (current: %s) — forcing continuation",
+						len(a.pipeline.Phases)-a.pipelinePhase, phaseName)
+					a.conversation.Add(forceToolsMessage(phaseName))
+					continue
+				}
 			}
 			return msg.Content, nil
 		}
