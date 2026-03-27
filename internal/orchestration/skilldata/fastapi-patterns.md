@@ -13,8 +13,9 @@ mcp_tools:
   - "context7.query-docs"
 ---
 
-> **Spec Override:** These patterns are defaults. If a project spec defines different
-> architecture, package structure, or scope, follow the spec instead.
+> **Spec Override:** These patterns are DEFAULTS for when no spec is provided.
+> If a project spec defines different architecture, package structure, or scope,
+> FOLLOW THE SPEC. Do not apply these defaults over explicit spec requirements.
 # Skill: FastAPI Patterns
 
 FastAPI development — async patterns, dependency injection, Pydantic validation, SQLAlchemy 2.0.
@@ -37,7 +38,7 @@ Source: [FastAPI Development](https://mcpmarket.com/tools/skills/fastapi-python-
 1. **Pydantic models for all I/O** — request bodies, response models, validation
 2. **Dependency injection** — use `Depends()` for shared logic (auth, DB sessions)
 3. **Async by default** — `async def` for endpoints, `httpx` for external calls
-4. **Separate concerns** — routes, services, models, schemas in separate modules
+4. **Separate concerns** — Unless the project spec requires different module organization, use routes, services, models, schemas in separate modules
 5. **Use status codes** — `status.HTTP_201_CREATED`, not magic numbers
 
 ---

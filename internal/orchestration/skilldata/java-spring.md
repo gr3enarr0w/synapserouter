@@ -19,8 +19,9 @@ verify:
     expect_not: "MISSING"
 ---
 
-> **Spec Override:** These patterns are defaults. If a project spec defines different
-> architecture, package structure, or scope, follow the spec instead.
+> **Spec Override:** These patterns are DEFAULTS for when no spec is provided.
+> If a project spec defines different architecture, package structure, or scope,
+> FOLLOW THE SPEC. Do not apply these defaults over explicit spec requirements.
 # Skill: Java Spring Boot
 
 Spring Boot 3.x development — JPA, constructor injection, layered architecture.
@@ -41,7 +42,7 @@ Source: [Spring Boot Engineer](https://mcpmarket.com/es/tools/skills/spring-boot
 ## Core Rules
 
 1. **Constructor injection** — never field injection (`@Autowired` on fields)
-2. **Layered architecture** — Controller → Service → Repository
+2. **Layered architecture** — Unless the project spec requires a different structure, use Controller → Service → Repository
 3. **Records for DTOs** — immutable, concise
 4. **Spring profiles** — `application-dev.yml`, `application-prod.yml`
 5. **Validation annotations** — `@Valid`, `@NotNull`, `@Size`

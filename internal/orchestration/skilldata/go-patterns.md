@@ -72,8 +72,9 @@ verify:
     expect_not: "MISSING"
 ---
 
-> **Spec Override:** These patterns are defaults. If a project spec defines different
-> architecture, package structure, or scope, follow the spec instead.
+> **Spec Override:** These patterns are DEFAULTS for when no spec is provided.
+> If a project spec defines different architecture, package structure, or scope,
+> FOLLOW THE SPEC. Do not apply these defaults over explicit spec requirements.
 # Skill: Go Patterns
 
 Idiomatic Go development — concurrency, error handling, interfaces, modules.
@@ -104,6 +105,8 @@ Source: [affaan-m/golang-patterns](https://github.com/affaan-m/everything-claude
 ---
 
 ## Project Structure
+
+Unless the project spec defines a different directory layout, use this default structure:
 
 ```
 project/
