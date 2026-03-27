@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"time"
 )
 
@@ -23,11 +25,23 @@ type CircuitBreaker struct {
 }
 
 func NewCircuitBreaker(db *sql.DB, provider string) *CircuitBreaker {
+	threshold := 5
+	if v := os.Getenv("CIRCUIT_FAILURE_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			threshold = n
+		}
+	}
+	cooldown := 5 * time.Minute
+	if v := os.Getenv("CIRCUIT_COOLDOWN_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cooldown = time.Duration(n) * time.Second
+		}
+	}
 	return &CircuitBreaker{
 		db:                db,
 		provider:          provider,
-		failureThreshold:  5,
-		cooldownDuration:  5 * time.Minute,
+		failureThreshold:  threshold,
+		cooldownDuration:  cooldown,
 	}
 }
 

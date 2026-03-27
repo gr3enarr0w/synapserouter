@@ -33,7 +33,15 @@ type cachedHealth struct {
 	checkedAt time.Time
 }
 
-const healthCacheTTL = 2 * time.Minute
+// healthCacheTTLSeconds returns the health cache TTL from env or default (120s).
+func healthCacheTTLSeconds() time.Duration {
+	if v := os.Getenv("HEALTH_CACHE_TTL_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 2 * time.Minute
+}
 
 type providerAttempt struct {
 	Provider string
@@ -116,7 +124,7 @@ func (r *Router) isHealthyCached(ctx context.Context, p providers.Provider) bool
 
 	// Check cache (read lock)
 	r.healthMu.RLock()
-	if cached, ok := r.healthCache[name]; ok && time.Since(cached.checkedAt) < healthCacheTTL {
+	if cached, ok := r.healthCache[name]; ok && time.Since(cached.checkedAt) < healthCacheTTLSeconds() {
 		r.healthMu.RUnlock()
 		return cached.healthy
 	}
@@ -124,6 +132,14 @@ func (r *Router) isHealthyCached(ctx context.Context, p providers.Provider) bool
 
 	// Cache miss or stale — do real check, then write
 	healthy := p.IsHealthy(ctx)
+	if !healthy {
+		retryCtx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		healthy = p.IsHealthy(retryCtx)
+		cancel()
+		if healthy {
+			log.Printf("[Router] %s health check recovered on retry", name)
+		}
+	}
 	r.healthMu.Lock()
 	r.healthCache[name] = &cachedHealth{healthy: healthy, checkedAt: time.Now()}
 	r.healthMu.Unlock()
@@ -1034,4 +1050,38 @@ func boolToInt(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+// StartHealthMonitor launches a background goroutine that periodically checks
+// circuit-open providers and resets them if they become healthy again.
+func (r *Router) StartHealthMonitor(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				for _, p := range r.providers {
+					name := p.Name()
+					cb := r.circuitBreakers[name]
+					if !cb.IsOpen() {
+						continue
+					}
+					checkCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+					if p.IsHealthy(checkCtx) {
+						if err := cb.Reset(); err == nil {
+							log.Printf("[Router] health monitor: %s recovered, circuit reset", name)
+							r.healthMu.Lock()
+							r.healthCache[name] = &cachedHealth{healthy: true, checkedAt: time.Now()}
+							r.healthMu.Unlock()
+						}
+					}
+					cancel()
+				}
+			}
+		}
+	}()
+	log.Printf("[Router] health monitor started (30s interval)")
 }
