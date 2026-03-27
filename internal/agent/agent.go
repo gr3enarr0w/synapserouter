@@ -2231,6 +2231,12 @@ TASK:
 SKILL REFERENCE (use these as authoritative guides for formats, APIs, patterns):
 %s
 
+Your plan MUST begin with a SPEC CONSTRAINTS section that explicitly lists:
+- Required package/directory structure
+- OUT OF SCOPE items (things you must NOT build)
+- Prohibited patterns (e.g., "no service layer")
+If you skip this section, the plan will be rejected.
+
 0. SPEC PERCEPTION (do this FIRST):
    Before planning, restate the spec's key architectural decisions:
    - Required package/directory structure?
@@ -2238,7 +2244,7 @@ SKILL REFERENCE (use these as authoritative guides for formats, APIs, patterns):
    - Mandated/prohibited design patterns?
    - Technology constraints?
    If the spec has an "Acceptance Criteria" section, EXTRACT those criteria verbatim — do not generate your own.
-   If no spec is provided, skip this step.
+   If no spec is provided, state "No spec provided" in the SPEC CONSTRAINTS section and proceed.
 
 Produce:
 1. TASK DECOMPOSITION: ordered subtasks with dependencies
@@ -2268,6 +2274,12 @@ ACCEPTANCE CRITERIA:
 
 SKILL REFERENCE (use as reference patterns — spec requirements and acceptance criteria take priority):
 %s
+
+BEFORE WRITING ANY CODE, verify these spec requirements:
+1. What package name does the spec require? (Use ONLY this, not defaults)
+2. What is OUT OF SCOPE? (Do NOT create these)
+3. What directory structure does the spec mandate?
+If acceptance criteria contradict the original spec, FOLLOW THE SPEC.
 
 Focus on: main implementation files, data structures, core logic, API integration.
 Use skill patterns as references — the original request takes priority over examples.
