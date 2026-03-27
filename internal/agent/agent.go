@@ -98,6 +98,9 @@ type Agent struct {
 	toolchainSetup    string // install instructions for missing tools
 	resolvedBuildCmds string // resolved build/test/install commands for detected language
 
+	// Regression detection
+	regressionTracker *RegressionTracker
+
 	// Event bus for real-time observability
 	bus *EventBus
 }
@@ -251,6 +254,10 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 			install, test, build := environment.ResolveBuildCommands(env.Language, a.config.WorkDir)
 			if install != "" || test != "" || build != "" {
 				a.resolvedBuildCmds = fmt.Sprintf("Build: %s | Test: %s | Install: %s", build, test, install)
+			}
+			// Initialize regression tracker with the resolved build command
+			if build != "" {
+				a.regressionTracker = NewRegressionTracker(build)
 			}
 		}
 	}
@@ -702,6 +709,18 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			ToolCallID: callID,
 			Content:    conversationContent,
 		})
+
+		// Regression detection: check if a bash command produced MORE compilation
+		// errors than the previous build. Injects a warning into conversation so
+		// the LLM knows to stop and fix instead of continuing to create files.
+		if name == "bash" && a.regressionTracker != nil && exitCode != 0 {
+			if warning := a.regressionTracker.Check(resultContent, exitCode); warning != "" {
+				a.conversation.Add(providers.Message{
+					Role:    "user",
+					Content: warning,
+				})
+			}
+		}
 	}
 }
 
