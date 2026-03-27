@@ -13,6 +13,9 @@ language: sql
 mcp_tools:
   - "context7.query-docs"
 ---
+
+> **Spec Override:** These patterns are defaults. If a project spec defines different
+> architecture, package structure, or scope, follow the spec instead.
 # Skill: dbt Modeler
 
 dbt development — medallion architecture, staging/marts, incremental models, testing.

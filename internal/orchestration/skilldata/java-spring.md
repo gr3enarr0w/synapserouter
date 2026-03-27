@@ -18,6 +18,9 @@ verify:
     command: "test -f README.md && echo 'OK' || echo 'MISSING'"
     expect_not: "MISSING"
 ---
+
+> **Spec Override:** These patterns are defaults. If a project spec defines different
+> architecture, package structure, or scope, follow the spec instead.
 # Skill: Java Spring Boot
 
 Spring Boot 3.x development — JPA, constructor injection, layered architecture.

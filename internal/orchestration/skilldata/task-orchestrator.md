@@ -10,6 +10,9 @@ triggers:
 role: architect
 phase: implement
 ---
+
+> **Spec Override:** These patterns are defaults. If a project spec defines different
+> architecture, package structure, or scope, follow the spec instead.
 # Skill: Task Orchestrator
 
 Parallel task decomposition, worker agent spawning, structured task graphs.
