@@ -255,5 +255,13 @@ WORKING DIRECTORY: All files MUST be created in ` + workDir + `. Do NOT create w
 	if roleInstr := LoadRoleInstructions(workDir, role); roleInstr != "" {
 		prompt += "\n\n# Role Instructions\n" + roleInstr
 	}
+
+	// Inject extracted spec constraints into child agents
+	if a.specConstraints != nil {
+		if formatted := a.specConstraints.FormatConstraints(); formatted != "" {
+			prompt += "\n\n" + formatted
+		}
+	}
+
 	return prompt
 }

@@ -103,6 +103,9 @@ type Agent struct {
 	// Invalidated when file_write or file_edit modifies a cached path.
 	fileReadCache map[string]string
 
+	// Spec constraint extraction
+	specConstraints *SpecConstraints
+
 	// Regression detection
 	regressionTracker *RegressionTracker
 
@@ -299,6 +302,17 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 			log.Printf("[Agent] warning: failed to store spec: %v", storeErr)
 		} else {
 			log.Printf("[Agent] stored spec (%d bytes) as spec_load for recall", len(userMessage))
+		}
+	}
+
+	// Extract spec constraints (package structure, scope, prohibited patterns)
+	// for injection into all agent prompts — runs once at session start.
+	if a.specConstraints == nil && len(a.originalRequest) > 1000 {
+		a.specConstraints = ExtractSpecConstraints(a.originalRequest)
+		if !a.specConstraints.IsEmpty() {
+			log.Printf("[Agent] extracted spec constraints: package=%s, in_scope=%d, out_of_scope=%d, prohibited=%d",
+				a.specConstraints.PackageStructure, len(a.specConstraints.InScope),
+				len(a.specConstraints.OutOfScope), len(a.specConstraints.Prohibited))
 		}
 	}
 
@@ -812,6 +826,14 @@ func (a *Agent) buildMessages() []providers.Message {
 		if skillCtx := a.matchedSkillContext(); skillCtx != "" {
 			sysPrompt += "\n\n" + skillCtx
 			sysPrompt += "\n\nNOTE: Skill patterns are reference examples. When they conflict with the original request, the request takes priority."
+		}
+
+
+		// Inject extracted spec constraints prominently — these override skill patterns
+		if a.specConstraints != nil {
+			if formatted := a.specConstraints.FormatConstraints(); formatted != "" {
+				sysPrompt += "\n\n" + formatted
+			}
 		}
 
 		// Inject toolchain setup instructions if missing tools detected
