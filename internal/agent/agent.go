@@ -369,7 +369,7 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		if a.budget != nil {
 			a.budget.RecordTurn()
 			if reason := a.budget.Exceeded(); reason != "" {
-				return "", fmt.Errorf("agent budget exceeded: %s", reason)
+				return "", &BudgetExhaustedError{Reason: reason}
 			}
 		}
 
@@ -567,7 +567,7 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("agent exceeded max turns (%d)", a.config.MaxTurns)
+	return "", &BudgetExhaustedError{Reason: fmt.Sprintf("max turns (%d) exceeded", a.config.MaxTurns)}
 }
 
 // executeToolCalls runs each tool call and adds results to conversation.
@@ -1450,6 +1450,22 @@ Commands marked [MANUAL] require reading code instead of running a command.
 
 		result, err := a.runSingleReviewer(ctx, phase, model, targetProvider, skillContext, verifySection)
 		if err != nil {
+			// Budget exhaustion means the sub-agent ran out of turns/tokens — escalate
+			// to a bigger model and retry once before giving up.
+			if IsBudgetExhausted(err) {
+				log.Printf("[Agent] sub-agent %s hit budget — escalating provider and retrying", phase.Name)
+				if a.escalateProvider() {
+					retryProvider := ""
+					if provs := a.currentLevelProviders(); len(provs) > 0 {
+						retryProvider = provs[0]
+					}
+					retryResult, retryErr := a.runSingleReviewer(ctx, phase, model, retryProvider, skillContext, verifySection)
+					if retryErr == nil {
+						return retryResult
+					}
+					log.Printf("[Agent] escalated retry also failed: %v", retryErr)
+				}
+			}
 			return fmt.Sprintf("NEEDS_FIX: sub-agent error: %v", err)
 		}
 		return result
@@ -1568,6 +1584,27 @@ Say VERIFIED_CORRECT if everything passes, or NEEDS_FIX with remaining issues.`,
 			Provider: provider,
 			Budget:   &AgentBudget{MaxTurns: maxPhaseTurns},
 		}, task)
+
+		// Budget exhaustion: escalate provider and retry this step once
+		if err != nil && IsBudgetExhausted(err) {
+			log.Printf("[Agent] sub-agent step %d hit budget — escalating and retrying", step+1)
+			if a.escalateProvider() {
+				retryProviders := a.currentLevelProviders()
+				retryProvider := provider
+				if len(retryProviders) > 0 {
+					retryProvider = retryProviders[0]
+				}
+				result, err = a.RunChild(ctx, SpawnConfig{
+					Role:     fmt.Sprintf("%s-step-%d-retry", phase.Name, step+1),
+					Model:    model,
+					Provider: retryProvider,
+					Budget:   &AgentBudget{MaxTurns: maxPhaseTurns},
+				}, task)
+				if err != nil {
+					log.Printf("[Agent] escalated retry step %d also failed: %v", step+1, err)
+				}
+			}
+		}
 
 		if err != nil {
 			log.Printf("[Agent] sub-agent step %d failed: %v", step+1, err)
@@ -2108,10 +2145,14 @@ When done, say IMPLEMENT_COMPLETE.`,
 
 	// Collect results
 	var combined strings.Builder
+	budgetExhaustedCount := 0
 	for i := 0; i < len(tasks); i++ {
 		r := <-results
 		combined.WriteString(fmt.Sprintf("\n=== %s ===\n", r.role))
 		if r.err != nil {
+			if IsBudgetExhausted(r.err) {
+				budgetExhaustedCount++
+			}
 			combined.WriteString(fmt.Sprintf("ERROR: %v\n", r.err))
 			log.Printf("[Agent] parallel sub-agent %s failed: %v", r.role, r.err)
 		} else {
@@ -2122,6 +2163,14 @@ When done, say IMPLEMENT_COMPLETE.`,
 			}
 			log.Printf("[Agent] parallel sub-agent %s completed", r.role)
 		}
+	}
+
+	// If any sub-agent hit its budget, escalate the provider so subsequent
+	// phases (review, acceptance) use a bigger model that can finish in fewer turns.
+	if budgetExhaustedCount > 0 {
+		log.Printf("[Agent] %d/%d parallel sub-agents hit budget — escalating provider",
+			budgetExhaustedCount, len(tasks))
+		a.escalateProvider()
 	}
 
 	// Merge files from temp dirs back to parent WorkDir (before returning results)

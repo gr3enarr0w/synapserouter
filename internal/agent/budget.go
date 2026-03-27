@@ -1,9 +1,30 @@
 package agent
 
 import (
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
+
+// BudgetExhaustedError is returned when a sub-agent hits its budget limit.
+// The parent agent uses this to distinguish budget exhaustion (which should
+// trigger provider escalation) from real failures.
+type BudgetExhaustedError struct {
+	Reason string // e.g. "turn limit exceeded", "token limit exceeded"
+}
+
+func (e *BudgetExhaustedError) Error() string {
+	return fmt.Sprintf("agent budget exceeded: %s", e.Reason)
+}
+
+// IsBudgetExhausted returns true if the error (or any wrapped error) is a
+// BudgetExhaustedError. Used by parent agents to detect when a child hit its
+// budget and should trigger escalation instead of treating it as a hard failure.
+func IsBudgetExhausted(err error) bool {
+	var be *BudgetExhaustedError
+	return errors.As(err, &be)
+}
 
 // AgentBudget defines resource limits for an agent.
 type AgentBudget struct {
