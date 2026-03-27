@@ -337,13 +337,13 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 			a.conversation.Add(providers.Message{
 				Role:    "user",
 				Content: fmt.Sprintf("The planning phase is complete. Here is the merged plan and acceptance criteria:\n\n%s\n\nNow proceed to implement. %s",
-					parallelResult, a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria)),
+					parallelResult, a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)),
 			})
 		} else {
 			// No parallel plan phase — inject the first phase prompt so the
 			// pipeline actively steers the agent from turn 1, not just when
 			// the agent stops making tool calls.
-			phasePrompt := a.pipeline.PhasePrompt(0, a.acceptanceCriteria)
+			phasePrompt := a.pipeline.PhasePrompt(0, a.acceptanceCriteria, a.originalRequest)
 			if phasePrompt != "" {
 				log.Printf("[Agent] pipeline: injecting phase 1/%d prompt: %s",
 					len(a.pipeline.Phases), firstPhase.Name)
@@ -1457,7 +1457,7 @@ func (a *Agent) advancePipeline(content string) bool {
 			return true
 		}
 
-		prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria)
+		prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)
 		a.conversation.Add(providers.Message{
 			Role:    "user",
 			Content: prompt,
@@ -1486,7 +1486,7 @@ func (a *Agent) advancePipeline(content string) bool {
 			nextPhase := a.pipeline.Phases[a.pipelinePhase]
 			log.Printf("[Agent] pipeline: force-advancing to phase %d/%d: %s",
 				a.pipelinePhase+1, len(a.pipeline.Phases), nextPhase.Name)
-			prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria)
+			prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)
 			a.conversation.Add(providers.Message{
 				Role:    "user",
 				Content: prompt,
@@ -1512,7 +1512,7 @@ func (a *Agent) advancePipeline(content string) bool {
 			nextPhase := a.pipeline.Phases[a.pipelinePhase]
 			log.Printf("[Agent] pipeline: force-advancing to phase %d/%d: %s",
 				a.pipelinePhase+1, len(a.pipeline.Phases), nextPhase.Name)
-			prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria)
+			prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)
 			a.conversation.Add(providers.Message{
 				Role:    "user",
 				Content: prompt,
@@ -1553,7 +1553,7 @@ func (a *Agent) advancePipeline(content string) bool {
 		return true
 	}
 
-	prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria)
+	prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)
 	a.conversation.Add(providers.Message{
 		Role:    "user",
 		Content: prompt,
