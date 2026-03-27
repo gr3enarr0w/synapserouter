@@ -407,10 +407,10 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		// This prevents infinite loops in self-check/review phases that can't converge.
 		if a.config.AutoOrchestrate && a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
 			a.phaseTurns++
-			if a.phaseTurns > maxPhaseTurns {
+			if a.phaseTurns > a.maxPhaseTurns() {
 				phaseName := a.pipeline.Phases[a.pipelinePhase].Name
 				log.Printf("[Agent] phase %s exceeded %d turn cap — force-advancing to next phase",
-					phaseName, maxPhaseTurns)
+					phaseName, a.maxPhaseTurns())
 				a.emit(EventPhaseComplete, "", map[string]any{
 					"phase_name":    phaseName,
 					"passed":        false,
@@ -958,10 +958,24 @@ func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query strin
 	return b.String()
 }
 
-// maxPhaseTurns is the hard cap on LLM calls per pipeline phase.
-// Prevents infinite loops when self-check or review phases can't converge.
-// 25 turns is enough for: read errors (1) + fix files (5-10) + rebuild (1) + verify (1) + iterate (5-10).
-const maxPhaseTurns = 25
+// maxPhaseTurns returns the dynamic hard cap on LLM calls per pipeline phase.
+// Auto-detects from spec complexity when Config.MaxPhaseTurns is 0:
+//   >20KB spec = 40 turns, 5-20KB = 25 turns, <5KB = 15 turns.
+func (a *Agent) maxPhaseTurns() int {
+	if a.config.MaxPhaseTurns > 0 {
+		return a.config.MaxPhaseTurns
+	}
+	// Auto-detect from spec complexity
+	specLen := len(a.originalRequest)
+	switch {
+	case specLen > 20000: // complex spec (>20KB)
+		return 40
+	case specLen > 5000: // medium spec (5-20KB)
+		return 25
+	default: // simple spec or no spec
+		return 15
+	}
+}
 
 // maxPipelineCycles is the hard cap on fail-back cycles (review → implement → review).
 // 3 cycles is enough: initial attempt + 2 fix iterations. Beyond that, accept the result
@@ -1416,6 +1430,16 @@ func (a *Agent) advancePipeline(content string) bool {
 			// Never go back to small coders. Each cycle escalates further.
 			a.pipelineCycles++
 
+			// Check for divergence — if findings are increasing, stop cycling (cost is growing)
+			if a.reviewTracker.CheckDivergence(reviewResult) {
+				log.Printf("[Agent] pipeline: review findings INCREASING — cost diverging, force-advancing after %d cycles", a.pipelineCycles)
+				a.conversation.Add(providers.Message{
+					Role:    "user",
+					Content: fmt.Sprintf("Review findings are increasing each cycle (diverging). Accepting current state to stop cost growth:\n%s", reviewResult),
+				})
+				return a.advancePipeline("PHASE_PASSED")
+			}
+
 			// Check for stability — if code and issues unchanged for 2 cycles, accept
 			if a.reviewTracker.CheckStability(a.config.WorkDir, reviewResult) {
 				log.Printf("[Agent] pipeline: review stable — accepting result after %d cycles", a.pipelineCycles)
@@ -1467,6 +1491,32 @@ func (a *Agent) advancePipeline(content string) bool {
 
 	if IsFailSignal(content) {
 		a.pipelineCycles++
+
+		// Check for divergence — if findings are increasing, stop cycling (cost is growing)
+		if a.reviewTracker.CheckDivergence(content) {
+			log.Printf("[Agent] pipeline: review findings INCREASING — cost diverging, force-advancing after %d cycles", a.pipelineCycles)
+			a.pipelinePhase++
+			a.phaseToolCalls = 0
+			a.phaseTurns = 0
+			a.phaseRetries = 0
+			a.lastGateScore = 0
+			a.plateauCount = 0
+			a.toolFingerprints = nil
+			a.loopWarningCount = 0
+			a.reviewTracker.Reset()
+			if a.pipelinePhase >= len(a.pipeline.Phases) {
+				return false
+			}
+			nextPhase := a.pipeline.Phases[a.pipelinePhase]
+			log.Printf("[Agent] pipeline: force-advancing to phase %d/%d: %s (diverging reviews)",
+				a.pipelinePhase+1, len(a.pipeline.Phases), nextPhase.Name)
+			prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)
+			a.conversation.Add(providers.Message{
+				Role:    "user",
+				Content: prompt,
+			})
+			return true
+		}
 
 		// Check for stability — if code and issues unchanged for 2 cycles, force-advance
 		if a.reviewTracker.CheckStability(a.config.WorkDir, content) {
@@ -1737,7 +1787,7 @@ Say VERIFIED_CORRECT if everything passes, or NEEDS_FIX with remaining issues.`,
 			Role:     fmt.Sprintf("%s-step-%d", phase.Name, step+1),
 			Model:    model,
 			Provider: provider,
-			Budget:   &AgentBudget{MaxTurns: maxPhaseTurns},
+			Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
 		}, task)
 
 		// Budget exhaustion: escalate provider and retry this step once
@@ -1753,7 +1803,7 @@ Say VERIFIED_CORRECT if everything passes, or NEEDS_FIX with remaining issues.`,
 					Role:     fmt.Sprintf("%s-step-%d-retry", phase.Name, step+1),
 					Model:    model,
 					Provider: retryProvider,
-					Budget:   &AgentBudget{MaxTurns: maxPhaseTurns},
+					Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
 				}, task)
 				if err != nil {
 					log.Printf("[Agent] escalated retry step %d also failed: %v", step+1, err)
@@ -1819,7 +1869,7 @@ Your job:
 		Role:     phase.Name,
 		Model:    model,
 		Provider: provider,
-		Budget:   &AgentBudget{MaxTurns: maxPhaseTurns},
+		Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
 	}, task)
 
 	if err != nil {
@@ -2303,7 +2353,7 @@ When done, say IMPLEMENT_COMPLETE.`,
 			cfg := SpawnConfig{
 				Role:     role,
 				Provider: provider,
-				Budget:   &AgentBudget{MaxTurns: maxPhaseTurns},
+				Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
 			}
 			if workDir != "" {
 				cfg.WorkDir = workDir

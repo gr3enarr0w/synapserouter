@@ -44,12 +44,16 @@ type Config struct {
 	Verbosity int       // 0=compact, 1=normal, 2=verbose
 
 	// Project context
+	SpecFilePath    string           // Absolute path to --spec-file input (protected from overwrite)
 	ProjectLanguage string           // Declared language from spec or detection (overrides Detect())
 	ToolStore       *ToolOutputStore     // DB-backed storage for full tool outputs (nil = no storage)
 	VectorMemory    *memory.VectorMemory // Direct DB access for conversation compaction + recall
 
 	// Session lineage — enables sub-agents to recall parent tool outputs
 	ParentSessionIDs []string // ordered: [parent, grandparent, ...] session IDs
+
+	// Pipeline tuning
+	MaxPhaseTurns int // Hard cap on LLM calls per pipeline phase (0 = auto-detect from spec complexity)
 
 	// State persistence
 	DB        *sql.DB // SQLite database for session persistence
@@ -71,6 +75,7 @@ func DefaultConfig() Config {
 		MaxTurns:        0, // 0 = unlimited; use AgentBudget.MaxTurns for sub-agent limits
 		WorkDir:         ".",
 		MaxAgents:       3, // match Ollama Cloud Pro concurrent limit
+		MaxPhaseTurns:   25, // default hard cap per phase; 0 = auto-detect from spec complexity
 		Skills:          orchestration.DefaultSkills(),
 		AutoOrchestrate: false, // set to true in cmdChat for production use
 		// EscalationChain is set at startup from router.ProviderNames()
