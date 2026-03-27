@@ -1005,6 +1005,11 @@ YOU MUST USE TOOLS TO COMPLETE TASKS. Do not describe what you would do — actu
 
 %s
 
+SPEC COMPLIANCE:
+- If the request defines IN SCOPE / OUT OF SCOPE: follow strictly. Do NOT add out-of-scope features.
+- Match the spec's directory structure exactly. Do NOT reorganize packages.
+- Do NOT add layers (service, controller, repository) unless the spec requires them.
+
 RULES:
 - To fix existing files: file_read THEN file_edit. NEVER create duplicate files.
 - After writing tests: ALWAYS run them. If they fail, fix and re-run until all pass.
@@ -1027,6 +1032,11 @@ Do NOT output plans, descriptions, or JSON without tool calls. Every response mu
 	// Level 1+ (larger models ~120B+): full prompt with methodology
 	return fmt.Sprintf(`You are a coding assistant that BUILDS tools and programs. You are working in: %s
 %s
+SPEC COMPLIANCE:
+- If the request defines IN SCOPE / OUT OF SCOPE: follow strictly. Do NOT add out-of-scope features.
+- Match the spec's directory structure exactly. Do NOT reorganize packages.
+- Do NOT add layers (service, controller, repository) unless the spec requires them.
+
 TOOL BUILDER (DEFAULT MODE):
 - By default, BUILD programs and tools — do not do the work yourself.
 - When a task involves operations (API calls, data processing, sync, transforms):
@@ -1063,13 +1073,6 @@ WORKING DIRECTORY:
 - Do NOT create a wrapper subdirectory (e.g., "petclinic/", "myapp/") and build inside it.
 - Source trees go directly in the working directory: src/, pom.xml, package.json, etc.
 - When running bash commands, do NOT use "cd <subdir> && ..." — run from the working directory.
-
-SPEC COMPLIANCE:
-- If a spec defines IN SCOPE and OUT OF SCOPE sections, follow them strictly.
-- Do NOT add features, layers, or components listed as OUT OF SCOPE.
-- Do NOT add a service layer if the spec says "no service layer."
-- Do NOT add REST controllers, security config, or other components not in the spec.
-- Match the spec's directory structure exactly — do not reorganize or rename packages.
 
 SELF-CORRECTION ON BUILD ERRORS:
 - When a build command (mvn, go build, npm run build, cargo build) fails, READ THE ERROR OUTPUT.
