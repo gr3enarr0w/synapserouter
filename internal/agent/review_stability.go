@@ -15,9 +15,11 @@ import (
 // If LOC and issues are unchanged for 2 consecutive cycles, we accept and move on.
 // NOT goroutine-safe — must only be called from the agent's main loop.
 type ReviewCycleTracker struct {
-	prevLOC       int
-	prevIssueHash string
-	stableCount   int // consecutive cycles with no change
+	prevLOC          int
+	prevIssueHash    string
+	stableCount      int // consecutive cycles with no change
+	prevFindingCount int // track number of issues found
+	divergeCount     int // consecutive cycles where findings INCREASED
 }
 
 // CheckStability compares current state against previous cycle.
@@ -49,6 +51,37 @@ func (r *ReviewCycleTracker) Reset() {
 	r.prevLOC = 0
 	r.prevIssueHash = ""
 	r.stableCount = 0
+	r.prevFindingCount = 0
+	r.divergeCount = 0
+}
+
+// CheckDivergence returns true if review findings are growing (cost diverging).
+// This means cycling is making things worse, not better.
+func (r *ReviewCycleTracker) CheckDivergence(reviewOutput string) bool {
+	findingCount := countFindings(reviewOutput)
+
+	if r.prevFindingCount > 0 && findingCount > r.prevFindingCount {
+		r.divergeCount++
+	} else {
+		r.divergeCount = 0
+	}
+	r.prevFindingCount = findingCount
+
+	// If findings increased for 2+ consecutive cycles, we're diverging
+	return r.divergeCount >= 2
+}
+
+func countFindings(output string) int {
+	count := 0
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") ||
+			strings.Contains(trimmed, "FAIL") || strings.Contains(trimmed, "NEEDS_FIX") ||
+			strings.Contains(trimmed, "ERROR") {
+			count++
+		}
+	}
+	return count
 }
 
 const maxLOCBytesPerFile = 1 << 20 // 1MB cap per file to prevent OOM on large generated files
