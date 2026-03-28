@@ -14,6 +14,9 @@ phase: analyze
 mcp_tools:
   - "context7.query-docs"
 ---
+
+> **Spec Override:** These patterns are defaults. If a project spec defines different
+> architecture, package structure, or scope, follow the spec instead.
 # Skill: API Design
 
 REST/OpenAPI patterns — pagination, auth schemes, error handling, versioning.
@@ -31,7 +34,7 @@ REST/OpenAPI patterns — pagination, auth schemes, error handling, versioning.
 
 ## Core Rules
 
-1. **Nouns for resources** — `/tickets`, `/users`, not `/getTickets`
+1. **Nouns for resources** — `/items`, `/users`, not `/getItems`
 2. **HTTP methods for actions** — GET (read), POST (create), PUT (replace), PATCH (update), DELETE
 3. **Consistent error format** — `{"error": {"code": "NOT_FOUND", "message": "..."}}`
 4. **Pagination by default** — cursor-based for large datasets, offset for small
@@ -44,12 +47,12 @@ REST/OpenAPI patterns — pagination, auth schemes, error handling, versioning.
 
 ### RESTful resource design
 ```
-GET    /api/v1/tickets           # List (paginated)
-GET    /api/v1/tickets/KEY-123   # Get one
-POST   /api/v1/tickets           # Create
-PATCH  /api/v1/tickets/KEY-123   # Partial update
-DELETE /api/v1/tickets/KEY-123   # Delete
-GET    /api/v1/tickets/KEY-123/comments  # Sub-resource
+GET    /api/v1/items           # List (paginated)
+GET    /api/v1/items/KEY-123   # Get one
+POST   /api/v1/items           # Create
+PATCH  /api/v1/items/KEY-123   # Partial update
+DELETE /api/v1/items/KEY-123   # Delete
+GET    /api/v1/items/KEY-123/comments  # Sub-resource
 ```
 
 ### Pagination (cursor-based)
@@ -66,7 +69,7 @@ GET    /api/v1/tickets/KEY-123/comments  # Sub-resource
 
 ### Filtering and sorting
 ```
-GET /api/v1/tickets?status=open&category=access&sort=-created_at&limit=20
+GET /api/v1/items?status=open&category=access&sort=-created_at&limit=20
 ```
 
 ### Error responses

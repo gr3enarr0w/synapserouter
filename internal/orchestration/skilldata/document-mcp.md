@@ -16,6 +16,9 @@ mcp_tools:
   - "document-mcp.create_document_tool"
   - "document-mcp.generate_image_tool"
 ---
+
+> **Spec Override:** These patterns are defaults. If a project spec defines different
+> architecture, package structure, or scope, follow the spec instead.
 # Skill: Document MCP
 
 Create professionally formatted PPTX presentations and DOCX documents using the document-mcp server. Presentations use the Red Hat template with consulting-quality visual elements — not walls of bullet points.

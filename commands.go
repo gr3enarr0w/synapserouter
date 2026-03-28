@@ -411,6 +411,13 @@ func cmdChat(args []string) {
 	config.Resume = *resume
 	config.SessionID = *sessionID
 	config.EscalationChain = ac.EscalationChain
+	// Pass full provider list so hasProviders() can find standalone providers
+	// (e.g., planner models) that aren't in the escalation chain.
+	providerNames := make([]string, len(ac.Providers))
+	for i, p := range ac.Providers {
+		providerNames[i] = p.Name()
+	}
+	config.Providers = providerNames
 	config.AutoOrchestrate = true
 
 	// Event bus for real-time observability
@@ -447,6 +454,13 @@ func cmdChat(args []string) {
 
 	// If --spec-file provided, read file and compose message.
 	// Also detect project language from spec content for pipeline routing.
+	// Track spec file path for tool-layer protection — regardless of --message flag
+	if *specFile != "" {
+		if absPath, err := filepath.Abs(*specFile); err == nil {
+			config.SpecFilePath = absPath
+		}
+	}
+
 	if *specFile != "" && *message == "" {
 		specContent, err := os.ReadFile(*specFile)
 		if err != nil {
@@ -481,6 +495,14 @@ func cmdChat(args []string) {
 	}
 
 	if *message != "" {
+		// If --spec-file provided with --message, prepend spec content to message
+		if *specFile != "" {
+			specContent, err := os.ReadFile(*specFile)
+			if err == nil {
+				composed := "Implement the following specification:\n\n" + string(specContent) + "\n\nUser instruction: " + *message
+				message = &composed
+			}
+		}
 		// One-shot mode: work in the current directory so created files persist.
 		response, err := agent.RunOneShot(ctx, ac.ProxyRouter, registry, config, *message)
 		if err != nil {

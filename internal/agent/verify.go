@@ -67,6 +67,33 @@ func (a *Agent) RunVerificationGate(phaseName string) (bool, []VerifyResult) {
 		results = append(results, skillResults...)
 	}
 
+	// Layer 4: Spec compliance checks — tool-layer enforcement
+	if a.specConstraints != nil && !a.specConstraints.IsEmpty() {
+		// Check package name if specified
+		if a.specConstraints.PackageStructure != "" {
+			cmd := fmt.Sprintf("grep -r '^package ' %s/src/ %s/*.go 2>/dev/null | head -20", a.config.WorkDir, a.config.WorkDir)
+			result := a.runVerifyCommand("spec/package-name", cmd)
+			if !strings.Contains(result.Output, a.specConstraints.PackageStructure) {
+				result.Passed = false
+				result.Output += fmt.Sprintf("\nSPEC VIOLATION: Expected package '%s' but not found in source files", a.specConstraints.PackageStructure)
+			}
+			results = append(results, result)
+		}
+
+		// Check for prohibited patterns
+		for _, prohibited := range a.specConstraints.Prohibited {
+			if strings.Contains(strings.ToLower(prohibited), "service layer") {
+				cmd := fmt.Sprintf("find %s -name '*Service*' -o -name '*_service*' | grep -v target | grep -v .synroute | head -5", a.config.WorkDir)
+				result := a.runVerifyCommand("spec/no-service-layer", cmd)
+				if strings.TrimSpace(result.Output) != "" {
+					result.Passed = false
+					result.Output += "\nSPEC VIOLATION: Service layer files found but spec prohibits service layer"
+				}
+				results = append(results, result)
+			}
+		}
+	}
+
 	if len(results) == 0 {
 		return true, nil // No checks applicable for this phase/language
 	}
@@ -124,7 +151,7 @@ func (a *Agent) runVerifyCommand(name, command string) VerifyResult {
 
 // runSkillVerifyCommands collects and executes verify commands from all matched skills.
 func (a *Agent) runSkillVerifyCommands() []VerifyResult {
-	matched := orchestration.MatchSkills(a.originalRequest, a.config.Skills)
+	matched := orchestration.MatchSkillsForLanguage(a.originalRequest, a.config.Skills, a.config.ProjectLanguage)
 	var results []VerifyResult
 
 	for _, skill := range matched {

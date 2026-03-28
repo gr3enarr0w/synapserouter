@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -44,6 +45,12 @@ func (t *FileEditTool) Execute(ctx context.Context, args map[string]interface{},
 	if err != nil {
 		return &ToolResult{Error: err.Error()}, nil
 	}
+
+	// Spec file protection
+	if IsProtectedPath(path) {
+		return &ToolResult{Error: fmt.Sprintf("Cannot modify protected file '%s'. This is the source spec.", filepath.Base(path))}, nil
+	}
+
 	oldStr := stringArg(args, "old_string")
 	newStr := stringArg(args, "new_string")
 	replaceAll := boolArg(args, "replace_all")

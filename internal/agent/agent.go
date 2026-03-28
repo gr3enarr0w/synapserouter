@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -80,6 +81,7 @@ type Agent struct {
 	noToolTurns        int // consecutive turns without tool calls (stall detection)
 	reviewTracker      *ReviewCycleTracker // detects stable review cycles (no progress)
 	phaseRetries       int // consecutive quality gate rejections in current phase
+	phaseTurns         int // turns spent in current phase (hard cap at maxPhaseTurns)
 	lastGateScore      int // verification gate passed count from previous retry (plateau detection)
 	plateauCount       int // consecutive retries with no score improvement
 	cachedPromptLevel  int      // provider level when system prompt was cached (-1 = uncached)
@@ -96,6 +98,16 @@ type Agent struct {
 	// Toolchain detection
 	toolchainSetup    string // install instructions for missing tools
 	resolvedBuildCmds string // resolved build/test/install commands for detected language
+
+	// File read dedup cache — avoids re-reading unchanged files within a session.
+	// Invalidated when file_write or file_edit modifies a cached path.
+	fileReadCache map[string]string
+
+	// Spec constraint extraction
+	specConstraints *SpecConstraints
+
+	// Regression detection
+	regressionTracker *RegressionTracker
 
 	// Event bus for real-time observability
 	bus *EventBus
@@ -210,6 +222,11 @@ func (a *Agent) setupTrimHook() {
 
 // Run processes a user message through the agent loop and returns the final text response.
 func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
+	// Protect spec file from agent overwrite (tool-layer enforcement)
+	if a.config.SpecFilePath != "" {
+		tools.SetProtectedPaths([]string{a.config.SpecFilePath})
+	}
+
 	// Wire trim hook so messages are persisted to DB before being dropped
 	a.setupTrimHook()
 
@@ -236,6 +253,11 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 	if a.config.WorkDir != "" {
 		env := environment.Detect(a.config.WorkDir)
 		if env != nil {
+			// Auto-set ProjectLanguage from environment detection (before pipeline init)
+			if a.config.ProjectLanguage == "" && env.Language != "" {
+				a.config.ProjectLanguage = env.Language
+				log.Printf("[Agent] auto-detected project language: %s", env.Language)
+			}
 			missing := environment.MissingTools(env, a.config.WorkDir)
 			if len(missing) > 0 {
 				a.toolchainSetup = environment.SetupInstructions(env, a.config.WorkDir)
@@ -245,6 +267,10 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 			install, test, build := environment.ResolveBuildCommands(env.Language, a.config.WorkDir)
 			if install != "" || test != "" || build != "" {
 				a.resolvedBuildCmds = fmt.Sprintf("Build: %s | Test: %s | Install: %s", build, test, install)
+			}
+			// Initialize regression tracker with the resolved build command
+			if build != "" {
+				a.regressionTracker = NewRegressionTracker(build)
 			}
 		}
 	}
@@ -266,10 +292,34 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		a.originalRequest = userMessage
 	}
 
+	// Store large specs in ToolOutputStore for recall after compaction
+	if a.config.ToolStore != nil && a.originalRequest == userMessage && len(userMessage) > 2048 {
+		summary := "Project specification loaded (" + strconv.Itoa(len(userMessage)) + " bytes)"
+		_, storeErr := a.config.ToolStore.Store(
+			a.sessionID, "spec_load", "initial_request", summary,
+			userMessage, 0, len(userMessage))
+		if storeErr != nil {
+			log.Printf("[Agent] warning: failed to store spec: %v", storeErr)
+		} else {
+			log.Printf("[Agent] stored spec (%d bytes) as spec_load for recall", len(userMessage))
+		}
+	}
+
+	// Extract spec constraints (package structure, scope, prohibited patterns)
+	// for injection into all agent prompts — runs once at session start.
+	if a.specConstraints == nil && len(a.originalRequest) > 100 {
+		a.specConstraints = ExtractSpecConstraints(a.originalRequest)
+		if !a.specConstraints.IsEmpty() {
+			log.Printf("[Agent] extracted spec constraints: package=%s, in_scope=%d, out_of_scope=%d, prohibited=%d",
+				a.specConstraints.PackageStructure, len(a.specConstraints.InScope),
+				len(a.specConstraints.OutOfScope), len(a.specConstraints.Prohibited))
+		}
+	}
+
 	// Initialize pipeline immediately on first message (if AutoOrchestrate enabled)
 	// This fires parallel planners BEFORE the main agent starts making tool calls
 	if a.config.AutoOrchestrate && a.pipeline == nil {
-		matched := orchestration.MatchSkills(a.originalRequest, a.config.Skills)
+		matched := orchestration.MatchSkillsForLanguage(a.originalRequest, a.config.Skills, a.config.ProjectLanguage)
 		a.pipeline = DetectPipelineType(matched, a.config.ProjectLanguage)
 		a.pipelinePhase = 0
 		a.initializeImplementPhase()
@@ -306,13 +356,13 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 			a.conversation.Add(providers.Message{
 				Role:    "user",
 				Content: fmt.Sprintf("The planning phase is complete. Here is the merged plan and acceptance criteria:\n\n%s\n\nNow proceed to implement. %s",
-					parallelResult, a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria)),
+					parallelResult, a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)),
 			})
 		} else {
 			// No parallel plan phase — inject the first phase prompt so the
 			// pipeline actively steers the agent from turn 1, not just when
 			// the agent stops making tool calls.
-			phasePrompt := a.pipeline.PhasePrompt(0, a.acceptanceCriteria)
+			phasePrompt := a.pipeline.PhasePrompt(0, a.acceptanceCriteria, a.originalRequest)
 			if phasePrompt != "" {
 				log.Printf("[Agent] pipeline: injecting phase 1/%d prompt: %s",
 					len(a.pipeline.Phases), firstPhase.Name)
@@ -368,7 +418,25 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		if a.budget != nil {
 			a.budget.RecordTurn()
 			if reason := a.budget.Exceeded(); reason != "" {
-				return "", fmt.Errorf("agent budget exceeded: %s", reason)
+				return "", &BudgetExhaustedError{Reason: reason}
+			}
+		}
+
+		// Per-phase turn cap: force-advance if a single phase consumes too many turns.
+		// This prevents infinite loops in self-check/review phases that can't converge.
+		if a.config.AutoOrchestrate && a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
+			a.phaseTurns++
+			if a.phaseTurns > a.maxPhaseTurns() {
+				phaseName := a.pipeline.Phases[a.pipelinePhase].Name
+				log.Printf("[Agent] phase %s exceeded %d turn cap — force-advancing to next phase",
+					phaseName, a.maxPhaseTurns())
+				a.emit(EventPhaseComplete, "", map[string]any{
+					"phase_name":    phaseName,
+					"passed":        false,
+					"force_advance": true,
+					"turns_used":    a.phaseTurns,
+				})
+				a.advancePipeline("PHASE_SKIPPED_TURN_CAP")
 			}
 		}
 
@@ -489,6 +557,16 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 				if a.advancePipeline(msg.Content) {
 					continue
 				}
+				// If pipeline has remaining phases, don't exit — force the agent
+				// to keep working. Without this, the agent exits after implement
+				// phase without running self-check/code-review/acceptance-test.
+				if a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
+					phaseName := a.pipeline.Phases[a.pipelinePhase].Name
+					log.Printf("[Agent] pipeline has %d phases remaining (current: %s) — forcing continuation",
+						len(a.pipeline.Phases)-a.pipelinePhase, phaseName)
+					a.conversation.Add(forceToolsMessage(phaseName))
+					continue
+				}
 			}
 			return msg.Content, nil
 		}
@@ -548,7 +626,7 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("agent exceeded max turns (%d)", a.config.MaxTurns)
+	return "", &BudgetExhaustedError{Reason: fmt.Sprintf("max turns (%d) exceeded", a.config.MaxTurns)}
 }
 
 // executeToolCalls runs each tool call and adds results to conversation.
@@ -564,6 +642,23 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			"tool_name":    name,
 			"args_summary": formatToolCallSummary(name, args),
 		})
+
+		// File read dedup: return cached content if the file hasn't been modified
+		if name == "file_read" {
+			readPath, _ := args["path"].(string)
+			if readPath != "" {
+				resolvedPath := resolvePathForCache(readPath, a.config.WorkDir)
+				if cached, ok := a.fileReadCache[resolvedPath]; ok {
+					log.Printf("[Agent] file_read cache hit: %s", resolvedPath)
+					a.conversation.Add(providers.Message{
+						Role:       "tool",
+						ToolCallID: callID,
+						Content:    cached,
+					})
+					continue
+				}
+			}
+		}
 
 		// Per-tool-call timeout as a safety net. Even if the bash tool's internal
 		// timeout fails, the agent won't hang forever on a single tool call.
@@ -678,6 +773,37 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			ToolCallID: callID,
 			Content:    conversationContent,
 		})
+
+		// File read cache: populate on successful read, invalidate on write/edit
+		if name == "file_read" && !isError {
+			readPath, _ := args["path"].(string)
+			if readPath != "" {
+				resolvedPath := resolvePathForCache(readPath, a.config.WorkDir)
+				if a.fileReadCache == nil {
+					a.fileReadCache = make(map[string]string)
+				}
+				a.fileReadCache[resolvedPath] = conversationContent
+			}
+		}
+		if (name == "file_write" || name == "file_edit") && !isError {
+			writePath, _ := args["path"].(string)
+			if writePath != "" {
+				resolvedPath := resolvePathForCache(writePath, a.config.WorkDir)
+				delete(a.fileReadCache, resolvedPath)
+			}
+		}
+
+		// Regression detection: check if a bash command produced MORE compilation
+		// errors than the previous build. Injects a warning into conversation so
+		// the LLM knows to stop and fix instead of continuing to create files.
+		if name == "bash" && a.regressionTracker != nil && exitCode != 0 {
+			if warning := a.regressionTracker.Check(resultContent, exitCode); warning != "" {
+				a.conversation.Add(providers.Message{
+					Role:    "user",
+					Content: warning,
+				})
+			}
+		}
 	}
 }
 
@@ -690,14 +816,24 @@ func (a *Agent) buildMessages() []providers.Message {
 			sysPrompt = defaultSystemPrompt(a.config.WorkDir, a.providerIdx, a.config.ProjectLanguage)
 		}
 
-		// Inject matched skill instructions
-		if skillCtx := a.matchedSkillContext(); skillCtx != "" {
-			sysPrompt += "\n\n" + skillCtx
-		}
-
-		// Inject project-level instructions (CLAUDE.md / AGENTS.md from working directory)
+		// Inject project-level instructions FIRST (CLAUDE.md / AGENTS.md from working directory)
+		// Project instructions take priority over skill patterns.
 		if projectInstr := LoadProjectInstructions(a.config.WorkDir); projectInstr != "" {
 			sysPrompt += "\n\n# Project Instructions\n" + projectInstr
+		}
+
+		// Inject matched skill instructions (reference patterns, not overrides)
+		if skillCtx := a.matchedSkillContext(); skillCtx != "" {
+			sysPrompt += "\n\n" + skillCtx
+			sysPrompt += "\n\nNOTE: Skill patterns are reference examples. When they conflict with the original request, the request takes priority."
+		}
+
+
+		// Inject extracted spec constraints prominently — these override skill patterns
+		if a.specConstraints != nil {
+			if formatted := a.specConstraints.FormatConstraints(); formatted != "" {
+				sysPrompt += "\n\n" + formatted
+			}
 		}
 
 		// Inject toolchain setup instructions if missing tools detected
@@ -776,7 +912,7 @@ func (a *Agent) computeSkillContext() string {
 		return ""
 	}
 
-	matched := orchestration.MatchSkills(query, a.config.Skills)
+	matched := orchestration.MatchSkillsForLanguage(query, a.config.Skills, a.config.ProjectLanguage)
 	if len(matched) == 0 {
 		return ""
 	}
@@ -849,6 +985,30 @@ func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query strin
 	return b.String()
 }
 
+// maxPhaseTurns returns the dynamic hard cap on LLM calls per pipeline phase.
+// Auto-detects from spec complexity when Config.MaxPhaseTurns is 0:
+//   >20KB spec = 40 turns, 5-20KB = 25 turns, <5KB = 15 turns.
+func (a *Agent) maxPhaseTurns() int {
+	if a.config.MaxPhaseTurns > 0 {
+		return a.config.MaxPhaseTurns
+	}
+	// Auto-detect from spec complexity
+	specLen := len(a.originalRequest)
+	switch {
+	case specLen > 20000: // complex spec (>20KB)
+		return 40
+	case specLen > 5000: // medium spec (5-20KB)
+		return 25
+	default: // simple spec or no spec
+		return 15
+	}
+}
+
+// maxPipelineCycles is the hard cap on fail-back cycles (review → implement → review).
+// 3 cycles is enough: initial attempt + 2 fix iterations. Beyond that, accept the result
+// and let later pipeline phases still run.
+const maxPipelineCycles = 3
+
 // toolBlock is the canonical tool reference shared across all prompt levels.
 const toolBlock = `AVAILABLE TOOLS (use exact names):
 - bash: Run shell commands. Args: command (string).
@@ -886,17 +1046,26 @@ YOU MUST USE TOOLS TO COMPLETE TASKS. Do not describe what you would do — actu
 
 %s
 
+SPEC COMPLIANCE:
+- If the request defines IN SCOPE / OUT OF SCOPE: follow strictly. Do NOT add out-of-scope features.
+- Match the spec's directory structure exactly. Do NOT reorganize packages.
+- Do NOT add layers (service, controller, repository) unless the spec requires them.
+
 RULES:
 - To fix existing files: file_read THEN file_edit. NEVER create duplicate files.
 - After writing tests: ALWAYS run them. If they fail, fix and re-run until all pass.
 - Never claim success without running the actual command and seeing output.
 - If a build tool is missing (mvn, go, npm, etc.), install it first: bash(brew install <tool>).
+- WORKING DIRECTORY: All files MUST be created directly in the current working directory — do NOT
+  create subdirectories like "petclinic/", "myapp/", or "project/" and build inside them.
+- When bash returns a compilation error, READ THE ERROR carefully — it tells you the exact
+  file and line number. Use file_edit to fix that specific line, then rebuild.
 
 WORKFLOW — start immediately with tool calls:
-1. bash: create directories (mkdir -p src)
+1. bash: create directories WITHIN the working directory (mkdir -p src/main/java/...)
 2. file_write: create NEW source files with full content
 3. bash: install dependencies, build, and run tests
-4. If tests fail: file_edit to fix, then re-run
+4. If tests fail: READ the error output, file_edit to fix the exact file:line, then re-run
 
 Do NOT output plans, descriptions, or JSON without tool calls. Every response must include at least one tool call.`, workDir, langDirective, toolBlock)
 	}
@@ -904,6 +1073,11 @@ Do NOT output plans, descriptions, or JSON without tool calls. Every response mu
 	// Level 1+ (larger models ~120B+): full prompt with methodology
 	return fmt.Sprintf(`You are a coding assistant that BUILDS tools and programs. You are working in: %s
 %s
+SPEC COMPLIANCE:
+- If the request defines IN SCOPE / OUT OF SCOPE: follow strictly. Do NOT add out-of-scope features.
+- Match the spec's directory structure exactly. Do NOT reorganize packages.
+- Do NOT add layers (service, controller, repository) unless the spec requires them.
+
 TOOL BUILDER (DEFAULT MODE):
 - By default, BUILD programs and tools — do not do the work yourself.
 - When a task involves operations (API calls, data processing, sync, transforms):
@@ -935,6 +1109,18 @@ ENVIRONMENT SETUP:
   - For Python projects: ensure python3 and pip are available
 - Do NOT skip the build step because a tool is missing — install it first.
 
+WORKING DIRECTORY:
+- All project files MUST be created directly in the working directory (%s).
+- Do NOT create a wrapper subdirectory (e.g., "petclinic/", "myapp/") and build inside it.
+- Source trees go directly in the working directory: src/, pom.xml, package.json, etc.
+- When running bash commands, do NOT use "cd <subdir> && ..." — run from the working directory.
+
+SELF-CORRECTION ON BUILD ERRORS:
+- When a build command (mvn, go build, npm run build, cargo build) fails, READ THE ERROR OUTPUT.
+- Compilation errors include the exact file path and line number — use file_edit to fix that line.
+- Do NOT create new files to work around compilation errors — fix the existing file.
+- After fixing, re-run the SAME build command to verify. Repeat until it compiles.
+
 VERIFY YOUR WORK:
 - After writing code, ALWAYS run the build/compile command to verify it compiles.
 - After writing tests, ALWAYS run them. If any test fails, fix it before reporting success.
@@ -946,7 +1132,7 @@ PRODUCTION QUALITY:
 - Show math for calculated values. Never approximate when exact values are available.
 - Document assumptions. Flag ambiguous decisions for review.
 
-%s`, workDir, langDirective, toolBlock)
+%s`, workDir, langDirective, workDir, toolBlock)
 }
 
 // forceToolsMessage returns a phase-appropriate message demanding tool calls.
@@ -1019,10 +1205,15 @@ func (a *Agent) writeSynrouteMD() {
 // which lets the router pick the best provider. If escalated, targets a specific
 // provider so the agent can use a different model for review/retry.
 func (a *Agent) executeForCurrentProvider(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
-	// If a target provider is set (sub-agent targeting specific Ollama model), use it directly
+	// If a target provider is set (sub-agent targeting specific Ollama model), try it first
 	if a.config.TargetProvider != "" {
 		if pae, ok := a.executor.(ProviderAwareExecutor); ok {
-			return pae.ChatCompletionForProvider(ctx, req, a.sessionID, a.config.TargetProvider, false)
+			resp, err := pae.ChatCompletionForProvider(ctx, req, a.sessionID, a.config.TargetProvider, false)
+			if err == nil {
+				return resp, nil
+			}
+			// Target provider failed (circuit-open, timeout, etc.) — fall through to escalation chain
+			log.Printf("[Agent] target provider %s failed: %v — falling through to chain", a.config.TargetProvider, err)
 		}
 	}
 
@@ -1056,7 +1247,7 @@ func (a *Agent) executeForCurrentProvider(ctx context.Context, req providers.Cha
 func (a *Agent) advancePipeline(content string) bool {
 	// Initialize pipeline on first call
 	if a.pipeline == nil {
-		matched := orchestration.MatchSkills(a.originalRequest, a.config.Skills)
+		matched := orchestration.MatchSkillsForLanguage(a.originalRequest, a.config.Skills, a.config.ProjectLanguage)
 		a.pipeline = DetectPipelineType(matched, a.config.ProjectLanguage)
 		a.pipelinePhase = 0
 		log.Printf("[Agent] pipeline: %s (%d phases) | language: %s", a.pipeline.Name, len(a.pipeline.Phases), a.config.ProjectLanguage)
@@ -1068,8 +1259,23 @@ func (a *Agent) advancePipeline(content string) bool {
 
 	currentPhase := a.pipeline.Phases[a.pipelinePhase]
 
+	// Turn cap force-advance: when a phase exceeds maxPhaseTurns, skip it entirely.
+	// This MUST be handled before normal signal detection to prevent the "first time
+	// entering" fallback from re-injecting the same phase prompt.
+	if content == "PHASE_SKIPPED_TURN_CAP" || content == "PHASE_SKIPPED_LOOP" {
+		a.pipelineCycles++
+		log.Printf("[Agent] force-skipping phase %s (cycle %d/%d)",
+			currentPhase.Name, a.pipelineCycles, maxPipelineCycles)
+		if a.pipelineCycles > maxPipelineCycles {
+			log.Printf("[Agent] max cycles reached (%d) — force-advancing past all review phases",
+				a.pipelineCycles)
+			a.pipelineCycles = 0
+		}
+		// Fall through to the normal advance logic below (shouldAdvance = true)
+	}
+
 	// shouldContinue only applies to implement phase — prevents false advances in review phases
-	shouldAdvance := IsPassSignal(content)
+	shouldAdvance := IsPassSignal(content) || content == "PHASE_SKIPPED_TURN_CAP" || content == "PHASE_SKIPPED_LOOP"
 	if !shouldAdvance && (currentPhase.Name == "implement" || currentPhase.Name == "data-prep" || currentPhase.Name == "model") {
 		shouldAdvance = a.shouldContinue(content)
 	}
@@ -1171,6 +1377,7 @@ func (a *Agent) advancePipeline(content string) bool {
 		// Advance to next phase
 		a.pipelinePhase++
 		a.phaseToolCalls = 0      // reset for new phase
+		a.phaseTurns = 0          // reset per-phase turn counter
 		a.phaseRetries = 0        // reset retry counter
 		a.lastGateScore = 0       // reset plateau tracking
 		a.plateauCount = 0
@@ -1250,6 +1457,16 @@ func (a *Agent) advancePipeline(content string) bool {
 			// Never go back to small coders. Each cycle escalates further.
 			a.pipelineCycles++
 
+			// Check for divergence — if findings are increasing, stop cycling (cost is growing)
+			if a.reviewTracker.CheckDivergence(reviewResult) {
+				log.Printf("[Agent] pipeline: review findings INCREASING — cost diverging, force-advancing after %d cycles", a.pipelineCycles)
+				a.conversation.Add(providers.Message{
+					Role:    "user",
+					Content: fmt.Sprintf("Review findings are increasing each cycle (diverging). Accepting current state to stop cost growth:\n%s", reviewResult),
+				})
+				return a.advancePipeline("PHASE_PASSED")
+			}
+
 			// Check for stability — if code and issues unchanged for 2 cycles, accept
 			if a.reviewTracker.CheckStability(a.config.WorkDir, reviewResult) {
 				log.Printf("[Agent] pipeline: review stable — accepting result after %d cycles", a.pipelineCycles)
@@ -1260,8 +1477,9 @@ func (a *Agent) advancePipeline(content string) bool {
 				return a.advancePipeline("PHASE_PASSED")
 			}
 
-			if a.pipelineCycles > 8 {
+			if a.pipelineCycles > maxPipelineCycles {
 				log.Printf("[Agent] pipeline: max review cycles reached (%d), accepting result", a.pipelineCycles)
+				a.pipelineCycles = 0
 				a.conversation.Add(providers.Message{
 					Role: "user",
 					Content: fmt.Sprintf("Review found issues but max cycles reached. Delivering current state:\n%s", reviewResult),
@@ -1277,19 +1495,20 @@ func (a *Agent) advancePipeline(content string) bool {
 					providerName = level.Providers[0]
 				}
 			}
-			log.Printf("[Agent] pipeline: review cycle %d/8 — fixing on %s (provider idx %d, escalated=%v)",
-				a.pipelineCycles, providerName, a.providerIdx, escalated)
+			log.Printf("[Agent] pipeline: review cycle %d/%d — fixing on %s (provider idx %d, escalated=%v)",
+				a.pipelineCycles, maxPipelineCycles, providerName, a.providerIdx, escalated)
 			a.conversation.Add(providers.Message{
 				Role: "user",
-				Content: fmt.Sprintf("The %s review found issues (cycle %d/8). Fix ALL these issues using tools, then say IMPLEMENT_COMPLETE:\n---\n%s", nextPhase.Name, a.pipelineCycles, reviewResult),
+				Content: fmt.Sprintf("The %s review found issues (cycle %d/%d). Fix ALL these issues using tools, then say IMPLEMENT_COMPLETE:\n---\n%s", nextPhase.Name, a.pipelineCycles, maxPipelineCycles, reviewResult),
 			})
 			// Go back to self-check — after the fix, self-check re-runs, then code-review with next reviewer
 			a.pipelinePhase = a.findPhaseIndex("self-check", a.pipelinePhase-1)
 			a.phaseToolCalls = 0
+			a.phaseTurns = 0 // reset turn cap for the new phase
 			return true
 		}
 
-		prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria)
+		prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)
 		a.conversation.Add(providers.Message{
 			Role:    "user",
 			Content: prompt,
@@ -1300,24 +1519,92 @@ func (a *Agent) advancePipeline(content string) bool {
 	if IsFailSignal(content) {
 		a.pipelineCycles++
 
-		// Check for stability — if code and issues unchanged for 2 cycles, accept
-		if a.reviewTracker.CheckStability(a.config.WorkDir, content) {
-			log.Printf("[Agent] pipeline: review stable — accepting result after %d cycles", a.pipelineCycles)
-			return false
+		// Check for divergence — if findings are increasing, stop cycling (cost is growing)
+		if a.reviewTracker.CheckDivergence(content) {
+			log.Printf("[Agent] pipeline: review findings INCREASING — cost diverging, force-advancing after %d cycles", a.pipelineCycles)
+			a.pipelinePhase++
+			a.phaseToolCalls = 0
+			a.phaseTurns = 0
+			a.phaseRetries = 0
+			a.lastGateScore = 0
+			a.plateauCount = 0
+			a.toolFingerprints = nil
+			a.loopWarningCount = 0
+			a.reviewTracker.Reset()
+			if a.pipelinePhase >= len(a.pipeline.Phases) {
+				return false
+			}
+			nextPhase := a.pipeline.Phases[a.pipelinePhase]
+			log.Printf("[Agent] pipeline: force-advancing to phase %d/%d: %s (diverging reviews)",
+				a.pipelinePhase+1, len(a.pipeline.Phases), nextPhase.Name)
+			prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)
+			a.conversation.Add(providers.Message{
+				Role:    "user",
+				Content: prompt,
+			})
+			return true
 		}
 
-		if a.pipelineCycles > 8 {
-			log.Printf("[Agent] pipeline: max review cycles reached, accepting result")
-			return false
+		// Check for stability — if code and issues unchanged for 2 cycles, force-advance
+		if a.reviewTracker.CheckStability(a.config.WorkDir, content) {
+			log.Printf("[Agent] pipeline: review stable — force-advancing past phase after %d cycles", a.pipelineCycles)
+			a.pipelinePhase++
+			a.phaseToolCalls = 0
+			a.phaseTurns = 0
+			a.phaseRetries = 0
+			a.lastGateScore = 0
+			a.plateauCount = 0
+			a.toolFingerprints = nil
+			a.loopWarningCount = 0
+			a.reviewTracker.Reset()
+			if a.pipelinePhase >= len(a.pipeline.Phases) {
+				return false
+			}
+			nextPhase := a.pipeline.Phases[a.pipelinePhase]
+			log.Printf("[Agent] pipeline: force-advancing to phase %d/%d: %s",
+				a.pipelinePhase+1, len(a.pipeline.Phases), nextPhase.Name)
+			prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)
+			a.conversation.Add(providers.Message{
+				Role:    "user",
+				Content: prompt,
+			})
+			return true
+		}
+
+		if a.pipelineCycles > maxPipelineCycles {
+			log.Printf("[Agent] pipeline: max review cycles reached, force-advancing past failing phase")
+			a.pipelineCycles = 0
+			a.pipelinePhase++
+			a.phaseToolCalls = 0
+			a.phaseTurns = 0
+			a.phaseRetries = 0
+			a.lastGateScore = 0
+			a.plateauCount = 0
+			a.toolFingerprints = nil
+			a.loopWarningCount = 0
+			a.reviewTracker.Reset()
+			if a.pipelinePhase >= len(a.pipeline.Phases) {
+				return false
+			}
+			nextPhase := a.pipeline.Phases[a.pipelinePhase]
+			log.Printf("[Agent] pipeline: force-advancing to phase %d/%d: %s",
+				a.pipelinePhase+1, len(a.pipeline.Phases), nextPhase.Name)
+			prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)
+			a.conversation.Add(providers.Message{
+				Role:    "user",
+				Content: prompt,
+			})
+			return true
 		}
 		a.escalateProvider()
-		log.Printf("[Agent] pipeline: phase %s FAILED (cycle %d/8), escalated to provider idx %d",
-			currentPhase.Name, a.pipelineCycles, a.providerIdx)
+		log.Printf("[Agent] pipeline: phase %s FAILED (cycle %d/%d), escalated to provider idx %d",
+			currentPhase.Name, a.pipelineCycles, maxPipelineCycles, a.providerIdx)
 		a.phaseToolCalls = 0
+		a.phaseTurns = 0 // reset turn cap for retry
 
 		a.conversation.Add(providers.Message{
 			Role: "user",
-			Content: fmt.Sprintf("The %s phase found issues (cycle %d/8). Fix them now using tools, then say IMPLEMENT_COMPLETE.", currentPhase.Name, a.pipelineCycles),
+			Content: fmt.Sprintf("The %s phase found issues (cycle %d/%d). Fix them now using tools, then say IMPLEMENT_COMPLETE.", currentPhase.Name, a.pipelineCycles, maxPipelineCycles),
 		})
 		return true
 	}
@@ -1343,7 +1630,7 @@ func (a *Agent) advancePipeline(content string) bool {
 		return true
 	}
 
-	prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria)
+	prompt := a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)
 	a.conversation.Add(providers.Message{
 		Role:    "user",
 		Content: prompt,
@@ -1365,7 +1652,7 @@ func (a *Agent) runSubAgentPhase(phase PipelinePhase) string {
 	if query == "" {
 		query = a.conversation.LastUserMessage()
 	}
-	matched := orchestration.MatchSkills(query, a.config.Skills)
+	matched := orchestration.MatchSkillsForLanguage(query, a.config.Skills, a.config.ProjectLanguage)
 	chain := orchestration.BuildSkillChain(matched)
 	skillContext := a.matchedSkillContext()
 	verifyCommands := orchestration.VerifyCommandsForChain(chain)
@@ -1395,6 +1682,22 @@ Commands marked [MANUAL] require reading code instead of running a command.
 
 		result, err := a.runSingleReviewer(ctx, phase, model, targetProvider, skillContext, verifySection)
 		if err != nil {
+			// Budget exhaustion means the sub-agent ran out of turns/tokens — escalate
+			// to a bigger model and retry once before giving up.
+			if IsBudgetExhausted(err) {
+				log.Printf("[Agent] sub-agent %s hit budget — escalating provider and retrying", phase.Name)
+				if a.escalateProvider() {
+					retryProvider := ""
+					if provs := a.currentLevelProviders(); len(provs) > 0 {
+						retryProvider = provs[0]
+					}
+					retryResult, retryErr := a.runSingleReviewer(ctx, phase, model, retryProvider, skillContext, verifySection)
+					if retryErr == nil {
+						return retryResult
+					}
+					log.Printf("[Agent] escalated retry also failed: %v", retryErr)
+				}
+			}
 			return fmt.Sprintf("NEEDS_FIX: sub-agent error: %v", err)
 		}
 		return result
@@ -1433,15 +1736,19 @@ ACCEPTANCE CRITERIA:
 SKILLS TO CHECK AGAINST:
 %s
 %s
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — flag any violations):
+%s
+
 Your job:
 1. Run EVERY verification command listed above. Report the output and PASS/FAIL for each.
 2. Use tools (file_read, grep, bash) to inspect ALL actual outputs. Trust NOTHING without evidence.
 3. Compare each output against the original request and acceptance criteria.
 4. For [MANUAL] checks: read the relevant code and verify the stated condition.
 5. Check for: null values, zero values, empty fields, missing structure.
-6. Say VERIFIED_CORRECT only if ALL verification commands pass AND all criteria are met.
+6. Check all spec constraints above — any violation is a FAIL.
+7. Say VERIFIED_CORRECT only if ALL verification commands pass AND all criteria are met.
    Otherwise say NEEDS_FIX with every specific issue listed.`,
-				step+1, n, a.originalRequest, a.acceptanceCriteria, skillContext, verifySection)
+				step+1, n, a.originalRequest, a.acceptanceCriteria, skillContext, verifySection, a.formatConstraintsBlock())
 		} else if step%2 == 1 {
 			// Odd steps: fix issues found by previous reviewer
 			prevReview := lastResult
@@ -1469,9 +1776,12 @@ REVIEW FINDINGS TO FIX:
 SKILL REFERENCE:
 %s
 
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — fixes must respect these):
+%s
+
 Fix every issue. Run verification commands to confirm fixes work.
 Say VERIFIED_CORRECT if all fixed, or NEEDS_FIX if you couldn't fix something.`,
-				step+1, n, a.originalRequest, a.acceptanceCriteria, prevReview, skillContext)
+				step+1, n, a.originalRequest, a.acceptanceCriteria, prevReview, skillContext, a.formatConstraintsBlock())
 		} else {
 			// Even steps (2, 4, ...): review the previous agent's fixes
 			prevFix := lastResult
@@ -1498,9 +1808,13 @@ PREVIOUS AGENT'S FIX REPORT:
 SKILLS TO CHECK AGAINST:
 %s
 %s
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — flag any violations):
+%s
+
 Verify the fixes are correct. Run ALL verification commands.
+Check all spec constraints above — any violation is a FAIL.
 Say VERIFIED_CORRECT if everything passes, or NEEDS_FIX with remaining issues.`,
-				step+1, n, a.originalRequest, a.acceptanceCriteria, prevFix, skillContext, verifySection)
+				step+1, n, a.originalRequest, a.acceptanceCriteria, prevFix, skillContext, verifySection, a.formatConstraintsBlock())
 		}
 
 		log.Printf("[Agent] sub-agent %s step %d/%d: provider %s (%s)",
@@ -1511,7 +1825,29 @@ Say VERIFIED_CORRECT if everything passes, or NEEDS_FIX with remaining issues.`,
 			Role:     fmt.Sprintf("%s-step-%d", phase.Name, step+1),
 			Model:    model,
 			Provider: provider,
+			Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
 		}, task)
+
+		// Budget exhaustion: escalate provider and retry this step once
+		if err != nil && IsBudgetExhausted(err) {
+			log.Printf("[Agent] sub-agent step %d hit budget — escalating and retrying", step+1)
+			if a.escalateProvider() {
+				retryProviders := a.currentLevelProviders()
+				retryProvider := provider
+				if len(retryProviders) > 0 {
+					retryProvider = retryProviders[0]
+				}
+				result, err = a.RunChild(ctx, SpawnConfig{
+					Role:     fmt.Sprintf("%s-step-%d-retry", phase.Name, step+1),
+					Model:    model,
+					Provider: retryProvider,
+					Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
+				}, task)
+				if err != nil {
+					log.Printf("[Agent] escalated retry step %d also failed: %v", step+1, err)
+				}
+			}
+		}
 
 		if err != nil {
 			log.Printf("[Agent] sub-agent step %d failed: %v", step+1, err)
@@ -1555,15 +1891,19 @@ ACCEPTANCE CRITERIA:
 SKILLS TO CHECK AGAINST:
 %s
 %s
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — flag any violations):
+%s
+
 Your job:
 1. Run EVERY verification command listed above. Report the output and PASS/FAIL for each.
 2. Use tools (file_read, grep, bash) to inspect ALL actual outputs. Trust NOTHING without evidence.
 3. Compare each output against the original request and acceptance criteria.
 4. For [MANUAL] checks: read the relevant code and verify the stated condition.
 5. Check for: null values, zero values, empty fields, missing structure.
-6. Say VERIFIED_CORRECT only if ALL verification commands pass AND all criteria are met.
+6. Check all spec constraints above — any violation is a FAIL.
+7. Say VERIFIED_CORRECT only if ALL verification commands pass AND all criteria are met.
    Otherwise say NEEDS_FIX with every specific issue listed.`,
-		a.originalRequest, a.acceptanceCriteria, skillContext, verifySection)
+		a.originalRequest, a.acceptanceCriteria, skillContext, verifySection, a.formatConstraintsBlock())
 
 	log.Printf("[Agent] spawning independent %s sub-agent (no shared context)", phase.Name)
 
@@ -1571,6 +1911,7 @@ Your job:
 		Role:     phase.Name,
 		Model:    model,
 		Provider: provider,
+		Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
 	}, task)
 
 	if err != nil {
@@ -1670,18 +2011,24 @@ func (a *Agent) findPhaseIndex(name string, fallback int) int {
 	return 0
 }
 
-// hasProviders checks if all named providers exist in the escalation chain.
-// Returns false if any are missing, causing parallel phases to fall back to sequential.
-// hasProviders checks if all named providers exist in any escalation level.
+// hasProviders checks if all named providers exist in the escalation chain
+// OR the full registered provider list. Planner providers (e.g., ollama-planner-1)
+// are registered as standalone providers but not in the escalation chain, so both
+// must be checked.
 func (a *Agent) hasProviders(names []string) bool {
-	chainSet := make(map[string]bool)
+	knownSet := make(map[string]bool)
+	// Check escalation chain
 	for _, level := range a.config.EscalationChain {
 		for _, p := range level.Providers {
-			chainSet[p] = true
+			knownSet[p] = true
 		}
 	}
+	// Check full provider list (includes planners and other standalone providers)
+	for _, p := range a.config.Providers {
+		knownSet[p] = true
+	}
 	for _, name := range names {
-		if !chainSet[name] {
+		if !knownSet[name] {
 			return false
 		}
 	}
@@ -1884,6 +2231,11 @@ func (a *Agent) runParallelPhase(phase PipelinePhase) string {
 	// the parent agent has, passed to every sub-agent for domain awareness
 	skillContext := a.matchedSkillContext()
 
+	constraintsBlock := ""
+	if a.specConstraints != nil {
+		constraintsBlock = a.specConstraints.FormatConstraints()
+	}
+
 	if phase.Name == "plan" {
 		for i := 0; i < n; i++ {
 			tasks = append(tasks, taskDef{
@@ -1899,6 +2251,24 @@ TASK:
 SKILL REFERENCE (use these as authoritative guides for formats, APIs, patterns):
 %s
 
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — your plan must respect these):
+%s
+
+Your plan MUST begin with a SPEC CONSTRAINTS section that explicitly lists:
+- Required package/directory structure
+- OUT OF SCOPE items (things you must NOT build)
+- Prohibited patterns (e.g., "no service layer")
+If you skip this section, the plan will be rejected.
+
+0. SPEC PERCEPTION (do this FIRST):
+   Before planning, restate the spec's key architectural decisions:
+   - Required package/directory structure?
+   - IN SCOPE and OUT OF SCOPE?
+   - Mandated/prohibited design patterns?
+   - Technology constraints?
+   If the spec has an "Acceptance Criteria" section, EXTRACT those criteria verbatim — do not generate your own.
+   If no spec is provided, state "No spec provided" in the SPEC CONSTRAINTS section and proceed.
+
 Produce:
 1. TASK DECOMPOSITION: ordered subtasks with dependencies
 2. ACCEPTANCE CRITERIA for each subtask AND overall deliverable
@@ -1906,7 +2276,7 @@ Produce:
 3. UNKNOWNS and ASSUMPTIONS
 4. DEFINITION OF DONE
 
-Be thorough and specific. Output your complete plan, then say PLAN_COMPLETE.`, a.originalRequest, skillContext),
+Be thorough and specific. Output your complete plan, then say PLAN_COMPLETE.`, a.originalRequest, skillContext, constraintsBlock),
 			})
 		}
 	} else {
@@ -1925,11 +2295,20 @@ ACCEPTANCE CRITERIA:
 %s
 ---
 
-SKILL REFERENCE (follow these exactly for formats, APIs, patterns):
+SKILL REFERENCE (use as reference patterns — spec requirements and acceptance criteria take priority):
 %s
 
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — your implementation must respect these):
+%s
+
+BEFORE WRITING ANY CODE, verify these spec requirements:
+1. What package name does the spec require? (Use ONLY this, not defaults)
+2. What is OUT OF SCOPE? (Do NOT create these)
+3. What directory structure does the spec mandate?
+If acceptance criteria contradict the original spec, FOLLOW THE SPEC.
+
 Focus on: main implementation files, data structures, core logic, API integration.
-Follow the skill reference documentation precisely.
+Use skill patterns as references — the original request takes priority over examples.
 Do NOT write tests — another agent handles that concurrently.
 When done, say IMPLEMENT_COMPLETE.`,
 			// Role 1: test
@@ -1945,7 +2324,10 @@ ACCEPTANCE CRITERIA:
 %s
 ---
 
-SKILL REFERENCE (follow these for testing patterns and expected formats):
+SKILL REFERENCE (use as reference patterns — spec requirements and acceptance criteria take priority):
+%s
+
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — your tests must validate these):
 %s
 
 Focus on: unit tests, edge cases, integration tests, test fixtures.
@@ -1968,8 +2350,11 @@ ACCEPTANCE CRITERIA:
 SKILL REFERENCE (check code against these patterns):
 %s
 
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — flag any violations):
+%s
+
 Focus on: reading all code written so far, finding bugs, logic errors, missing edge cases,
-violations of the skill reference patterns, and potential runtime failures.
+violations of the skill reference patterns and spec constraints, and potential runtime failures.
 List every issue found with file path and line. Do NOT fix — just report.
 When done, say IMPLEMENT_COMPLETE.`,
 		}
@@ -1982,7 +2367,7 @@ When done, say IMPLEMENT_COMPLETE.`,
 			tasks = append(tasks, taskDef{
 				role:     fmt.Sprintf("agent-%d", i+1),
 				provider: levelProviders[i],
-				task:     fmt.Sprintf(rolePrompts[roleIdx], i+1, n, a.originalRequest, a.acceptanceCriteria, skillContext),
+				task:     fmt.Sprintf(rolePrompts[roleIdx], i+1, n, a.originalRequest, a.acceptanceCriteria, skillContext, constraintsBlock),
 			})
 		}
 	}
@@ -2000,6 +2385,13 @@ When done, say IMPLEMENT_COMPLETE.`,
 	})
 
 	// For implement phases, give each agent its own temp directory to prevent file conflicts
+	// Cleanup function defined first, then used after temp dirs are created
+	var tempDirs []string
+	cleanup := func() {
+		for _, dir := range tempDirs {
+			os.RemoveAll(dir)
+		}
+	}
 	if phase.Name != "plan" {
 		for i := range tasks {
 			subDir, err := os.MkdirTemp("", fmt.Sprintf("synroute-parallel-%s-*", tasks[i].role))
@@ -2009,16 +2401,10 @@ When done, say IMPLEMENT_COMPLETE.`,
 			}
 			copyDirContents(a.config.WorkDir, subDir)
 			tasks[i].workDir = subDir
+			tempDirs = append(tempDirs, subDir)
 			log.Printf("[Agent] parallel agent %s using isolated dir: %s", tasks[i].role, subDir)
 		}
-		// Cleanup temp dirs after merge (defer only for cleanup, merge happens below)
-		defer func() {
-			for _, t := range tasks {
-				if t.workDir != "" {
-					os.RemoveAll(t.workDir)
-				}
-			}
-		}()
+		defer cleanup()
 	}
 
 	// Run in parallel
@@ -2038,6 +2424,7 @@ When done, say IMPLEMENT_COMPLETE.`,
 			cfg := SpawnConfig{
 				Role:     role,
 				Provider: provider,
+				Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
 			}
 			if workDir != "" {
 				cfg.WorkDir = workDir
@@ -2049,10 +2436,14 @@ When done, say IMPLEMENT_COMPLETE.`,
 
 	// Collect results
 	var combined strings.Builder
+	budgetExhaustedCount := 0
 	for i := 0; i < len(tasks); i++ {
 		r := <-results
 		combined.WriteString(fmt.Sprintf("\n=== %s ===\n", r.role))
 		if r.err != nil {
+			if IsBudgetExhausted(r.err) {
+				budgetExhaustedCount++
+			}
 			combined.WriteString(fmt.Sprintf("ERROR: %v\n", r.err))
 			log.Printf("[Agent] parallel sub-agent %s failed: %v", r.role, r.err)
 		} else {
@@ -2063,6 +2454,14 @@ When done, say IMPLEMENT_COMPLETE.`,
 			}
 			log.Printf("[Agent] parallel sub-agent %s completed", r.role)
 		}
+	}
+
+	// If any sub-agent hit its budget, escalate the provider so subsequent
+	// phases (review, acceptance) use a bigger model that can finish in fewer turns.
+	if budgetExhaustedCount > 0 {
+		log.Printf("[Agent] %d/%d parallel sub-agents hit budget — escalating provider",
+			budgetExhaustedCount, len(tasks))
+		a.escalateProvider()
 	}
 
 	// Merge files from temp dirs back to parent WorkDir (before returning results)
@@ -2130,6 +2529,9 @@ ACCEPTANCE CRITERIA:
 SKILL REFERENCE (check code against these patterns and formats):
 %s
 
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — flag any violations):
+%s
+
 WORK TO REVIEW (from %s):
 ---
 %s
@@ -2142,7 +2544,7 @@ Your job:
 4. If you find issues, fix them directly in the codebase
 5. Say IMPLEMENT_COMPLETE when done.`, i+1, n, reviewTarget,
 				a.originalRequest, a.acceptanceCriteria,
-				skillContext,
+				skillContext, constraintsBlock,
 				reviewTarget, reviewOutput)
 
 			go func(idx int, task string) {
@@ -2199,7 +2601,10 @@ PLANS FROM MULTIPLE MODELS:
 SKILL REFERENCE (the merged plan MUST incorporate these):
 %s
 
-Output the MERGED plan with complete acceptance criteria that reference the skill specs. Say PLAN_COMPLETE.`, a.originalRequest, combined.String(), skillContext)
+EXTRACTED SPEC CONSTRAINTS (MANDATORY — the merged plan must respect these):
+%s
+
+Output the MERGED plan with complete acceptance criteria that reference the skill specs. Say PLAN_COMPLETE.`, a.originalRequest, combined.String(), skillContext, constraintsBlock)
 
 		merged, err := a.RunChild(ctx, SpawnConfig{
 			Role:     "plan-merger",
@@ -2496,4 +2901,19 @@ func modelMaxMessages(model string) int {
 
 func uniqueID() int64 {
 	return atomic.AddInt64(&idCounter, 1)
+}
+
+// resolvePathForCache resolves a tool path to an absolute canonical form for cache keying.
+// Mirrors the logic in tools.resolveToolPath but is agent-local to avoid exporting internals.
+func resolvePathForCache(path, workDir string) string {
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	}
+	resolved := filepath.Clean(path)
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(workDir, resolved)
+	}
+	return resolved
 }

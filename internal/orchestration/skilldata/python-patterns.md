@@ -20,6 +20,9 @@ verify:
     command: "ls README.md README.rst README 2>/dev/null | head -1 || echo 'MISSING'"
     expect_not: "MISSING"
 ---
+
+> **Spec Override:** These patterns are defaults. If a project spec defines different
+> architecture, package structure, or scope, follow the spec instead.
 # Skill: Python Patterns
 
 Idiomatic Python development — PEP 8, type hints, async patterns, data modeling, stdlib best practices.
@@ -82,7 +85,7 @@ project/
 ```python
 from pydantic import BaseModel, Field
 
-class TicketClassification(BaseModel):
+class ItemClassification(BaseModel):
     category: str = Field(description="High-level category")
     issue_type: str = Field(description="Specific issue type")
     confidence: float = Field(ge=0.0, le=1.0)

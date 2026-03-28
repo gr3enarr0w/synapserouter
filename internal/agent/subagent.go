@@ -75,12 +75,16 @@ func (a *Agent) SpawnChild(cfg SpawnConfig) *Agent {
 		WorkDir:          workDir,
 		TargetProvider:   cfg.Provider,
 		EscalationChain:  escalationChain,
-		Skills:           a.config.Skills,          // inherit parent's skill registry for dynamic matching
+		// NOTE: AutoOrchestrate intentionally NOT inherited. Sub-agents should
+		// just execute their task (write code, review, etc.), not run their own
+		// 6-phase pipeline. The PARENT orchestrates phases; children execute.
+		Skills:           a.config.Skills,           // inherit parent's skill registry for dynamic matching
 		EventBus:         a.config.EventBus,
-		ProjectLanguage:  a.config.ProjectLanguage, // inherit so sub-agents use correct language context
-		ToolStore:        a.config.ToolStore,       // inherit so sub-agents store tool outputs in same DB
-		VectorMemory:     a.config.VectorMemory,    // inherit for recall tool access
-		ParentSessionIDs: parentChain,              // pass full ancestor chain for cross-session recall
+		SpecFilePath:     a.config.SpecFilePath,      // inherit so sub-agents can't overwrite spec
+		ProjectLanguage:  a.config.ProjectLanguage,  // inherit so sub-agents use correct language context
+		ToolStore:        a.config.ToolStore,         // inherit so sub-agents store tool outputs in same DB
+		VectorMemory:     a.config.VectorMemory,      // inherit for recall tool access
+		ParentSessionIDs: parentChain,                // pass full ancestor chain for cross-session recall
 	}
 
 	child := New(a.executor, registry, a.renderer, childConfig)
@@ -230,9 +234,34 @@ func (a *Agent) buildChildSystemPrompt(role, workDir string) string {
 	}
 	prompt := fmt.Sprintf("You are a %s agent working in: %s\n\n%s", role, workDir, base)
 
+	// Inject language directive so children know the project language
+	if a.config.ProjectLanguage != "" {
+		prompt += fmt.Sprintf("\n\nPROJECT LANGUAGE: %s — all source files MUST be in this language.", a.config.ProjectLanguage)
+	}
+
+	// Inject spec compliance — children MUST follow spec architecture
+	prompt += `
+
+SPEC COMPLIANCE:
+- If the ORIGINAL REQUEST defines IN SCOPE / OUT OF SCOPE: follow strictly.
+- Match the spec's package/directory structure EXACTLY. Do NOT reorganize or rename packages.
+- Do NOT add layers, services, controllers, DTOs, or components the spec excludes.
+- Do NOT use default package names (com.example, main) — use what the spec defines.
+- Skill patterns are reference examples. Spec directives override any conflicting pattern.
+
+WORKING DIRECTORY: All files MUST be created in ` + workDir + `. Do NOT create wrapper subdirectories.`
+
 	// Load role-specific instructions from .claude/agents/{role}.md
 	if roleInstr := LoadRoleInstructions(workDir, role); roleInstr != "" {
 		prompt += "\n\n# Role Instructions\n" + roleInstr
 	}
+
+	// Inject extracted spec constraints into child agents
+	if a.specConstraints != nil {
+		if formatted := a.specConstraints.FormatConstraints(); formatted != "" {
+			prompt += "\n\n" + formatted
+		}
+	}
+
 	return prompt
 }

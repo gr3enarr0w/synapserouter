@@ -12,6 +12,9 @@ phase: analyze
 mcp_tools:
   - "spec-workflow.spec-workflow-guide"
 ---
+
+> **Spec Override:** These patterns are defaults. If a project spec defines different
+> architecture, package structure, or scope, follow the spec instead.
 # Skill: Spec Workflow
 
 5-phase spec creation, validation against project rules, implementation orchestration.

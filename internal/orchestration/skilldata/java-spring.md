@@ -18,6 +18,10 @@ verify:
     command: "test -f README.md && echo 'OK' || echo 'MISSING'"
     expect_not: "MISSING"
 ---
+
+> **Spec Override:** These patterns are DEFAULTS for when no spec is provided.
+> If a project spec defines different architecture, package structure, or scope,
+> FOLLOW THE SPEC. Do not apply these defaults over explicit spec requirements.
 # Skill: Java Spring Boot
 
 Spring Boot 3.x development — JPA, constructor injection, layered architecture.
@@ -38,7 +42,7 @@ Source: [Spring Boot Engineer](https://mcpmarket.com/es/tools/skills/spring-boot
 ## Core Rules
 
 1. **Constructor injection** — never field injection (`@Autowired` on fields)
-2. **Layered architecture** — Controller → Service → Repository
+2. **Layered architecture** — Unless the project spec requires a different structure, use Controller → Service → Repository
 3. **Records for DTOs** — immutable, concise
 4. **Spring profiles** — `application-dev.yml`, `application-prod.yml`
 5. **Validation annotations** — `@Valid`, `@NotNull`, `@Size`
@@ -51,11 +55,11 @@ Source: [Spring Boot Engineer](https://mcpmarket.com/es/tools/skills/spring-boot
 ### Constructor injection
 ```java
 @Service
-public class TicketService {
-    private final TicketRepository repository;
+public class ItemService {
+    private final ItemRepository repository;
     private final ClassificationService classifier;
 
-    public TicketService(TicketRepository repository, ClassificationService classifier) {
+    public ItemService(ItemRepository repository, ClassificationService classifier) {
         this.repository = repository;
         this.classifier = classifier;
     }
@@ -64,17 +68,17 @@ public class TicketService {
 
 ### JPA repository
 ```java
-public interface TicketRepository extends JpaRepository<Ticket, String> {
-    List<Ticket> findByStatusAndCategory(String status, String category);
+public interface ItemRepository extends JpaRepository<Item, String> {
+    List<Item> findByStatusAndCategory(String status, String category);
 
-    @Query("SELECT t FROM Ticket t WHERE t.createdAt > :since ORDER BY t.createdAt DESC")
-    List<Ticket> findRecentTickets(@Param("since") LocalDateTime since);
+    @Query("SELECT t FROM Item t WHERE t.createdAt > :since ORDER BY t.createdAt DESC")
+    List<Item> findRecentItems(@Param("since") LocalDateTime since);
 }
 ```
 
 ### Record DTO
 ```java
-public record TicketResponse(
+public record ItemResponse(
     String key,
     String summary,
     String status,
@@ -86,8 +90,8 @@ public record TicketResponse(
 ```java
 @ControllerAdvice
 public class GlobalExceptionHandler {
-    @ExceptionHandler(TicketNotFoundException.class)
-    public ResponseEntity<ErrorResponse> handleNotFound(TicketNotFoundException ex) {
+    @ExceptionHandler(ItemNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNotFound(ItemNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
             .body(new ErrorResponse(ex.getMessage()));
     }

@@ -13,6 +13,10 @@ language: sql
 mcp_tools:
   - "context7.query-docs"
 ---
+
+> **Spec Override:** These patterns are DEFAULTS for when no spec is provided.
+> If a project spec defines different architecture, package structure, or scope,
+> FOLLOW THE SPEC. Do not apply these defaults over explicit spec requirements.
 # Skill: dbt Modeler
 
 dbt development — medallion architecture, staging/marts, incremental models, testing.
@@ -31,6 +35,8 @@ Source: [dbt Core Development](https://mcpmarket.com/tools/skills/dbt-core-devel
 ---
 
 ## Core Rules
+
+Unless the project spec defines a different model organization:
 
 1. **Staging models** — 1:1 with sources, light transformations (rename, cast, clean)
 2. **Intermediate models** — business logic, joins, aggregations
@@ -100,7 +106,7 @@ WHERE updated_at > (SELECT MAX(updated_at) FROM {{ this }})
 ```yaml
 models:
   - name: dim_tickets
-    description: "Ticket dimension table"
+    description: "Item dimension table"
     columns:
       - name: ticket_id
         tests: [unique, not_null]

@@ -71,6 +71,10 @@ verify:
     command: "test -f README.md && echo 'OK' || echo 'MISSING'"
     expect_not: "MISSING"
 ---
+
+> **Spec Override:** These patterns are DEFAULTS for when no spec is provided.
+> If a project spec defines different architecture, package structure, or scope,
+> FOLLOW THE SPEC. Do not apply these defaults over explicit spec requirements.
 # Skill: Go Patterns
 
 Idiomatic Go development — concurrency, error handling, interfaces, modules.
@@ -101,6 +105,8 @@ Source: [affaan-m/golang-patterns](https://github.com/affaan-m/everything-claude
 ---
 
 ## Project Structure
+
+Unless the project spec defines a different directory layout, use this default structure:
 
 ```
 project/
@@ -160,13 +166,13 @@ func NewServer(opts ...Option) *Server {
 
 ### Interface-based testing
 ```go
-type TicketStore interface {
-    Get(ctx context.Context, key string) (*Ticket, error)
+type ItemStore interface {
+    Get(ctx context.Context, key string) (*Item, error)
 }
 
 // In tests:
-type mockStore struct{ tickets map[string]*Ticket }
-func (m *mockStore) Get(_ context.Context, key string) (*Ticket, error) {
+type mockStore struct{ tickets map[string]*Item }
+func (m *mockStore) Get(_ context.Context, key string) (*Item, error) {
     t, ok := m.tickets[key]
     if !ok { return nil, ErrNotFound }
     return t, nil

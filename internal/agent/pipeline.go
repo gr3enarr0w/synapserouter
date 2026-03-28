@@ -44,6 +44,21 @@ var DefaultPipeline = Pipeline{
 			CoderProviders:    []string{"ollama-planner-1", "ollama-planner-2"},
 			MergeProvider:     "codex",
 			Prompt: `PHASE: PLAN
+Your plan MUST begin with a SPEC CONSTRAINTS section that explicitly lists:
+- Required package/directory structure
+- OUT OF SCOPE items (things you must NOT build)
+- Prohibited patterns (e.g., "no service layer")
+If you skip this section, the plan will be rejected.
+
+0. SPEC PERCEPTION (do this FIRST):
+   Before planning, restate the spec's key architectural decisions:
+   - Required package/directory structure?
+   - IN SCOPE and OUT OF SCOPE?
+   - Mandated/prohibited design patterns?
+   - Technology constraints?
+   If the spec has an "Acceptance Criteria" section, EXTRACT those criteria verbatim — do not generate your own.
+   If no spec is provided, state "No spec provided" in the SPEC CONSTRAINTS section and proceed.
+
 Before implementing, create:
 1. TASK DECOMPOSITION: ordered subtasks with dependencies
 2. ACCEPTANCE CRITERIA for each subtask AND the overall deliverable:
@@ -78,8 +93,14 @@ When all subtasks are complete and code compiles/runs, say IMPLEMENT_COMPLETE.`,
 			Prompt: `PHASE: SELF-CHECK
 Check your work against YOUR OWN acceptance criteria:
 ---
-%s
+%CRITERIA%
 ---
+
+ORIGINAL SPEC/REQUEST:
+---
+%SPEC%
+---
+
 For each criterion: PASS or FAIL with evidence.
 - Fetch real data (API responses, file contents, test output)
 - Check for nulls, zeros, empty fields, placeholder text
@@ -93,42 +114,61 @@ For each criterion: PASS or FAIL with evidence.
   Do they have consistent structure? If one has significantly MORE structure
   than another (more sections, more steps, more fields), the simpler one is
   likely incomplete. Flag it and improve it to match the more detailed one.
+- SPEC COMPLIANCE: verify your implementation matches the original spec's scope,
+  directory structure, and constraints. Flag any deviations.
 Fix anything that fails. When all criteria pass, say SELF_CHECK_PASS.
 If anything fails and you can't fix it, say SELF_CHECK_FAIL.`,
 		},
 		{
 			Name:         "code-review",
-			Escalate:     false, // escalation happens on FAILURE only
+			Escalate:     true, // force escalation — reviewer must be a DIFFERENT (bigger) model than implementer
 			MinToolCalls: 2,
 			UseSubAgent:  true,
 			Prompt: `PHASE: CODE REVIEW (independent reviewer)
 You are a DIFFERENT model reviewing work done by a previous model.
 Check against these acceptance criteria:
 ---
-%s
+%CRITERIA%
 ---
+
+ORIGINAL SPEC/REQUEST:
+---
+%SPEC%
+---
+
 1. Fetch ALL real results — do NOT trust the previous model's claims
 2. For each criterion: PASS or FAIL with evidence
 3. Check for things the implementer missed:
    - Null/empty/zero values where real data is expected
    - End-user experience — would a human say this is right?
    - Edge cases, missing structure, completeness gaps
-4. Say CODE_REVIEW_PASS if all criteria met, or CODE_REVIEW_FAIL with specifics.`,
+4. SPEC COMPLIANCE: verify implementation matches the original spec's scope,
+   directory structure, and constraints. Flag any out-of-scope additions.
+5. Say CODE_REVIEW_PASS if all criteria met, or CODE_REVIEW_FAIL with specifics.`,
 		},
 		{
 			Name:         "acceptance-test",
+			Escalate:     true, // force escalation — acceptance tester must be bigger model
 			MinToolCalls: 1,
 			UseSubAgent:  true,
 			Prompt: `PHASE: ACCEPTANCE TEST
 Run the actual deliverable end-to-end from the USER'S perspective:
+
+ORIGINAL SPEC/REQUEST:
+---
+%SPEC%
+---
+
 1. Execute/call/open the output as a user would
 2. Check every aspect of the end-user experience
 3. Verify against acceptance criteria:
 ---
-%s
+%CRITERIA%
 ---
-4. Is anything null, broken, missing, or incomplete that a user would notice?
-5. Say ACCEPTANCE_PASS if the user would be satisfied, or ACCEPTANCE_FAIL with what's wrong.`,
+4. Verify the implementation matches the spec's architecture, package structure, and scope
+5. Check for OUT OF SCOPE violations (features added that spec excludes)
+6. Is anything null, broken, missing, or incomplete that a user would notice?
+7. Say ACCEPTANCE_PASS if the user would be satisfied, or ACCEPTANCE_FAIL with what's wrong.`,
 		},
 		{
 			Name: "deploy",
@@ -227,17 +267,37 @@ var phaseFailSignals = []string{
 	"model_review_fail", "verify_fail", "needs_fix",
 }
 
-// PhasePrompt returns the prompt for a phase, with acceptance criteria injected.
-func (p *Pipeline) PhasePrompt(phaseIdx int, criteria string) string {
+// PhasePrompt returns the prompt for a phase, with acceptance criteria and
+// the original spec/request injected into review phases.
+func (p *Pipeline) PhasePrompt(phaseIdx int, criteria, spec string) string {
 	if phaseIdx < 0 || phaseIdx >= len(p.Phases) {
 		return ""
 	}
 	phase := p.Phases[phaseIdx]
+
+	prompt := phase.Prompt
 	if criteria != "" {
-		return strings.ReplaceAll(phase.Prompt, "%s", criteria)
+		prompt = strings.ReplaceAll(prompt, "%CRITERIA%", criteria)
+	} else {
+		prompt = strings.ReplaceAll(prompt, "%CRITERIA%", "(criteria will be defined during earlier phases)")
 	}
-	// Replace %s placeholder with descriptive text when no criteria available yet
-	return strings.ReplaceAll(phase.Prompt, "%s", "(criteria will be defined during earlier phases)")
+
+	if spec != "" {
+		prompt = strings.ReplaceAll(prompt, "%SPEC%", spec)
+	} else {
+		prompt = strings.ReplaceAll(prompt, "%SPEC%", "(no spec provided)")
+	}
+
+	// Legacy %s placeholder support (plan phase uses %s for criteria)
+	if strings.Contains(prompt, "%s") {
+		if criteria != "" {
+			prompt = strings.ReplaceAll(prompt, "%s", criteria)
+		} else {
+			prompt = strings.ReplaceAll(prompt, "%s", "(criteria will be defined during earlier phases)")
+		}
+	}
+
+	return prompt
 }
 
 // IsPassSignal checks if the LLM response indicates phase completion.

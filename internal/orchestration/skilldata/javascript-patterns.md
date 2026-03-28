@@ -23,6 +23,9 @@ verify:
     command: "test -f README.md && echo 'OK' || echo 'MISSING'"
     expect_not: "MISSING"
 ---
+
+> **Spec Override:** These patterns are defaults. If a project spec defines different
+> architecture, package structure, or scope, follow the spec instead.
 # Skill: JavaScript & TypeScript Patterns
 
 Modern JS/TS development — React, Node.js, TypeScript-first, Next.js patterns.
@@ -56,12 +59,12 @@ Source: [React Best Practices](https://mcpmarket.com/tools/skills/react-performa
 
 ### React component with TypeScript
 ```tsx
-interface TicketCardProps {
-  ticket: Ticket;
+interface ItemCardProps {
+  item: Item;
   onSelect: (key: string) => void;
 }
 
-export function TicketCard({ ticket, onSelect }: TicketCardProps) {
+export function ItemCard({ item, onSelect }: ItemCardProps) {
   return (
     <div onClick={() => onSelect(ticket.key)}>
       <h3>{ticket.summary}</h3>
@@ -73,14 +76,14 @@ export function TicketCard({ ticket, onSelect }: TicketCardProps) {
 
 ### Custom hook
 ```tsx
-function useTickets(projectKey: string) {
-  const [tickets, setTickets] = useState<Ticket[]>([]);
+function useItems(projectKey: string) {
+  const [tickets, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetch(`/api/tickets?project=${projectKey}`)
       .then(res => res.json())
-      .then(setTickets)
+      .then(setItems)
       .finally(() => setLoading(false));
   }, [projectKey]);
 
@@ -92,14 +95,14 @@ function useTickets(projectKey: string) {
 ```ts
 import { z } from "zod";
 
-const TicketSchema = z.object({
+const ItemSchema = z.object({
   key: z.string(),
   summary: z.string().min(1),
   status: z.enum(["Open", "Closed", "Resolved"]),
   confidence: z.number().min(0).max(1),
 });
 
-type Ticket = z.infer<typeof TicketSchema>;
+type Item = z.infer<typeof ItemSchema>;
 ```
 
 ---
