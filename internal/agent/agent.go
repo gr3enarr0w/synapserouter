@@ -615,9 +615,9 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		if len(msg.ToolCalls) == 0 {
 			a.noToolTurns++
 			if a.config.AutoOrchestrate {
-				// Stall detection: if model hasn't made tool calls in 3 consecutive turns,
+				// Stall detection: if model hasn't made tool calls in 2 consecutive turns,
 				// escalate to a bigger model regardless of prior tool call history.
-				if a.noToolTurns >= 3 {
+				if a.noToolTurns >= 2 {
 					phaseName := "unknown"
 					if a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
 						phaseName = a.pipeline.Phases[a.pipelinePhase].Name
@@ -672,13 +672,13 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 				log.Printf("[Agent] loop warning #%d: same tool call %d times in window",
 					a.loopWarningCount, repeats)
 
-				if a.loopWarningCount >= 10 || repeats >= 8 {
+				if a.loopWarningCount >= 6 || repeats >= 6 {
 					log.Printf("[Agent] action loop: %d warnings, %d repeats — skipping phase",
 						a.loopWarningCount, repeats)
 					a.toolFingerprints = nil
 					a.loopWarningCount = 0
 					a.advancePipeline("PHASE_SKIPPED_LOOP")
-				} else if a.loopWarningCount >= 5 || repeats >= 5 {
+				} else if a.loopWarningCount >= 3 || repeats >= 4 {
 					log.Printf("[Agent] action loop: %d warnings, %d repeats — escalating",
 						a.loopWarningCount, repeats)
 					a.escalateProvider()
