@@ -296,13 +296,22 @@ func (r *Runner) runExercise(ctx context.Context, ex Exercise, config EvalRunCon
 		}
 	}
 
-	// Pass 2 (if enabled and pass 1 failed)
+	// Pass 2 (if enabled and pass 1 failed) — escalate to next chain provider
 	if config.TwoPass && !result.Pass1 && testResult.Error == "" {
 		result.ErrorFeedback = testResult.Output
 
+		// Escalate: use a bigger model for the retry
+		pass2Config := config
+		nextProvider := r.nextChainProvider(result.Provider)
+		if nextProvider != "" {
+			pass2Config.Provider = nextProvider
+			pass2Config.Mode = "direct"
+			log.Printf("[Eval] %s | escalating pass@2 from %s to %s", ex.ID, result.Provider, nextProvider)
+		}
+
 		pass2Prompt := buildPass2Prompt(ex, code, testResult.Output)
 		start2 := time.Now()
-		resp2, _, _, err2 := r.sendToProvider(ctx, pass2Prompt, config)
+		resp2, _, _, err2 := r.sendToProvider(ctx, pass2Prompt, pass2Config)
 		result.LatencyMs2 = time.Since(start2).Milliseconds()
 
 		if err2 == nil {
@@ -536,6 +545,42 @@ func (r *Runner) sendToProvider(ctx context.Context, prompt string, config EvalR
 		provider = resp.XProxyMetadata.Provider
 	}
 	return resp, provider, nil, nil
+}
+
+// nextChainProvider returns a significantly bigger chain provider for escalation.
+// Skips to ~midpoint of the chain (not just the next one) so the retry uses
+// a meaningfully larger model.
+func (r *Runner) nextChainProvider(current string) string {
+	var chainProviders []string
+	currentIdx := -1
+	for _, p := range r.providerList {
+		name := p.Name()
+		if !strings.HasPrefix(name, "ollama-chain-") {
+			continue
+		}
+		if name == current {
+			currentIdx = len(chainProviders)
+		}
+		chainProviders = append(chainProviders, name)
+	}
+
+	if currentIdx < 0 || len(chainProviders) <= 1 {
+		return ""
+	}
+
+	// Jump to ~2/3 of the way through the chain (mid-to-frontier tier)
+	targetIdx := len(chainProviders) * 2 / 3
+	if targetIdx <= currentIdx {
+		targetIdx = currentIdx + 1
+	}
+	if targetIdx >= len(chainProviders) {
+		targetIdx = len(chainProviders) - 1
+	}
+	if targetIdx == currentIdx {
+		return ""
+	}
+
+	return chainProviders[targetIdx]
 }
 
 // firstChainProvider returns the name of the first chain provider (not a planner).
