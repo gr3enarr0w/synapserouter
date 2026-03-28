@@ -60,7 +60,8 @@ Synapserouter (binary: `synroute`) is a Go-based LLM platform with four capabili
 
 | Mode | Command | What It Does | Status |
 |------|---------|-------------|--------|
-| **Chat** | `synroute chat` | Conversational AI + coding agent | Implemented |
+| **Code** | `synroute` or `synroute code` | Pipeline-aware code mode TUI with status bar, keyboard shortcuts, event-driven display (default) | Implemented |
+| **Chat** | `synroute chat` | Lightweight conversational REPL | Implemented |
 | **Proxy** | `synroute serve` | OpenAI-compatible API router | Implemented |
 | **Agent Backend** | `synroute serve` (agent-aware routing) | Model provider for coding tools | Implemented |
 | **MCP Server** | `synroute mcp-serve` | Model Context Protocol -- exposes tools over HTTP | Implemented |
@@ -109,9 +110,9 @@ Two independent database backends. User picks based on environment.
 ### Design Principles
 
 1. **The router IS the escalation.** One system routes requests. No parallel escalation mechanisms.
-2. **Frontier talks, cheap models work.** The best available model handles conversation with the user. Smaller models handle parallel coding and builds.
-3. **Pipeline is a tool, not a mode.** The coding pipeline is triggered when the agent decides work is needed. Conversational messages don't trigger it.
-4. **Intent-based routing.** The LLM reads the user's message and knows what to do. No slash commands or mode flags needed.
+2. **Frontier talks, cheap models work.** Three model tiers (cheap/mid/frontier) auto-classified from OLLAMA_CHAIN position. The frontier model handles user conversation and planning. Mid-tier handles reviews and complex fixes. Cheap models handle code generation and builds via sub-agents.
+3. **Pipeline is a tool, not a mode.** Pipeline phases (plan, implement, verify, review, test) are LLM-callable tools the frontier model invokes when work is needed. Conversational messages get direct answers without triggering any pipeline.
+4. **Intent-based routing.** The frontier model reads the user's message and decides which phase-tools to invoke. No keyword matching or forced pipelines. Users can also invoke phases explicitly via REPL slash commands (`/plan`, `/review`, `/check`, `/fix`).
 5. **Multi-model verification.** Code written by Model A is reviewed by Model B. Architectural diversity for quality.
 6. **Spec is a contract.** When a spec is provided, it's binding. Skills are suggestions; spec directives are mandatory.
 7. **Provider-agnostic.** Any LLM provider can be added. The product doesn't prefer any vendor.
@@ -418,67 +419,80 @@ Automatic language and toolchain detection from project files:
 
 Detection sets `ProjectLanguage`, resolves build commands, checks for missing tools, and injects setup instructions into the system prompt.
 
-### 2.12 Chat Architecture
+### 2.12 Chat and Code Architecture
 
-*(Core implemented in `internal/agent/repl.go`; rich UI planned -- #229, #231)*
+The agent operates in two CLI modes:
 
-The chat mode operates as a conversational interface where the frontier model responds directly to the user. No pipeline is triggered unless the user's intent requires work.
+**Code mode** (`synroute` or `synroute code`) — the default. Pipeline-aware TUI with:
+- Status bar (project name, current phase, active model, elapsed time)
+- ANSI scroll region layout (status bar + content area + footer)
+- Keyboard shortcuts: `^P` pipeline status, `^T` recent tools, `^L` cycle verbosity, `^E` force escalation, `^/` help
+- Raw terminal mode via `golang.org/x/term` with cooked-mode fallback for input
+- EventBus-driven real-time updates from agent loop
+- Implemented in `internal/agent/coderenderer.go`, `coderepl.go`, `terminal.go`
+
+**Chat mode** (`synroute chat`) — lightweight REPL for simple conversations.
+
+Both modes share the same agent loop and conversation flow:
 
 ```
 User Input
   -> Frontier model reads message
   -> Intent detection (LLM-native, not keyword matching)
   -> If conversational (chat/explain/research): respond directly
-  -> If work needed (build/fix/review/deploy): trigger pipeline
+  -> If work needed (build/fix/review/deploy): invoke pipeline phase tools
   -> Stream response to terminal
   -> Persist to session (database)
 ```
 
 **Session persistence:** Each conversation is a session with a unique ID. Messages, tool outputs, and agent state persist to the database. Sessions can be resumed (`--resume`) or listed.
 
-**Streaming:** Responses stream token-by-token to the terminal. Tool calls render inline with semantic colors. *(Rich rendering planned -- #231)*
+**File attachments:** `@filename` references in messages are parsed, file content read and injected into the conversation. Supports absolute paths, relative paths, `~/` expansion, binary file detection, and 10KB truncation with file_read fallback. Implemented in `internal/agent/attachment.go`.
 
-**REPL commands (current):** `/exit`, `/clear`, `/model`, `/tools`, `/history`, `/agents`, `/budget`
+**REPL slash commands:** `/exit`, `/clear`, `/model`, `/tools`, `/history`, `/agents`, `/budget`, `/help`
 
-**Planned:**
-- File attachment via `@filename` references (#228)
+**Phase slash commands:** `/plan`, `/review`, `/check`, `/fix` — invoke individual pipeline phases within the current session without restarting the full pipeline.
+
+**Remaining work:**
 - Semantic color system with accessibility presets (#231)
 - Session list/switch/delete (#84)
 - Stateful per-message phase routing (#235)
 
 ### 2.13 Three-Tier Model Routing
 
-*(Planned -- #233)*
+*(Design complete -- #233, Epic #303)*
 
-Three distinct routing tiers within a single session:
+Three model tiers auto-classified from OLLAMA_CHAIN position:
 
-| Tier | Purpose | Model Selection | When |
-|------|---------|----------------|------|
-| **Frontier** | Talk to user, understand intent, explain, ask questions | Best available (most capable) | Every user-facing turn |
-| **Mid** | Code review, complex fixes, architecture decisions | Large coders at mid-range levels | When independent review is needed |
-| **Cheap** | Write code, run builds, file ops, parallel sub-agents | Cheapest adequate (escalation chain) | When pipeline is triggered |
+| Tier | Purpose | Model Selection | OLLAMA_CHAIN Position |
+|------|---------|----------------|----------------------|
+| **Frontier** | Talk to user, plan, review, orchestrate | Best available (most capable) | Top third of levels + subscription providers |
+| **Mid** | Self-check, complex fixes, architecture | Large coders at mid-range levels | Middle third of levels |
+| **Cheap** | Write code, run builds, file ops, sub-agents | Cheapest adequate | Bottom third of levels |
 
-The user always talks to the frontier model. When work is needed, the frontier model delegates to the appropriate tier based on task complexity.
+The parent REPL agent starts at frontier tier for conversation quality. Coding sub-agents are spawned at cheap tier. `providerIdx` remains monotonic — tier selection never decreases the floor.
 
-**Current state:** Not yet implemented. All turns use the same provider selection. See Section 3.3 for the full three-tier design.
+**Pipeline phase defaults:** plan=frontier, implement=cheap, self-check=mid, code-review=frontier, acceptance-test=frontier, deploy=cheap.
+
+**Configuration:** Auto-detected from chain position. Override with `OLLAMA_CHAIN_TIERS` env var (pipe-separated, matching OLLAMA_CHAIN levels). See design doc in `docs/designs/` for full details.
 
 ### 2.14 Intent Detection
 
-*(Planned -- #232, #235; partial implementation in `internal/agent/intent.go`)*
+*(Design complete -- #232, #235, Epic #303; heuristic implementation in `internal/agent/intent.go`)*
 
-The agent uses the LLM itself to determine what phase to run -- not keyword matching. The frontier model reads the user's message and naturally decides what to do.
+The frontier model determines what to do — pipeline phases are tools it can invoke, not a forced mode. The model reads the user's message and decides whether to answer directly, invoke a single phase tool, or trigger the full pipeline.
 
-**Heuristic fallbacks** (when LLM intent isn't clear):
+**Heuristic fallbacks** (when pipeline is forced via `--pipeline` flag):
 - Project has spec.md + no code -> full pipeline (build from spec)
 - Project has existing code + tests -> start at review/implement, skip plan
 - Project has existing code, no tests -> implement tests
 - Empty project, no spec -> conversational (ask what to build)
 
-These heuristics are in `DetectPipelineEntry()`, used as a starting point. The LLM overrides them naturally.
+These heuristics are in `DetectPipelineEntry()`, used when `AutoOrchestrate=true`. In the default conversation mode, the frontier model decides naturally via tool calling.
 
 ### 2.15 Pipeline System
 
-The 6-phase pipeline is triggered when the agent decides work is needed. Not every message runs the pipeline.
+Pipeline phases are LLM-callable tools the frontier model invokes when work is needed. In conversation mode (default), the model decides which phases to run. In forced pipeline mode (`--pipeline` flag), the full 6-phase sequence runs automatically. Phase slash commands (`/plan`, `/review`, `/check`, `/fix`) let users invoke individual phases explicitly.
 
 #### Software Pipeline
 
@@ -503,6 +517,23 @@ The 6-phase pipeline is triggered when the agent decides work is needed. Not eve
 | 6 | **verify** | Production verification | bash (inference tests), grep (log analysis) |
 
 **Pipeline customization (planned):** Both pipelines are defaults. Users should be able to define custom pipelines with their own phases, tool restrictions, and quality gates. *(No issue filed yet)*
+
+#### Speed Optimizations (Epic #289)
+
+Target: reduce pipeline runtime from ~110 minutes to ~30 minutes. Design doc: `docs/specs/speed-optimization-design.md`.
+
+| Optimization | Issue | Impact | Effort |
+|-------------|-------|--------|--------|
+| Parallel verification (review + acceptance simultaneously) | #290 | ~20min saved | 1-2 days |
+| Prompt caching (system prompt, specs, tool defs) | #291 | 60-80% cost savings | 2-3 days |
+| Adaptive pipeline (skip phases for trivial tasks) | #292 | ~10min saved | 3-5 days |
+| Phase summaries (drop raw context after phase) | #293 | Token reduction | 2-3 days |
+| Dynamic tool definitions (search_tools pattern) | #294 | Prompt size reduction | 2-3 days |
+| Diff-based re-review (only examine changes) | #295 | ~5min saved | 2-3 days |
+| Early termination (objective completion criteria) | #296 | Variable | 3-5 days |
+| Speculative phase overlap | #297 | ~15-45s total | 5-7 days |
+| ACON context compression | #298 | 26-54% token reduction | 5-7 days |
+| Intra-agent smart model routing | #299 | Variable | 3-5 days |
 
 #### Phase Transitions
 
@@ -1018,18 +1049,20 @@ Best practices injected as warnings. Agent fixes violations before proceeding.
 ### 4.1 Commands
 
 ```bash
-synroute                                    # Start HTTP server (default)
-synroute serve                              # Start HTTP server (explicit)
-synroute chat                               # Interactive agent REPL
-synroute chat --model claude-sonnet-4-6     # Specific model
-synroute chat --message "fix the bug"       # One-shot (non-interactive)
-synroute chat --system "You are a Go expert" # Custom system prompt
-synroute chat --worktree                    # Run in isolated git worktree
-synroute chat --max-agents 3               # Limit concurrent sub-agents
-synroute chat --budget 10000               # Max total tokens
-synroute chat --project my-app             # Create ~/Development/my-app/ and work there
-synroute chat --resume                     # Resume most recent session
-synroute chat --session <id>               # Resume specific session
+synroute                                    # Start code mode TUI (default)
+synroute code                               # Start code mode TUI (explicit)
+synroute code --model claude-sonnet-4-6     # Specific model
+synroute code --message "fix the bug"       # One-shot (non-interactive)
+synroute code --spec-file spec.md           # Build from spec
+synroute code --worktree                    # Run in isolated git worktree
+synroute code --max-agents 3               # Limit concurrent sub-agents
+synroute code --budget 10000               # Max total tokens
+synroute code --project my-app             # Create ~/Development/my-app/ and work there
+synroute code --resume                     # Resume most recent session
+synroute code --session <id>               # Resume specific session
+synroute chat                               # Lightweight conversational REPL
+synroute chat --message "explain this code" # One-shot chat
+synroute serve                              # Start HTTP server
 synroute test                              # Smoke test all providers
 synroute test --provider ollama-chain-1    # Test single provider
 synroute test --json                       # JSON output
@@ -1134,13 +1167,22 @@ Semantic color mapping for REPL elements:
 - Respects `NO_COLOR` env var (https://no-color.org/)
 - Per-element overrides via env vars (`CLI_COLOR_AGENT=cyan`)
 
-### 4.7 CLI Terminal UI (Planned, Epic 9)
+### 4.7 CLI Terminal UI (Epic #304)
 
-Polished terminal interface beyond basic REPL:
+**Code mode** (implemented, `synroute code`):
+- Status bar: project name, current pipeline phase, active model, elapsed time
+- ANSI scroll region layout (fixed status bar + scrolling content + fixed footer)
+- Keyboard shortcuts: `^P` pipeline, `^T` tools, `^L` verbosity, `^E` escalate, `^/` help
+- Raw terminal mode via `golang.org/x/term` with cooked-mode fallback for prompt input
+- EventBus-driven updates — tool calls, phase transitions, escalation displayed in real-time
+- `NO_COLOR` env var support
+- Implemented in `internal/agent/coderenderer.go`, `coderepl.go`, `terminal.go`, `commands_code.go`
 
-- **Chat mode** (Story 9.1): status bar, keyboard shortcuts (Ctrl-H history, Ctrl-S sessions, Ctrl-N new, Ctrl-F files), raw ANSI + Go stdlib
-- **Code mode** (Story 9.2): pipeline phase display, tool call visualization, Ctrl-P pipeline status, Ctrl-R recall, Ctrl-E escalate
-- **Session management** (Story 9.3): inline session browser, auto-naming, list/search/archive
+**Remaining work:**
+- Semantic color system with accessibility presets (#266)
+- Streaming output with tool call visualization (#267)
+- Session management commands (#268)
+- Phase progress indicators (#269)
 
 ---
 
