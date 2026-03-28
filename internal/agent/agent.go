@@ -332,73 +332,87 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 	if a.config.AutoOrchestrate && a.pipeline == nil {
 		matched := orchestration.MatchSkillsForLanguage(a.originalRequest, a.config.Skills, a.config.ProjectLanguage)
 		a.pipeline = DetectPipelineType(matched, a.config.ProjectLanguage)
-		a.pipelinePhase = 0
-		a.initializeImplementPhase()
 
-		// Intent-based phase routing: determine starting phase from project state.
-		// The pipeline becomes a menu of capabilities, not a forced sequence.
-		intentEntry := DetectPipelineEntry(userMessage, a.config.WorkDir, a.pipeline, false)
-		a.ApplyIntentEntry(intentEntry)
+		// Adaptive pipeline: assess task complexity and reduce pipeline for trivial/simple tasks.
+		// Must run before intent detection and phase initialization since it may nil out the pipeline.
+		complexity := AssessComplexity(userMessage, a.config.SpecFilePath != "", a.originalRequest)
+		a.pipeline = AdaptPipeline(a.pipeline, complexity)
+		log.Printf("[Agent] adaptive pipeline: complexity=%s", complexity)
 
-		skillNames := make([]string, len(matched))
-		for i, s := range matched {
-			skillNames[i] = s.Name
+		if a.pipeline == nil {
+			// Trivial task — no pipeline needed, just answer directly.
+			log.Printf("[Agent] skipping pipeline for trivial task")
 		}
-		log.Printf("[Agent] pipeline: %s (%d phases, entry: %d/%s) | language: %s | skills: %v",
-			a.pipeline.Name, len(a.pipeline.Phases), intentEntry.Phase, intentEntry.Mode,
-			a.config.ProjectLanguage, skillNames)
 
-		a.emit(EventPipelineStart, "", map[string]any{
-			"pipeline_name":  a.pipeline.Name,
-			"phase_count":    len(a.pipeline.Phases),
-			"matched_skills": skillNames,
-			"intent_phase":   intentEntry.Phase,
-			"intent_mode":    intentEntry.Mode,
-			"intent_reason":  intentEntry.Reason,
-		})
-		a.emit(EventSkillMatch, "", map[string]any{
-			"skill_names":   skillNames,
-			"trigger_count": len(matched),
-		})
+		if a.pipeline != nil {
+			a.pipelinePhase = 0
+			a.initializeImplementPhase()
 
-		// Fire parallel plan phase immediately if configured AND intent didn't skip past it
-		firstPhase := a.pipeline.Phases[a.pipelinePhase]
-		if a.pipelinePhase == 0 && firstPhase.Name == "plan" &&
-			firstPhase.ParallelSubAgents > 0 && len(firstPhase.CoderProviders) > 0 && a.hasProviders(firstPhase.CoderProviders) {
-			log.Printf("[Agent] pipeline: firing parallel %s phase immediately", firstPhase.Name)
-			parallelResult := a.runParallelPhase(firstPhase)
-			if firstPhase.StoreAs == "criteria" {
-				a.acceptanceCriteria = parallelResult
+			// Intent-based phase routing: determine starting phase from project state.
+			// The pipeline becomes a menu of capabilities, not a forced sequence.
+			intentEntry := DetectPipelineEntry(userMessage, a.config.WorkDir, a.pipeline, false)
+			a.ApplyIntentEntry(intentEntry)
+
+			skillNames := make([]string, len(matched))
+			for i, s := range matched {
+				skillNames[i] = s.Name
 			}
-			// Advance past the plan phase
-			a.pipelinePhase = 1
-			a.phaseToolCalls = 0
-			// Inject the plan result + next phase prompt into conversation
-			a.conversation.Add(providers.Message{
-				Role:    "user",
-				Content: fmt.Sprintf("The planning phase is complete. Here is the merged plan and acceptance criteria:\n\n%s\n\nNow proceed to implement. %s",
-					parallelResult, a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)),
+			log.Printf("[Agent] pipeline: %s (%d phases, entry: %d/%s) | language: %s | skills: %v",
+				a.pipeline.Name, len(a.pipeline.Phases), intentEntry.Phase, intentEntry.Mode,
+				a.config.ProjectLanguage, skillNames)
+
+			a.emit(EventPipelineStart, "", map[string]any{
+				"pipeline_name":  a.pipeline.Name,
+				"phase_count":    len(a.pipeline.Phases),
+				"matched_skills": skillNames,
+				"intent_phase":   intentEntry.Phase,
+				"intent_mode":    intentEntry.Mode,
+				"intent_reason":  intentEntry.Reason,
 			})
-		} else {
-			// No parallel plan phase (or intent skipped it) — inject the current
-			// phase prompt so the pipeline actively steers the agent from turn 1.
-			var phasePrompt string
-			if intentEntry.Phase > 0 {
-				phasePrompt = phasePromptForEntry(a.pipeline, intentEntry, a.acceptanceCriteria)
-			} else {
-				phasePrompt = a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)
-			}
-			if phasePrompt != "" {
-				currentPhase := a.pipeline.Phases[a.pipelinePhase]
-				log.Printf("[Agent] pipeline: injecting phase %d/%d prompt: %s",
-					a.pipelinePhase+1, len(a.pipeline.Phases), currentPhase.Name)
+			a.emit(EventSkillMatch, "", map[string]any{
+				"skill_names":   skillNames,
+				"trigger_count": len(matched),
+			})
+
+			// Fire parallel plan phase immediately if configured AND intent didn't skip past it
+			firstPhase := a.pipeline.Phases[a.pipelinePhase]
+			if a.pipelinePhase == 0 && firstPhase.Name == "plan" &&
+				firstPhase.ParallelSubAgents > 0 && len(firstPhase.CoderProviders) > 0 && a.hasProviders(firstPhase.CoderProviders) {
+				log.Printf("[Agent] pipeline: firing parallel %s phase immediately", firstPhase.Name)
+				parallelResult := a.runParallelPhase(firstPhase)
+				if firstPhase.StoreAs == "criteria" {
+					a.acceptanceCriteria = parallelResult
+				}
+				// Advance past the plan phase
+				a.pipelinePhase = 1
+				a.phaseToolCalls = 0
+				// Inject the plan result + next phase prompt into conversation
 				a.conversation.Add(providers.Message{
 					Role:    "user",
-					Content: fmt.Sprintf("You are working in phases. Current phase: %s\n\n%s\n\nComplete this phase using tools, then say %s_COMPLETE before moving on.",
-						currentPhase.Name, phasePrompt, strings.ToUpper(strings.ReplaceAll(currentPhase.Name, "-", "_"))),
+					Content: fmt.Sprintf("The planning phase is complete. Here is the merged plan and acceptance criteria:\n\n%s\n\nNow proceed to implement. %s",
+						parallelResult, a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)),
 				})
+			} else {
+				// No parallel plan phase (or intent skipped it) — inject the current
+				// phase prompt so the pipeline actively steers the agent from turn 1.
+				var phasePrompt string
+				if intentEntry.Phase > 0 {
+					phasePrompt = phasePromptForEntry(a.pipeline, intentEntry, a.acceptanceCriteria)
+				} else {
+					phasePrompt = a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)
+				}
+				if phasePrompt != "" {
+					currentPhase := a.pipeline.Phases[a.pipelinePhase]
+					log.Printf("[Agent] pipeline: injecting phase %d/%d prompt: %s",
+						a.pipelinePhase+1, len(a.pipeline.Phases), currentPhase.Name)
+					a.conversation.Add(providers.Message{
+						Role:    "user",
+						Content: fmt.Sprintf("You are working in phases. Current phase: %s\n\n%s\n\nComplete this phase using tools, then say %s_COMPLETE before moving on.",
+							currentPhase.Name, phasePrompt, strings.ToUpper(strings.ReplaceAll(currentPhase.Name, "-", "_"))),
+					})
+				}
 			}
-		}
+		} // end if a.pipeline != nil (adaptive pipeline)
 	}
 
 	start := time.Now()
@@ -1462,9 +1476,19 @@ func (a *Agent) advancePipeline(content string) bool {
 
 		nextPhase := a.pipeline.Phases[a.pipelinePhase]
 
-		// After implement phase passes, advance providerIdx past Level 0 (coders)
-		// to Level 1 (first review level). This ensures reviews use bigger models.
-		if currentPhase.Name == "implement" && a.providerIdx == 0 && len(a.config.EscalationChain) > 1 {
+		// Tier-based provider routing: set provider level to match the next phase's
+		// preferred tier. providerIdx is monotonically increasing, so this only
+		// escalates UP, never back down to cheaper models.
+		if nextPhase.Tier != "" && len(a.config.EscalationChain) > 1 {
+			tierLevel := a.providerLevelForTier(nextPhase.Tier)
+			if tierLevel > a.providerIdx {
+				a.setMinProviderLevel(tierLevel)
+				log.Printf("[Agent] tier routing: phase %s wants %s tier → level %d: %v",
+					nextPhase.Name, nextPhase.Tier, a.providerIdx,
+					a.config.EscalationChain[a.providerIdx].Providers)
+			}
+		} else if currentPhase.Name == "implement" && a.providerIdx == 0 && len(a.config.EscalationChain) > 1 {
+			// Legacy fallback: advance past Level 0 coders after implement
 			a.setMinProviderLevel(1)
 			log.Printf("[Agent] advanced past coder level to review level %d: %v",
 				a.providerIdx, a.config.EscalationChain[a.providerIdx].Providers)
@@ -1509,6 +1533,103 @@ func (a *Agent) advancePipeline(content string) bool {
 
 		// Sub-agent phases: spawn a fresh agent with NO shared conversation
 		if nextPhase.UseSubAgent {
+			// Parallel verification: if the next phase after this one is ALSO
+			// UseSubAgent, run both simultaneously. Both are independent (fresh
+			// agents, no shared context) so they can safely execute in parallel.
+			// This cuts wall-clock time for code-review + acceptance-test in half.
+			followingIdx := a.pipelinePhase + 1
+			canParallelVerify := followingIdx < len(a.pipeline.Phases) &&
+				a.pipeline.Phases[followingIdx].UseSubAgent
+
+			if canParallelVerify {
+				followingPhase := a.pipeline.Phases[followingIdx]
+				log.Printf("[Agent] parallel verification: running %s + %s simultaneously",
+					nextPhase.Name, followingPhase.Name)
+
+				// Escalate for the following phase too if needed
+				if followingPhase.Escalate {
+					a.escalateProvider()
+				}
+
+				reviewResult, acceptResult := a.runParallelSubAgentPhases(nextPhase, followingPhase)
+
+				bothPassed := IsPassSignal(reviewResult) && IsPassSignal(acceptResult)
+				if bothPassed {
+					// Both passed — advance past both phases
+					a.pipelinePhase++ // skip past the following phase too
+					a.conversation.Add(providers.Message{
+						Role: "user",
+						Content: fmt.Sprintf("Parallel verification complete — both passed:\n\n--- %s ---\n%s\n\n--- %s ---\n%s",
+							nextPhase.Name, reviewResult, followingPhase.Name, acceptResult),
+					})
+					return a.advancePipeline("PHASE_PASSED")
+				}
+
+				// At least one failed — combine failures for the fix cycle
+				var failures []string
+				if !IsPassSignal(reviewResult) {
+					failures = append(failures, fmt.Sprintf("=== %s FAILED ===\n%s", nextPhase.Name, reviewResult))
+				}
+				if !IsPassSignal(acceptResult) {
+					failures = append(failures, fmt.Sprintf("=== %s FAILED ===\n%s", followingPhase.Name, acceptResult))
+				}
+				combinedFailures := strings.Join(failures, "\n\n")
+
+				a.pipelineCycles++
+
+				if a.reviewTracker.CheckDivergence(combinedFailures) {
+					log.Printf("[Agent] pipeline: parallel review findings INCREASING — force-advancing after %d cycles", a.pipelineCycles)
+					a.pipelinePhase++ // skip past following phase
+					a.conversation.Add(providers.Message{
+						Role:    "user",
+						Content: fmt.Sprintf("Review findings are increasing each cycle (diverging). Accepting current state to stop cost growth:\n%s", combinedFailures),
+					})
+					return a.advancePipeline("PHASE_PASSED")
+				}
+
+				if a.reviewTracker.CheckStability(a.config.WorkDir, combinedFailures) {
+					log.Printf("[Agent] pipeline: parallel review stable — accepting after %d cycles", a.pipelineCycles)
+					a.pipelinePhase++ // skip past following phase
+					a.conversation.Add(providers.Message{
+						Role:    "user",
+						Content: fmt.Sprintf("Review found issues but no improvement detected across cycles. Accepting current state:\n%s", combinedFailures),
+					})
+					return a.advancePipeline("PHASE_PASSED")
+				}
+
+				if a.pipelineCycles > maxPipelineCycles {
+					log.Printf("[Agent] pipeline: max review cycles reached (%d), accepting result", a.pipelineCycles)
+					a.pipelineCycles = 0
+					a.pipelinePhase++ // skip past following phase
+					a.conversation.Add(providers.Message{
+						Role:    "user",
+						Content: fmt.Sprintf("Review found issues but max cycles reached. Delivering current state:\n%s", combinedFailures),
+					})
+					return a.advancePipeline("PHASE_PASSED")
+				}
+
+				escalated := a.escalateProvider()
+				providerName := "default"
+				if a.providerIdx < len(a.config.EscalationChain) {
+					level := a.config.EscalationChain[a.providerIdx]
+					if len(level.Providers) > 0 {
+						providerName = level.Providers[0]
+					}
+				}
+				log.Printf("[Agent] pipeline: parallel review cycle %d/%d — fixing on %s (provider idx %d, escalated=%v)",
+					a.pipelineCycles, maxPipelineCycles, providerName, a.providerIdx, escalated)
+				a.conversation.Add(providers.Message{
+					Role: "user",
+					Content: fmt.Sprintf("Parallel verification found issues (cycle %d/%d). Fix ALL these issues using tools, then say IMPLEMENT_COMPLETE:\n---\n%s",
+						a.pipelineCycles, maxPipelineCycles, combinedFailures),
+				})
+				a.pipelinePhase = a.findPhaseIndex("self-check", a.pipelinePhase-1)
+				a.phaseToolCalls = 0
+				a.phaseTurns = 0
+				return true
+			}
+
+			// Single sub-agent phase (no parallel peer follows)
 			reviewResult := a.runSubAgentPhase(nextPhase)
 			if IsPassSignal(reviewResult) {
 				// Sub-agent approved — advance to next phase recursively
@@ -1890,6 +2011,7 @@ Say VERIFIED_CORRECT if everything passes, or NEEDS_FIX with remaining issues.`,
 			Role:     fmt.Sprintf("%s-step-%d", phase.Name, step+1),
 			Model:    model,
 			Provider: provider,
+			Tier:     phase.Tier,
 			Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
 		}, task)
 
@@ -1906,6 +2028,7 @@ Say VERIFIED_CORRECT if everything passes, or NEEDS_FIX with remaining issues.`,
 					Role:     fmt.Sprintf("%s-step-%d-retry", phase.Name, step+1),
 					Model:    model,
 					Provider: retryProvider,
+					Tier:     phase.Tier,
 					Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
 				}, task)
 				if err != nil {
@@ -1936,6 +2059,29 @@ Say VERIFIED_CORRECT if everything passes, or NEEDS_FIX with remaining issues.`,
 
 	a.levelRotationIdx += n // advance rotation for next cycle
 	return lastResult
+}
+
+// runParallelSubAgentPhases runs two UseSubAgent phases simultaneously.
+// Both phases spawn independent sub-agents with no shared context, so they
+// can safely execute in parallel. Returns results from both phases.
+func (a *Agent) runParallelSubAgentPhases(phase1, phase2 PipelinePhase) (string, string) {
+	var result1, result2 string
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		result1 = a.runSubAgentPhase(phase1)
+	}()
+	go func() {
+		defer wg.Done()
+		result2 = a.runSubAgentPhase(phase2)
+	}()
+
+	wg.Wait()
+	log.Printf("[Agent] parallel verification complete: %s=%v, %s=%v",
+		phase1.Name, IsPassSignal(result1), phase2.Name, IsPassSignal(result2))
+	return result1, result2
 }
 
 // runSingleReviewer runs one independent reviewer sub-agent (used when level has 1 provider).
@@ -1976,6 +2122,7 @@ Your job:
 		Role:     phase.Name,
 		Model:    model,
 		Provider: provider,
+		Tier:     phase.Tier,
 		Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
 	}, task)
 
@@ -2048,6 +2195,36 @@ func (a *Agent) currentLevelProviders() []string {
 		idx = len(a.config.EscalationChain) - 1
 	}
 	return a.config.EscalationChain[idx].Providers
+}
+
+// providerLevelForTier returns the first escalation chain index that matches
+// the given tier. Returns 0 if no tier is set or no matching level is found.
+// Tier classification: cheap = bottom third, mid = middle third, frontier = top third.
+// If OLLAMA_CHAIN_TIERS was parsed, uses explicit tier assignments.
+// Otherwise auto-classifies from chain position.
+func (a *Agent) providerLevelForTier(tier ModelTier) int {
+	if tier == "" || len(a.config.EscalationChain) == 0 {
+		return 0
+	}
+
+	// First pass: look for an explicit tier assignment on a chain level.
+	for i, level := range a.config.EscalationChain {
+		if level.Tier == tier {
+			return i
+		}
+	}
+
+	// Second pass: auto-classify by position (bottom=cheap, middle=mid, top=frontier).
+	n := len(a.config.EscalationChain)
+	switch tier {
+	case TierCheap:
+		return 0 // bottom of chain
+	case TierMid:
+		return n / 3 // start of middle third
+	case TierFrontier:
+		return (2 * n) / 3 // start of top third
+	}
+	return 0
 }
 
 // initializeImplementPhase sets the initial parallel agent count from Level 0.
