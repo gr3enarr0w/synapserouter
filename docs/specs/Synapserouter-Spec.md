@@ -1579,7 +1579,7 @@ synroute setup
 
 ### 9.5 Skill System
 
-- [ ] **AC-S1:** `ParseSkillsFromFS` loads all 52+ skills from embedded `.md` files at startup
+- [ ] **AC-S1:** `ParseSkillsFromFS` loads all skills from embedded `.md` files at startup
 - [ ] **AC-S2:** Compound trigger `go+handler` matches "write a go handler" but not "going to handle this"
 - [ ] **AC-S3:** Ambiguous word `go` (standalone trigger) matches "write go code" but not "going to fix"
 - [ ] **AC-S4:** Skills sorted by phase order (analyze, implement, verify, review) in chain
