@@ -89,8 +89,8 @@ func AssessComplexity(message string, hasSpecFile bool) TaskComplexity {
 		}
 	}
 
-	// Question marks with trivial keywords → trivial.
-	if strings.Contains(lower, "?") && trivialScore > 0 && fullScore == 0 && simpleScore == 0 {
+	// Question marks with trivial keywords → trivial (regardless of message length).
+	if strings.Contains(lower, "?") && trivialScore > 0 && fullScore == 0 {
 		return ComplexityTrivial
 	}
 

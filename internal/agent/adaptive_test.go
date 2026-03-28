@@ -73,6 +73,11 @@ func TestAssessComplexity(t *testing.T) {
 			want:    ComplexityTrivial,
 		},
 		{
+			name:    "trivial question with file reference",
+			message: "what does @/tmp/test-file.txt contain? respond in one sentence",
+			want:    ComplexityTrivial,
+		},
+		{
 			name:    "short ambiguous defaults to simple",
 			message: "do it",
 			want:    ComplexitySimple,
