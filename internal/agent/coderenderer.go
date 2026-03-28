@@ -496,7 +496,13 @@ func (cr *CodeRenderer) ShowHelp() {
 	cr.writeContent("  ^C    Cancel current request")
 	cr.writeContent("  ^D    Exit")
 	cr.writeContent("")
-	cr.writeContent("  Slash commands: /exit /clear /model /tools /history /agents /budget")
+	cr.writeContent("  Phase commands:")
+	cr.writeContent("  /plan [msg]     Generate plan + acceptance criteria")
+	cr.writeContent("  /review [msg]   Independent code review")
+	cr.writeContent("  /check [msg]    Build, test, verify against criteria")
+	cr.writeContent("  /fix <msg>      Targeted fix (requires description)")
+	cr.writeContent("")
+	cr.writeContent("  Other: /exit /clear /model /tools /history /agents /budget")
 	cr.writeContent("")
 }
 

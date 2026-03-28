@@ -438,6 +438,40 @@ func (a *Agent) SessionID() string {
 	return a.sessionID
 }
 
+// RunPhase runs the agent with a single pipeline phase. Used by REPL slash
+// commands (/plan, /review, /check, /fix). The message is composed with
+// phase-appropriate context.
+func (a *Agent) RunPhase(ctx context.Context, phaseName string, userMessage string) (string, error) {
+	if a.pipeline == nil {
+		return "", fmt.Errorf("no pipeline configured")
+	}
+
+	idx := findPhaseByName(a.pipeline, phaseName)
+	if idx < 0 {
+		return "", fmt.Errorf("unknown phase: %s", phaseName)
+	}
+
+	// Save and restore pipeline state
+	origPipeline := a.pipeline
+	origPhase := a.pipelinePhase
+	origPrompt := a.intentPromptAdjustment
+	defer func() {
+		a.pipeline = origPipeline
+		a.pipelinePhase = origPhase
+		a.intentPromptAdjustment = origPrompt
+	}()
+
+	// Set up single-phase mode
+	a.ApplyIntentEntry(IntentEntry{
+		Phase:       0,
+		Mode:        "single",
+		SinglePhase: phaseName,
+		Reason:      fmt.Sprintf("user invoked /%s command", phaseName),
+	})
+
+	return a.Run(ctx, userMessage)
+}
+
 func (a *Agent) loop(ctx context.Context) (string, error) {
 	for turn := 0; a.config.MaxTurns <= 0 || turn < a.config.MaxTurns; turn++ {
 		// Budget check

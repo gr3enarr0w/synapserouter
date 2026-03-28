@@ -354,6 +354,69 @@ func (cr *CodeREPL) handleCommand(input string) bool {
 		}
 		cr.renderer.mu.Unlock()
 
+	case "/plan":
+		msg := strings.TrimSpace(strings.TrimPrefix(input, "/plan"))
+		if msg == "" {
+			msg = "Generate a plan with acceptance criteria for the current project"
+		}
+		cr.renderer.mu.Lock()
+		cr.renderer.writeContent(cr.renderer.color("\033[35m", "  running plan phase..."))
+		cr.renderer.mu.Unlock()
+		response, err := cr.agent.RunPhase(context.Background(), "plan", msg)
+		if err != nil {
+			cr.renderer.Error(err.Error())
+		} else if response != "" {
+			cr.renderer.Text(response)
+		}
+
+	case "/review":
+		msg := strings.TrimSpace(strings.TrimPrefix(input, "/review"))
+		if msg == "" {
+			msg = "Review the code in the current working directory. Read files, run tests, identify issues."
+		}
+		cr.renderer.mu.Lock()
+		cr.renderer.writeContent(cr.renderer.color("\033[35m", "  running code review..."))
+		cr.renderer.mu.Unlock()
+		response, err := cr.agent.RunPhase(context.Background(), "code-review", msg)
+		if err != nil {
+			cr.renderer.Error(err.Error())
+		} else if response != "" {
+			cr.renderer.Text(response)
+		}
+
+	case "/check":
+		msg := strings.TrimSpace(strings.TrimPrefix(input, "/check"))
+		if msg == "" {
+			msg = "Run verification: build the code, run tests, check against acceptance criteria."
+		}
+		cr.renderer.mu.Lock()
+		cr.renderer.writeContent(cr.renderer.color("\033[35m", "  running self-check..."))
+		cr.renderer.mu.Unlock()
+		response, err := cr.agent.RunPhase(context.Background(), "self-check", msg)
+		if err != nil {
+			cr.renderer.Error(err.Error())
+		} else if response != "" {
+			cr.renderer.Text(response)
+		}
+
+	case "/fix":
+		msg := strings.TrimSpace(strings.TrimPrefix(input, "/fix"))
+		if msg == "" {
+			cr.renderer.mu.Lock()
+			cr.renderer.writeContent("  usage: /fix <description of what to fix>")
+			cr.renderer.mu.Unlock()
+		} else {
+			cr.renderer.mu.Lock()
+			cr.renderer.writeContent(cr.renderer.color("\033[35m", "  running targeted fix..."))
+			cr.renderer.mu.Unlock()
+			response, err := cr.agent.RunPhase(context.Background(), "implement", msg)
+			if err != nil {
+				cr.renderer.Error(err.Error())
+			} else if response != "" {
+				cr.renderer.Text(response)
+			}
+		}
+
 	case "/help":
 		cr.renderer.ShowHelp()
 
