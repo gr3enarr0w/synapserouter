@@ -41,10 +41,11 @@ Synapserouter is an active, early-stage project. The core router and agent are f
 
 ### What Works Today
 
-- 7-level Ollama Cloud provider chain with 19+ models and automatic escalation
+- Dynamic Ollama Cloud provider chain with automatic escalation (levels configured via OLLAMA_CHAIN)
 - Circuit breakers with rate-limit-aware cooldowns
 - Interactive agent REPL with tool execution (bash, file I/O, grep, glob, git)
-- Skill system with 38+ embedded skills parsed from YAML frontmatter
+- Skill system with 54 embedded skills parsed from YAML frontmatter
+- Spec compliance system with constraint extraction and tool-layer protection
 - Worktree isolation for safe code changes
 - MCP server mode for tool exposure over HTTP
 - Recall tool and conversation compaction (basic, with known bugs)

@@ -8,9 +8,10 @@ The core router and agent are functional. Most of the roadmap -- chat backend, t
 
 ## What Works Today
 
-- Provider routing with 7-level escalation chain (19+ models)
+- Provider routing with dynamic multi-level escalation chain
 - Interactive agent with tool execution (bash, files, grep, glob, git)
-- 38+ embedded skills with trigger-based matching
+- 54 embedded skills with trigger-based matching and language-field routing
+- Spec compliance system with constraint extraction and tool-layer protection
 - Worktree isolation for safe code changes
 - MCP server mode
 - Eval framework with 11 benchmark sources

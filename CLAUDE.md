@@ -1,6 +1,6 @@
 # SynapseRouter (synroute)
 
-Go-based LLM proxy router and coding agent that distributes requests across Ollama Cloud (primary, 7-level escalation chain with 19+ models), subscription providers (Gemini, Codex, Claude Code), and Vertex AI. Includes interactive agent REPL with tool execution (bash, file I/O, grep, glob, git), worktree isolation, and MCP server mode. Two profiles: `personal` (Ollama Cloud + OAuth subscriptions) and `work` (Vertex AI). Supports multiple Ollama API keys for concurrent subscriptions.
+Go-based LLM proxy router and coding agent that distributes requests across Ollama Cloud (primary, dynamic multi-level escalation chain), subscription providers (Gemini, Codex, Claude Code), and Vertex AI. Includes interactive agent REPL with tool execution (bash, file I/O, grep, glob, git), worktree isolation, and MCP server mode. Two profiles: `personal` (Ollama Cloud + OAuth subscriptions) and `work` (Vertex AI). Supports multiple Ollama API keys for concurrent subscriptions.
 
 ## Key Files
 
@@ -27,27 +27,31 @@ Go-based LLM proxy router and coding agent that distributes requests across Olla
 - `internal/subscriptions/providers.go` — OAuth subscription provider management
 - `internal/subscriptions/credential_store.go` — Credential storage and OAuth refresh
 - `internal/router/circuit.go` — Circuit breaker with smart rate-limit cooldowns and reset
+- `internal/agent/spec_constraints.go` — Spec constraint extraction (package, scope, prohibitions)
+- `internal/agent/regression.go` — Compilation error regression tracking
+- `internal/agent/review_stability.go` — Review cycle divergence detection
+- `docs/specs/Synapserouter-Spec.md` — Product specification v1.1
 
 ## Architecture
 
 ### Provider Chain (Personal Profile)
-Ollama Cloud primary with 7-level escalation chain. Subscription providers optional (disable with `SUBSCRIPTIONS_DISABLED=true`).
+Ollama Cloud primary with dynamic escalation chain configured via `OLLAMA_CHAIN` env var. Subscription providers optional (disable with `SUBSCRIPTIONS_DISABLED=true`).
 
 ```
-L0: ministral-3:14b, rnj-1:8b, nemotron-3-nano:30b       (fast/cheap)
-L1: gpt-oss:20b, devstral-small-2:24b, qwen3.5            (small coders)
-L2: nemotron-3-super, gpt-oss:120b, minimax-m2.7           (medium)
-L3: devstral-2:123b, qwen3-coder:480b                      (large coders)
-L4: qwen3.5:397b, kimi-k2.5, minimax-m2.5                  (XL general)
-L5: deepseek-v3.1:671b, cogito-2.1:671b                    (XXL reasoning)
-L6: glm-5, kimi-k2-thinking, glm-4.7                       (frontier)
- → gemini → codex → claude-code                           (subscription fallback)
+OLLAMA_CHAIN format: level0_models|level1_models|level2_models|...
+  - Pipe (|) separates escalation levels
+  - Comma (,) separates models within a level (round-robin)
+  - Levels escalate L0 → L1 → ... → LN automatically on failure
+  - After all Ollama levels: → subscription fallback (gemini, codex, claude-code)
 ```
 
 - Supports multiple API keys: `OLLAMA_API_KEYS=key1,key2,key3` (round-robin for concurrency)
 - Circuit breakers open on failures, parse "reset after Ns" from 429 errors
-- Health checks cached (2min TTL) to avoid burning API quota
+- Health checks cached (configurable TTL, default 2min) to avoid burning API quota
 - Auto-escalation: when all providers at a level fail, moves to next level automatically
+- Background health monitor: 30s interval, auto-checks circuit-open providers, resets on recovery
+- Configurable timeouts: all providers via env vars (OLLAMA_TIMEOUT_SECONDS, VERTEX_TIMEOUT_SECONDS)
+- Circuit-open fallback: TargetProvider requests fall back to escalation chain when circuit is open
 
 ### Profiles
 - `personal`: Ollama Cloud (primary) + optional subscription providers (gemini, codex, claude-code)
@@ -124,14 +128,33 @@ Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-impl
 - Pipeline detected automatically from matched skills
 - Quality gates: verification phases require minimum tool calls (can't rubber-stamp)
 - Sub-agent reviews: code-review and acceptance-test phases spawn FRESH agents with no shared context
-- Provider escalation triggered by pipeline phases (Escalate flag), not by separate mechanisms
+- **Escalate: true** on code-review and acceptance-test — forces bigger model than implementer
+- **Dynamic turn caps**: 15 turns (spec <5KB), 25 turns (5-20KB), 40 turns (spec >20KB)
+- **Divergence detection**: force-advance when review findings increase 2+ consecutive cycles
+- **Regression tracking**: warns when compilation errors increase, prevents destructive churn
+- **Budget exhaustion escalation**: sub-agents trigger parent provider escalation when budget exceeded
 - Max 3 fail-back cycles before accepting result
 
+### Spec Compliance System (`internal/agent/spec_constraints.go`)
+- **ExtractSpecConstraints()** — regex-based parsing at session startup (no LLM calls)
+  - Package structure: Java dot-separated, Go/Python/Rust single-word, path-based
+  - IN SCOPE / OUT OF SCOPE: bullet lists and inline comma-separated
+  - Prohibited patterns: `no service layer`, `do not`, `must not`
+  - Directory layout: tree-like structures
+- **Constraint injection** — formatted block in ALL agent prompts (overrides skill patterns)
+- **Threshold**: 100 bytes minimum spec length for extraction
+- **Tool-layer protection** — spec file is read-only, cannot be overwritten by file_write/file_edit
+- **Verify gate** — checks package name + prohibited patterns in output files
+- **Review prompts** — %SPEC% placeholder injects original spec into review/acceptance phases
+- **Plan phase** — mandatory spec perception step before planning
+- **Spec-deferral headers** — 13 skills include override notice: spec wins over skill patterns
+
 ### Skills System (`internal/orchestration/skilldata/`)
-- 38+ embedded skills parsed from YAML frontmatter in `.md` files via `go:embed`
+- **54 embedded skills** parsed from YAML frontmatter in `.md` files via `go:embed`
 - `ParseSkillsFromFS()` — no hardcoded Go registry, everything from frontmatter
 - Adding a skill: create `.md` file with frontmatter (name, triggers, role, phase, mcp_tools), rebuild
 - Skills injected into system prompt when triggers match the user's message
+- Language-field routing: skills with `language:` field matched by detected project language first
 
 ## Dev Commands
 
@@ -341,7 +364,7 @@ This audit is how we iteratively improve synapserouter. Each project run teaches
 ### The Router IS the Escalation
 - Synapserouter's entire purpose is cost-optimized escalation across providers
 - The agent uses the router's existing provider chain — no parallel escalation systems
-- Provider chain: 7-level Ollama Cloud → optional subscription fallback (gemini, codex, claude-code)
+- Provider chain: multi-level Ollama Cloud (via OLLAMA_CHAIN) → optional subscription fallback (gemini, codex, claude-code)
 - Agent sends `model: "auto"` and lets the router pick
 - Ollama Cloud is a paid subscription ($20/mo Pro)
 

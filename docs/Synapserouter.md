@@ -60,7 +60,7 @@ A Go-based LLM proxy router and autonomous coding agent. It routes requests acro
 
 The router sends each request to the cheapest provider level first. If that level fails (model too small, rate-limited, circuit breaker open), it escalates to the next level automatically. No user intervention required.
 
-**Level 0** (fast/cheap) -> **Level 1** (small coders) -> **Level 2** (medium) -> **Level 3** (large coders) -> **Level 4** (XL general) -> **Level 5** (XXL reasoning) -> **Level 6** (frontier) -> subscription fallback
+Levels are configured dynamically via `OLLAMA_CHAIN` env var (pipe-separated levels, comma-separated models within a level). Escalation proceeds L0 → L1 → ... → LN → subscription fallback.
 
 See [[Provider Chain]] for the full model list and escalation logic.
 
@@ -74,7 +74,7 @@ The agent has 7 built-in tools (bash, file read/write/edit, grep, glob, git) plu
 
 ### Skills
 
-52 embedded skills across 20+ languages, parsed from YAML frontmatter in Markdown files. When a user's message matches a skill's triggers, that skill's domain expertise is injected into the system prompt automatically. No configuration needed.
+54 embedded skills across 20+ languages, parsed from YAML frontmatter in Markdown files. When a user's message matches a skill's triggers, that skill's domain expertise is injected into the system prompt automatically. No configuration needed. 13 high-risk skills include spec-deferral headers so project specs override skill defaults.
 
 Adding a skill means dropping one `.md` file into `internal/orchestration/skilldata/` and rebuilding. See [[Skill System]].
 
@@ -90,13 +90,18 @@ See [[Memory System]] and [[Hallucination Detection]].
 
 | Component | Status |
 |---|---|
-| Provider routing (Ollama Cloud 7-level chain) | Working — 21 models, all passing |
+| Provider routing (Ollama Cloud dynamic chain) | Working |
 | Circuit breakers + health caching | Working |
 | Agent tool execution (bash, file ops, tests) | Working |
 | Agent pipeline (plan/implement/verify/review) | Working |
 | Memory system (zero-loss, unified recall) | Implemented |
 | Hallucination detection (fact tracking) | Implemented |
-| Skills (52 embedded, auto-matching) | Working |
+| Skills (54 embedded, auto-matching) | Working |
+| Spec compliance (constraint extraction, tool protection) | Working |
+| Dynamic turn caps (15/25/40 based on spec complexity) | Working |
+| Review divergence detection | Working |
+| Regression tracking (compilation errors) | Working |
+| Background health monitor (auto-recovery) | Working |
 | Sub-agent delegation + handoffs | Working |
 | Worktree isolation | Working |
 | MCP server mode | Working |
@@ -130,12 +135,12 @@ See [[Requirements]] for detailed acceptance criteria per phase.
 
 ### Architecture
 - [[Architecture Overview]] — Components, data flow, system design
-- [[Provider Chain]] — 7-level escalation, circuit breakers, health caching
+- [[Provider Chain]] — Dynamic escalation chain, circuit breakers, health caching
 
 ### Features
 - [[Memory System]] — SQLite persistence, recall tool, conversation compaction
 - [[Hallucination Detection]] — Fact tracking, contradiction detection, auto-correction
-- [[Skill System]] — 52 embedded skills, trigger matching, YAML frontmatter
+- [[Skill System]] — 54 embedded skills, trigger matching, YAML frontmatter
 - [[Known Gaps]] — What's broken, what's missing, what needs work
 
 ### Guides

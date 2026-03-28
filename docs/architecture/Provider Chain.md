@@ -19,7 +19,7 @@ SynapseRouter supports two profiles, controlled by the `ACTIVE_PROFILE` environm
 
 ### Personal Profile (default)
 
-The personal profile uses **Ollama Cloud** as the primary provider with a 7-level escalation chain, plus optional subscription providers as fallback.
+The personal profile uses **Ollama Cloud** as the primary provider with a dynamic multi-level escalation chain (configured via `OLLAMA_CHAIN` env var), plus optional subscription providers as fallback.
 
 Provider initialization order:
 

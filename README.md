@@ -19,9 +19,12 @@ Current boundary:
 
 ## What It Does
 
-- Routes requests across Claude Code, Codex/OpenAI, Gemini, Qwen, Ollama Cloud, and NanoGPT
+- Routes requests across Ollama Cloud (6-level escalation, 19+ models), subscription providers (Gemini, Codex, Claude Code), and Vertex AI
 - Exposes `/v1/chat/completions`, `/v1/responses`, `/v1/models`, and provider-specific compatibility routes
-- Stores usage and orchestration state in SQLite
+- Stores usage, tool outputs, and orchestration state in SQLite
+- 54 embedded skills with trigger-based matching and language-field routing
+- Spec compliance system with constraint extraction and tool-layer protection
+- 6-phase pipeline: Plan → Implement → Self-Check → Code Review → Acceptance Test → Deploy
 - Provides orchestration APIs for tasks, swarms, agents, workflows, load balancing, work stealing, and workflow execution state
 
 ## Quick Start

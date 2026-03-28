@@ -35,7 +35,7 @@ graph TD
 
 ```mermaid
 graph TD
-    Router[Router] --> Chain[Ollama Cloud<br>7 levels, 19+ models]
+    Router[Router] --> Chain[Ollama Cloud<br>dynamic chain]
     Router --> Subs[Subscription Fallback]
 
     subgraph Subscriptions
@@ -75,18 +75,16 @@ graph LR
 
 ## Provider Chain (Personal Profile)
 
-7-level Ollama Cloud escalation with 19+ models:
+Dynamic Ollama Cloud escalation chain configured via `OLLAMA_CHAIN` env var:
 
-| Level | Models | Purpose |
-|-------|--------|---------|
-| L0 | ministral-3:14b, rnj-1:8b, nemotron-3-nano:30b | Fast/cheap |
-| L1 | gpt-oss:20b, devstral-small-2:24b, qwen3.5 | Small coders |
-| L2 | nemotron-3-super, gpt-oss:120b, minimax-m2.7 | Medium |
-| L3 | devstral-2:123b, qwen3-coder:480b | Large coders |
-| L4 | qwen3.5:397b, kimi-k2.5, minimax-m2.5 | XL general |
-| L5 | deepseek-v3.1:671b, cogito-2.1:671b | XXL reasoning |
-| L6 | glm-5, kimi-k2-thinking, glm-4.7 | Frontier |
-| Fallback | gemini > codex > claude-code | Subscription |
+```
+OLLAMA_CHAIN format: level0_models|level1_models|level2_models|...
+  - Pipe (|) separates escalation levels
+  - Comma (,) separates models within a level (round-robin)
+  - After all Ollama levels: subscription fallback (gemini > codex > claude-code)
+```
+
+The number of levels, models per level, and model selection are fully user-configurable.
 
 ## Memory System (Unlimited Context)
 
@@ -141,14 +139,18 @@ See [[Agent Pipeline]] for full details.
 plan > implement > self-check > code-review > acceptance-test
 ```
 
-- Quality gates at each phase transition
+- Quality gates at each phase transition (minimum tool calls required)
 - Sub-agents for review (fresh context, independent evaluation)
-- Review cycle stability detection (stops after 2 unchanged cycles)
+- Escalate: true on code-review and acceptance-test (forces bigger model)
+- Dynamic turn caps: 15 (simple spec), 25 (medium), 40 (complex >20KB)
+- Review cycle divergence detection (force-advance when findings increase)
+- Regression tracking (compilation error count monitoring)
+- Budget exhaustion escalation (sub-agents trigger parent provider change)
 - Provider escalation between phases
 
 ## Skill System
 
-52 embedded skills parsed from YAML frontmatter in `.md` files via `go:embed`.
+54 embedded skills parsed from YAML frontmatter in `.md` files via `go:embed`. 13 high-risk skills include spec-deferral headers.
 
 | Category | Skills |
 |----------|--------|

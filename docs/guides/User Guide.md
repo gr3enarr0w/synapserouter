@@ -184,7 +184,7 @@ Synroute supports two profiles that control which providers are available.
 
 ### Personal
 
-- **Primary:** Ollama Cloud with 7-level escalation chain (19+ models from fast/cheap to frontier)
+- **Primary:** Ollama Cloud with dynamic multi-level escalation chain (configured via OLLAMA_CHAIN env var)
 - **Fallback:** Optional subscription providers (Gemini, Codex, Claude Code)
 - Supports multiple API keys for concurrent requests
 - Disable subscriptions with `SUBSCRIPTIONS_DISABLED=true`
@@ -209,7 +209,7 @@ After switching, restart the server for changes to take effect.
 
 ## Skill Auto-Dispatch
 
-When you submit a task, synroute automatically matches it against 38+ built-in skills based on keyword triggers. Skills are chained, not selected one at a time.
+When you submit a task, synroute automatically matches it against 54 built-in skills based on keyword triggers and language detection. Skills are chained, not selected one at a time.
 
 ### How It Works
 
