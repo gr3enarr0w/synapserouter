@@ -493,7 +493,28 @@ func (r *Runner) sendToProvider(ctx context.Context, prompt string, config EvalR
 	sessionID := fmt.Sprintf("eval-%d", time.Now().UnixNano())
 
 	if config.Mode == "routing" || config.Provider == "" {
-		// Routing mode: let the router decide
+		// Routing mode: use chain providers (not planners).
+		// Planners are dedicated to the agent's plan phase — eval exercises
+		// should route through the coding chain for fair benchmarking.
+		chainProvider := r.firstChainProvider()
+		if chainProvider != "" {
+			resp, err := r.proxyRouter.ChatCompletionForProvider(ctx, req, sessionID, chainProvider, false)
+			if err != nil {
+				// Chain provider failed — fall back to full routing
+				log.Printf("[Eval] chain provider %s failed: %v, falling back to router", chainProvider, err)
+				resp, err = r.proxyRouter.ChatCompletion(ctx, req, sessionID)
+				if err != nil {
+					return providers.ChatResponse{}, "", nil, err
+				}
+			}
+			provider := chainProvider
+			if resp.XProxyMetadata != nil && resp.XProxyMetadata.Provider != "" {
+				provider = resp.XProxyMetadata.Provider
+			}
+			return resp, provider, nil, nil
+		}
+
+		// No chain providers found — fall back to router
 		resp, err := r.proxyRouter.ChatCompletion(ctx, req, sessionID)
 		if err != nil {
 			return providers.ChatResponse{}, "", nil, err
@@ -515,6 +536,25 @@ func (r *Runner) sendToProvider(ctx context.Context, prompt string, config EvalR
 		provider = resp.XProxyMetadata.Provider
 	}
 	return resp, provider, nil, nil
+}
+
+// firstChainProvider returns the name of the first chain provider (not a planner).
+// Chain providers are named "ollama-chain-N", planners are "ollama-planner-N".
+func (r *Runner) firstChainProvider() string {
+	for _, p := range r.providerList {
+		name := p.Name()
+		if strings.HasPrefix(name, "ollama-chain-") {
+			return name
+		}
+	}
+	// No chain providers — try any non-planner provider
+	for _, p := range r.providerList {
+		name := p.Name()
+		if !strings.Contains(name, "planner") {
+			return name
+		}
+	}
+	return ""
 }
 
 func buildPrompt(ex Exercise) string {
