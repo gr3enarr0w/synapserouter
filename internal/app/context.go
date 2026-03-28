@@ -254,10 +254,18 @@ func initializeWorkProviders() []providers.Provider {
 // buildEscalationChain creates the escalation chain from OLLAMA_CHAIN env var.
 // Format: model1,model2|model3,model4|model5 — pipe separates levels, comma separates models within a level.
 // Each level's models rotate (cross-review). Each level = 2 stages of work.
+//
+// Tier classification (three-tier model routing):
+//   - If OLLAMA_CHAIN_TIERS is set (pipe-separated: "cheap|cheap|mid|frontier"),
+//     each level gets the corresponding tier.
+//   - Otherwise, auto-classifies: bottom third = cheap, middle = mid, top third = frontier.
+//   - Subscription providers always get frontier tier.
 func buildEscalationChain(profile string) []agent.EscalationLevel {
 	var chain []agent.EscalationLevel
 
 	chainLevels := ParseOllamaChain(os.Getenv("OLLAMA_CHAIN"))
+	explicitTiers := parseChainTiers(os.Getenv("OLLAMA_CHAIN_TIERS"))
+
 	modelIdx := 0
 	for _, models := range chainLevels {
 		var levelProviders []string
@@ -270,23 +278,95 @@ func buildEscalationChain(profile string) []agent.EscalationLevel {
 		}
 	}
 
+	// Apply tier classification to Ollama chain levels
+	ollamaLevelCount := len(chain)
+	if len(explicitTiers) > 0 {
+		// Explicit tiers from OLLAMA_CHAIN_TIERS
+		for i := range chain {
+			if i < len(explicitTiers) {
+				chain[i].Tier = explicitTiers[i]
+			}
+		}
+	} else {
+		// Auto-classify: bottom third = cheap, middle = mid, top third = frontier
+		autoClassifyTiers(chain, ollamaLevelCount)
+	}
+
 	// Subscription providers — disable with SUBSCRIPTIONS_DISABLED=true
+	// Subscriptions always get frontier tier (they're the strongest/most expensive).
 	if profile != "work" && os.Getenv("SUBSCRIPTIONS_DISABLED") != "true" {
 		sps, err := subscriptions.LoadRuntimeProviders(context.Background())
 		if err == nil {
 			for _, p := range sps {
-				chain = append(chain, agent.EscalationLevel{Providers: []string{p.Name()}})
+				chain = append(chain, agent.EscalationLevel{
+					Providers: []string{p.Name()},
+					Tier:      agent.TierFrontier,
+				})
 			}
 		}
 	}
 
 	var names []string
 	for _, level := range chain {
-		names = append(names, fmt.Sprintf("%v", level.Providers))
+		tier := string(level.Tier)
+		if tier == "" {
+			tier = "auto"
+		}
+		names = append(names, fmt.Sprintf("%v(%s)", level.Providers, tier))
 	}
 	log.Printf("[Agent] escalation chain (%d levels): %s", len(chain), strings.Join(names, " → "))
 
 	return chain
+}
+
+// parseChainTiers parses OLLAMA_CHAIN_TIERS env var.
+// Format: "cheap|cheap|mid|frontier" — pipe-separated tier names matching OLLAMA_CHAIN levels.
+func parseChainTiers(tiersStr string) []agent.ModelTier {
+	if tiersStr == "" {
+		return nil
+	}
+	var tiers []agent.ModelTier
+	for _, t := range strings.Split(tiersStr, "|") {
+		t = strings.TrimSpace(strings.ToLower(t))
+		switch t {
+		case "cheap":
+			tiers = append(tiers, agent.TierCheap)
+		case "mid":
+			tiers = append(tiers, agent.TierMid)
+		case "frontier":
+			tiers = append(tiers, agent.TierFrontier)
+		default:
+			// Unknown tier — default to mid
+			tiers = append(tiers, agent.TierMid)
+		}
+	}
+	return tiers
+}
+
+// autoClassifyTiers assigns tiers based on position in the chain.
+// Bottom third = cheap, middle third = mid, top third = frontier.
+// For chains with 1-2 levels, all levels get frontier (no point splitting).
+func autoClassifyTiers(chain []agent.EscalationLevel, ollamaCount int) {
+	if ollamaCount <= 2 {
+		for i := 0; i < ollamaCount && i < len(chain); i++ {
+			chain[i].Tier = agent.TierFrontier
+		}
+		return
+	}
+
+	cheapEnd := ollamaCount / 3
+	midEnd := (2 * ollamaCount) / 3
+
+	for i := 0; i < ollamaCount && i < len(chain); i++ {
+		switch {
+		case i < cheapEnd:
+			chain[i].Tier = agent.TierCheap
+		case i < midEnd:
+			chain[i].Tier = agent.TierMid
+		default:
+			chain[i].Tier = agent.TierFrontier
+		}
+	}
 }
 
 // ParseOllamaChain parses the OLLAMA_CHAIN env var format.

@@ -61,11 +61,23 @@ type Config struct {
 	SessionID string  // Resume a specific session ID
 }
 
+// ModelTier classifies escalation levels by capability cost.
+// Three tiers: cheap models for coding work, mid for self-check,
+// frontier for conversation/planning/review.
+type ModelTier string
+
+const (
+	TierCheap    ModelTier = "cheap"    // bottom third of chain — fast/cheap coding models
+	TierMid      ModelTier = "mid"      // middle third — balanced capability
+	TierFrontier ModelTier = "frontier" // top third + subscriptions — strongest models
+)
+
 // EscalationLevel represents one level in the escalation chain.
 // Each level has one or more provider names. Currently most levels have 1,
 // but the architecture supports X parallel models per level.
 type EscalationLevel struct {
 	Providers []string
+	Tier      ModelTier // auto-classified from chain position or OLLAMA_CHAIN_TIERS
 }
 
 // DefaultConfig returns an agent config with sensible defaults.
