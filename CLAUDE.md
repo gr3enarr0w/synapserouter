@@ -14,8 +14,13 @@ Go-based LLM proxy router and coding agent that distributes requests across Olla
 - `internal/orchestration/skills.go` — Skill registry with trigger-based matching
 - `internal/orchestration/dispatch.go` — Auto-dispatch engine: goal → skill chain → task steps
 - `compat_handlers.go` — OpenAI-compatible `/v1/chat/completions` and `/v1/responses` endpoints
-- `internal/tools/` — Agent tool interface, registry, and implementations (bash, file_read/write/edit, grep, glob, git, permissions)
+- `internal/tools/` — Agent tool interface, registry, and implementations (bash, file_read/write/edit, grep, glob, git, web_search, web_fetch, permissions)
 - `internal/agent/` — Agent loop, REPL, sub-agents, handoffs, guardrails, state persistence, tracing, streaming
+- `internal/agent/coderenderer.go` — Code mode TUI: status bar, scroll regions, event-driven display
+- `internal/agent/coderepl.go` — Code mode REPL with raw terminal keyboard shortcuts
+- `internal/agent/terminal.go` — Raw terminal mode utilities via golang.org/x/term
+- `internal/agent/attachment.go` — File attachment parsing (@file references)
+- `commands_code.go` — `synroute code` command (default entry point)
 - `internal/environment/` — Project environment detection, version resolution, best practices engine
 - `internal/worktree/` — Git worktree isolation with TTL, size caps, background cleanup
 - `internal/mcpserver/` — MCP server: expose tools over HTTP (tools/list, tools/call)
@@ -167,8 +172,9 @@ go vet ./...                               # Lint
 ## CLI Commands
 
 ```bash
-./synroute                                 # Start server (default)
-./synroute serve                           # Start server (explicit)
+./synroute                                 # Start code mode TUI (default)
+./synroute code                            # Start code mode TUI (explicit)
+./synroute serve                           # Start HTTP server
 ./synroute test                            # Smoke test all providers
 ./synroute test --provider ollama-chain-1   # Test single provider
 ./synroute test --json                     # JSON output
