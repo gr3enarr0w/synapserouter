@@ -292,7 +292,6 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		log.Printf("[Agent] attached %d file(s) to message", len(attachments))
 	}
 
-
 	a.conversation.Add(providers.Message{
 		Role:    "user",
 		Content: userMessage,
@@ -335,7 +334,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 
 		// Adaptive pipeline: assess task complexity and reduce pipeline for trivial/simple tasks.
 		// Must run before intent detection and phase initialization since it may nil out the pipeline.
-		complexity := AssessComplexity(userMessage, a.config.SpecFilePath != "", a.originalRequest)
+		complexity := AssessComplexity(userMessage, a.config.SpecFilePath != "")
 		a.pipeline = AdaptPipeline(a.pipeline, complexity)
 		log.Printf("[Agent] adaptive pipeline: complexity=%s", complexity)
 
@@ -456,11 +455,14 @@ func (a *Agent) SessionID() string {
 // commands (/plan, /review, /check, /fix). The message is composed with
 // phase-appropriate context.
 func (a *Agent) RunPhase(ctx context.Context, phaseName string, userMessage string) (string, error) {
-	if a.pipeline == nil {
-		return "", fmt.Errorf("no pipeline configured")
+	// If no pipeline exists (e.g., trivial task skipped it), create a default
+	// pipeline so we can extract the requested phase from it.
+	sourcePipeline := a.pipeline
+	if sourcePipeline == nil {
+		sourcePipeline = &DefaultPipeline
 	}
 
-	idx := findPhaseByName(a.pipeline, phaseName)
+	idx := findPhaseByName(sourcePipeline, phaseName)
 	if idx < 0 {
 		return "", fmt.Errorf("unknown phase: %s", phaseName)
 	}

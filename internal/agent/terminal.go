@@ -17,12 +17,16 @@ type KeyEvent struct {
 
 // Terminal wraps raw terminal mode utilities.
 type Terminal struct {
-	fd int
+	fd   int
+	file *os.File // reused for ReadKey to avoid fd leaks
 }
 
 // NewTerminal creates a terminal wrapper for the given file descriptor.
 func NewTerminal(fd int) *Terminal {
-	return &Terminal{fd: fd}
+	return &Terminal{
+		fd:   fd,
+		file: os.NewFile(uintptr(fd), "/dev/stdin"),
+	}
 }
 
 // MakeRaw puts the terminal into raw mode and returns a restore function.
@@ -44,7 +48,7 @@ func (t *Terminal) GetSize() (width, height int, err error) {
 // Decodes Ctrl-key combinations.
 func (t *Terminal) ReadKey() (KeyEvent, error) {
 	buf := make([]byte, 8)
-	n, err := os.NewFile(uintptr(t.fd), "/dev/stdin").Read(buf)
+	n, err := t.file.Read(buf)
 	if err != nil {
 		return KeyEvent{}, err
 	}

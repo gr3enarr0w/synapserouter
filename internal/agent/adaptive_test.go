@@ -6,11 +6,10 @@ import (
 
 func TestAssessComplexity(t *testing.T) {
 	tests := []struct {
-		name        string
-		message     string
-		hasSpec     bool
-		specContent string
-		want        TaskComplexity
+		name    string
+		message string
+		hasSpec bool
+		want    TaskComplexity
 	}{
 		{
 			name:    "trivial question",
@@ -58,11 +57,10 @@ func TestAssessComplexity(t *testing.T) {
 			want:    ComplexityFull,
 		},
 		{
-			name:        "full with spec file",
-			message:     "do the thing",
-			hasSpec:     true,
-			specContent: string(make([]byte, 200)), // >100 bytes
-			want:        ComplexityFull,
+			name:    "full with spec file",
+			message: "do the thing",
+			hasSpec: true,
+			want:    ComplexityFull,
 		},
 		{
 			name:    "full create from scratch",
@@ -83,7 +81,7 @@ func TestAssessComplexity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := AssessComplexity(tt.message, tt.hasSpec, tt.specContent)
+			got := AssessComplexity(tt.message, tt.hasSpec)
 			if got != tt.want {
 				t.Errorf("AssessComplexity(%q) = %s, want %s", tt.message, got, tt.want)
 			}

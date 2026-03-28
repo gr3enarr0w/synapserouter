@@ -63,12 +63,12 @@ var fullKeywords = []string{
 
 // AssessComplexity evaluates the task message and context to determine
 // how complex the task is, which drives pipeline adaptation.
-func AssessComplexity(message string, hasSpecFile bool, specContent string) TaskComplexity {
+func AssessComplexity(message string, hasSpecFile bool) TaskComplexity {
 	lower := strings.ToLower(message)
 	msgLen := len(message)
 
-	// Spec file present with substantial content always gets full pipeline.
-	if hasSpecFile && len(specContent) > 100 {
+	// Spec file present always gets full pipeline.
+	if hasSpecFile {
 		return ComplexityFull
 	}
 

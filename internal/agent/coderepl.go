@@ -26,6 +26,7 @@ type CodeREPL struct {
 	restore func()
 	rawMode bool
 	mu      sync.Mutex
+	ctx     context.Context // parent context for phase commands
 }
 
 // NewCodeREPL creates a code mode REPL.
@@ -41,6 +42,8 @@ func NewCodeREPL(agent *Agent, renderer *CodeRenderer, terminal *Terminal) *Code
 
 // Run starts the code mode REPL. Blocks until exit.
 func (cr *CodeREPL) Run(ctx context.Context) error {
+	cr.ctx = ctx
+
 	// Initialize the screen layout
 	cr.renderer.Init()
 
@@ -362,7 +365,7 @@ func (cr *CodeREPL) handleCommand(input string) bool {
 		cr.renderer.mu.Lock()
 		cr.renderer.writeContent(cr.renderer.color("\033[35m", "  running plan phase..."))
 		cr.renderer.mu.Unlock()
-		response, err := cr.agent.RunPhase(context.Background(), "plan", msg)
+		response, err := cr.agent.RunPhase(cr.ctx, "plan", msg)
 		if err != nil {
 			cr.renderer.Error(err.Error())
 		} else if response != "" {
@@ -377,7 +380,7 @@ func (cr *CodeREPL) handleCommand(input string) bool {
 		cr.renderer.mu.Lock()
 		cr.renderer.writeContent(cr.renderer.color("\033[35m", "  running code review..."))
 		cr.renderer.mu.Unlock()
-		response, err := cr.agent.RunPhase(context.Background(), "code-review", msg)
+		response, err := cr.agent.RunPhase(cr.ctx, "code-review", msg)
 		if err != nil {
 			cr.renderer.Error(err.Error())
 		} else if response != "" {
@@ -392,7 +395,7 @@ func (cr *CodeREPL) handleCommand(input string) bool {
 		cr.renderer.mu.Lock()
 		cr.renderer.writeContent(cr.renderer.color("\033[35m", "  running self-check..."))
 		cr.renderer.mu.Unlock()
-		response, err := cr.agent.RunPhase(context.Background(), "self-check", msg)
+		response, err := cr.agent.RunPhase(cr.ctx, "self-check", msg)
 		if err != nil {
 			cr.renderer.Error(err.Error())
 		} else if response != "" {
@@ -409,7 +412,7 @@ func (cr *CodeREPL) handleCommand(input string) bool {
 			cr.renderer.mu.Lock()
 			cr.renderer.writeContent(cr.renderer.color("\033[35m", "  running targeted fix..."))
 			cr.renderer.mu.Unlock()
-			response, err := cr.agent.RunPhase(context.Background(), "implement", msg)
+			response, err := cr.agent.RunPhase(cr.ctx, "implement", msg)
 			if err != nil {
 				cr.renderer.Error(err.Error())
 			} else if response != "" {
