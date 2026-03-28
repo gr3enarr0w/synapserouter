@@ -64,6 +64,8 @@ func main() {
 			cmdEval(os.Args[2:])
 		case "chat":
 			cmdChat(os.Args[2:])
+		case "code":
+			cmdCode(os.Args[2:])
 		case "mcp-serve":
 			cmdMCPServe(os.Args[2:])
 		case "version":
@@ -76,7 +78,8 @@ func main() {
 		}
 		return
 	}
-	startServer()
+	// No command given — default to code mode (interactive TUI)
+	cmdCode(nil)
 }
 
 func startServer() {

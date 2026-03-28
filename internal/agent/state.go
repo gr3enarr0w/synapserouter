@@ -94,7 +94,7 @@ func LoadLatestState(db *sql.DB) (*SessionState, error) {
 }
 
 // RestoreAgent creates an agent from a persisted session state.
-func RestoreAgent(executor ChatExecutor, registry *tools.Registry, renderer *Renderer, state *SessionState) *Agent {
+func RestoreAgent(executor ChatExecutor, registry *tools.Registry, renderer TerminalRenderer, state *SessionState) *Agent {
 	config := Config{
 		Model:        state.Model,
 		SystemPrompt: state.SystemPrompt,

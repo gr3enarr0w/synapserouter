@@ -42,7 +42,7 @@ type Agent struct {
 	registry     *tools.Registry
 	permissions  *tools.PermissionChecker
 	conversation *Conversation
-	renderer     *Renderer
+	renderer     TerminalRenderer
 	config       Config
 	sessionID    string
 
@@ -117,7 +117,7 @@ type Agent struct {
 }
 
 // New creates an agent with the given executor, tool registry, and config.
-func New(executor ChatExecutor, registry *tools.Registry, renderer *Renderer, config Config) *Agent {
+func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRenderer, config Config) *Agent {
 	return &Agent{
 		executor:          executor,
 		registry:          registry,
@@ -1981,6 +1981,12 @@ func (a *Agent) setMinProviderLevel(level int) {
 		"to_level":   a.providerIdx,
 		"providers":  fmt.Sprintf("%v", providers),
 	})
+}
+
+// ForceEscalate is the public API for manually triggering provider escalation
+// (e.g., from the code mode ^E shortcut).
+func (a *Agent) ForceEscalate() bool {
+	return a.escalateProvider()
 }
 
 // escalateProvider moves to the next provider level. Returns true if escalated.

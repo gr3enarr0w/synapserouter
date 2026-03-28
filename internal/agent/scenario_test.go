@@ -428,8 +428,8 @@ func TestScenarioToolDefsPassedToLLM(t *testing.T) {
 	}
 
 	toolDefs := exec.calls[0].Tools
-	if len(toolDefs) != 7 {
-		t.Errorf("expected 7 tool definitions, got %d", len(toolDefs))
+	if len(toolDefs) != 9 {
+		t.Errorf("expected 9 tool definitions, got %d", len(toolDefs))
 	}
 }
 

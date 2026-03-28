@@ -18,13 +18,13 @@ import (
 // REPL implements an interactive read-eval-print loop for the agent.
 type REPL struct {
 	agent    *Agent
-	renderer *Renderer
+	renderer TerminalRenderer
 	in       io.Reader
 	out      io.Writer
 }
 
 // NewREPL creates a new REPL for the given agent.
-func NewREPL(agent *Agent, renderer *Renderer) *REPL {
+func NewREPL(agent *Agent, renderer TerminalRenderer) *REPL {
 	return &REPL{
 		agent:    agent,
 		renderer: renderer,

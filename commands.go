@@ -42,8 +42,9 @@ Usage:
   synroute [command]
 
 Commands:
-  serve       Start the HTTP server (default if no command given)
+  serve       Start the HTTP server
   chat        Interactive agent REPL or one-shot message
+  code        Pipeline-aware code mode with TUI (default if no command given)
   mcp-serve   Start standalone MCP tool server
   test        Smoke test providers
   eval        Multi-language eval framework
