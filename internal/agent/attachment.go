@@ -47,6 +47,15 @@ func ParseAttachments(message string, workDir string) (string, []Attachment) {
 	seen := make(map[string]bool)
 	var attachments []Attachment
 
+	// Handle @dir/ references — expand directories into individual file attachments
+	message, dirAttachments := expandDirReferences(message, workDir)
+	for _, att := range dirAttachments {
+		if !seen[att.Path] {
+			seen[att.Path] = true
+			attachments = append(attachments, att)
+		}
+	}
+
 	// Find @references
 	cleanedMessage := message
 	atMatches := atReferencePattern.FindAllStringSubmatchIndex(message, -1)
@@ -134,7 +143,7 @@ func readAttachment(absPath string) Attachment {
 	}
 
 	if info.IsDir() {
-		att.Error = "path is a directory, not a file"
+		att.Error = "path is a directory — use @dir/ to attach all files"
 		return att
 	}
 
@@ -271,6 +280,66 @@ func isBinaryContent(content []byte) bool {
 
 	// If more than 10% non-printable, treat as binary
 	return float64(nonPrintable)/float64(checkLen) > 0.1
+}
+
+// maxDirFiles limits how many files are attached from a single @dir/ reference.
+const maxDirFiles = 50
+
+// dirRefPattern matches @dir/ references (paths ending with / followed by whitespace or EOL).
+// Must not match @~/file.go or @./path/file.ext — only paths where the last char before
+// whitespace/EOL is a slash.
+var dirRefPattern = regexp.MustCompile(`(?:^|\s)@((?:[~.]?/)?[^\s@]*/)(?:\s|$)`)
+
+// expandDirReferences finds @dir/ references, expands them to individual files,
+// and returns the cleaned message plus the file attachments.
+func expandDirReferences(message string, workDir string) (string, []Attachment) {
+	matches := dirRefPattern.FindAllStringSubmatchIndex(message, -1)
+	if len(matches) == 0 {
+		return message, nil
+	}
+
+	var attachments []Attachment
+	cleaned := message
+
+	for i := len(matches) - 1; i >= 0; i-- {
+		match := matches[i]
+		dirRef := message[match[2]:match[3]]
+		absDir := resolveAttachmentPath(dirRef, workDir)
+
+		info, err := os.Stat(absDir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+
+		// Walk directory and collect files (non-recursive, skip hidden)
+		entries, err := os.ReadDir(absDir)
+		if err != nil {
+			continue
+		}
+
+		count := 0
+		for _, entry := range entries {
+			if count >= maxDirFiles {
+				break
+			}
+			if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+				continue
+			}
+			filePath := filepath.Join(absDir, entry.Name())
+			attachments = append(attachments, readAttachment(filePath))
+			count++
+		}
+
+		// Remove the @dir/ reference from the message
+		fullMatch := message[match[0]:match[1]]
+		atIdx := strings.Index(fullMatch, "@")
+		if atIdx >= 0 {
+			removeStart := match[0] + atIdx
+			cleaned = cleaned[:removeStart] + cleaned[match[3]:]
+		}
+	}
+
+	return cleaned, attachments
 }
 
 // FormatAttachments formats a list of attachments for injection into the conversation.
