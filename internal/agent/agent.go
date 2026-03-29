@@ -70,6 +70,7 @@ type Agent struct {
 	// Pipeline state
 	originalRequest    string // first user message
 	toolCallCount      int    // total tool calls this session
+	wroteCodeFiles     bool   // true if file_write or file_edit was used on code files
 	pipeline           *Pipeline
 	pipelinePhase      int    // current phase index
 	phaseToolCalls     int    // tool calls in current phase
@@ -669,6 +670,20 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 					continue
 				}
 			}
+			// Final compile verification: if the agent wrote code files,
+			// check that the project still builds before declaring success.
+			if a.toolCallCount > 0 && a.hasWrittenCode() {
+				passed, results := a.RunVerificationGate("deploy")
+				if !passed {
+					failMsg := FormatVerifyFailures(results)
+					log.Printf("[Agent] compile verification failed at completion — sending back for fixes")
+					a.conversation.Add(providers.Message{
+						Role:    "user",
+						Content: failMsg + "\n\nFix these issues before completing.",
+					})
+					continue // re-enter loop to fix
+				}
+			}
 			return msg.Content, nil
 		}
 
@@ -735,6 +750,11 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 	for _, toolCall := range toolCalls {
 		callID := extractToolCallID(toolCall)
 		name, args := extractToolCallNameArgs(toolCall)
+
+		// Track code file writes for compile verification
+		if (name == "file_write" || name == "file_edit") && isCodeFilePath(args) {
+			a.wroteCodeFiles = true
+		}
 
 		if a.renderer != nil {
 			a.renderer.ToolCall(name, args)
@@ -2371,6 +2391,34 @@ func (a *Agent) shouldContinue(content string) bool {
 	}
 	for _, signal := range continuationSignals {
 		if strings.Contains(lower, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasWrittenCode returns true if the agent has written code files in this session.
+func (a *Agent) hasWrittenCode() bool {
+	return a.wroteCodeFiles
+}
+
+// isCodeFilePath checks if a tool call's args reference a code file.
+func isCodeFilePath(args map[string]interface{}) bool {
+	path, _ := args["path"].(string)
+	if path == "" {
+		path, _ = args["file_path"].(string)
+	}
+	if path == "" {
+		return false
+	}
+	codeExtensions := []string{
+		".go", ".py", ".js", ".ts", ".java", ".rs", ".rb",
+		".cpp", ".c", ".cs", ".swift", ".kt", ".scala",
+		".sh", ".bash", ".sql",
+	}
+	lower := strings.ToLower(path)
+	for _, ext := range codeExtensions {
+		if strings.HasSuffix(lower, ext) {
 			return true
 		}
 	}
