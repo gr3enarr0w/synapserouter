@@ -71,6 +71,7 @@ type Agent struct {
 	originalRequest    string // first user message
 	toolCallCount      int    // total tool calls this session
 	wroteCodeFiles     bool   // true if file_write or file_edit was used on code files
+	completionVerifyDone bool // true after completion verification ran (prevents retry loops)
 	pipeline           *Pipeline
 	pipelinePhase      int    // current phase index
 	phaseToolCalls     int    // tool calls in current phase
@@ -672,16 +673,19 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			}
 			// Final compile verification: if the agent wrote code files,
 			// check that the project still builds before declaring success.
-			if a.toolCallCount > 0 && a.hasWrittenCode() {
+			// Only runs once to prevent destructive retry loops, and only when
+			// the written files match the project's detected language.
+			if a.toolCallCount > 0 && a.hasWrittenCode() && !a.completionVerifyDone {
+				a.completionVerifyDone = true
 				passed, results := a.RunVerificationGate("deploy")
 				if !passed {
 					failMsg := FormatVerifyFailures(results)
-					log.Printf("[Agent] compile verification failed at completion — sending back for fixes")
+					log.Printf("[Agent] compile verification failed at completion — sending back for fixes (one attempt)")
 					a.conversation.Add(providers.Message{
 						Role:    "user",
-						Content: failMsg + "\n\nFix these issues before completing.",
+						Content: failMsg + "\n\nFix these issues before completing. Only fix files you created or modified — do NOT modify other project files.",
 					})
-					continue // re-enter loop to fix
+					continue // re-enter loop for one fix attempt
 				}
 			}
 			return msg.Content, nil
