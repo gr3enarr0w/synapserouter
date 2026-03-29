@@ -3,6 +3,7 @@ package agent
 import (
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -223,6 +224,94 @@ func (a *Agent) ApplyIntentEntry(entry IntentEntry) {
 		// Store the adjustment so buildMessages can append it
 		a.intentPromptAdjustment = adjustment
 	}
+}
+
+// GitContext holds detected git state for the working directory.
+type GitContext struct {
+	IsRepo         bool     // working directory is a git repo
+	Branch         string   // current branch name
+	HasUncommitted bool     // uncommitted changes exist
+	RecentCommits  []string // last 3 commit messages
+	DiffSummary    string   // summary of changed files
+}
+
+// DetectGitContext inspects the working directory's git state.
+// Returns nil if not a git repo. Does not fail — returns best-effort data.
+func DetectGitContext(workDir string) *GitContext {
+	// Check if git repo
+	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+	cmd.Dir = workDir
+	if out, err := cmd.Output(); err != nil || strings.TrimSpace(string(out)) != "true" {
+		return nil
+	}
+
+	ctx := &GitContext{IsRepo: true}
+
+	// Get branch
+	cmd = exec.Command("git", "branch", "--show-current")
+	cmd.Dir = workDir
+	if out, err := cmd.Output(); err == nil {
+		ctx.Branch = strings.TrimSpace(string(out))
+	}
+
+	// Check for uncommitted changes
+	cmd = exec.Command("git", "status", "--porcelain")
+	cmd.Dir = workDir
+	if out, err := cmd.Output(); err == nil {
+		ctx.HasUncommitted = len(strings.TrimSpace(string(out))) > 0
+	}
+
+	// Get recent commits
+	cmd = exec.Command("git", "log", "--oneline", "-3", "--no-decorate")
+	cmd.Dir = workDir
+	if out, err := cmd.Output(); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if line != "" {
+				ctx.RecentCommits = append(ctx.RecentCommits, line)
+			}
+		}
+	}
+
+	// Diff summary (staged + unstaged)
+	cmd = exec.Command("git", "diff", "--stat", "HEAD")
+	cmd.Dir = workDir
+	if out, err := cmd.Output(); err == nil {
+		summary := strings.TrimSpace(string(out))
+		if len(summary) > 500 {
+			summary = summary[:500] + "..."
+		}
+		ctx.DiffSummary = summary
+	}
+
+	return ctx
+}
+
+// FormatGitContext returns a formatted string for system prompt injection.
+func FormatGitContext(gc *GitContext) string {
+	if gc == nil || !gc.IsRepo {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("\n## Git Context\n")
+	if gc.Branch != "" {
+		b.WriteString("Branch: " + gc.Branch + "\n")
+	}
+	if gc.HasUncommitted {
+		b.WriteString("Status: uncommitted changes present\n")
+	} else {
+		b.WriteString("Status: clean working tree\n")
+	}
+	if len(gc.RecentCommits) > 0 {
+		b.WriteString("Recent commits:\n")
+		for _, c := range gc.RecentCommits {
+			b.WriteString("  " + c + "\n")
+		}
+	}
+	if gc.DiffSummary != "" {
+		b.WriteString("Changes:\n" + gc.DiffSummary + "\n")
+	}
+	return b.String()
 }
 
 // phasePromptForEntry returns the appropriate phase prompt when entering
