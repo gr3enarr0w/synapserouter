@@ -286,6 +286,45 @@ func (c *MCPClient) Disconnect(serverName string) error {
 	return nil
 }
 
+// ConnectAll connects to all registered servers with retry.
+// Failures are logged but don't stop other servers from connecting.
+// maxRetries controls how many times to retry each failed server (0 = no retry).
+func (c *MCPClient) ConnectAll(ctx context.Context, maxRetries int) {
+	c.mu.RLock()
+	names := make([]string, 0, len(c.servers))
+	for name := range c.servers {
+		names = append(names, name)
+	}
+	c.mu.RUnlock()
+
+	for _, name := range names {
+		var lastErr error
+		for attempt := 0; attempt <= maxRetries; attempt++ {
+			if err := c.Connect(ctx, name); err != nil {
+				lastErr = err
+				log.Printf("[MCP] Connect to %s failed (attempt %d/%d): %v", name, attempt+1, maxRetries+1, err)
+				continue
+			}
+			lastErr = nil
+			break
+		}
+		if lastErr != nil {
+			log.Printf("[MCP] Giving up on %s after %d attempts", name, maxRetries+1)
+		}
+	}
+}
+
+// ServerNames returns the names of all registered servers.
+func (c *MCPClient) ServerNames() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	names := make([]string, 0, len(c.servers))
+	for name := range c.servers {
+		names = append(names, name)
+	}
+	return names
+}
+
 // HealthCheck checks connectivity to all registered servers
 func (c *MCPClient) HealthCheck(ctx context.Context) map[string]bool {
 	c.mu.RLock()

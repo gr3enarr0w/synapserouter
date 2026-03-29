@@ -12,6 +12,7 @@ import (
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/agent"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/app"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/environment"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/worktree"
 )
@@ -97,6 +98,18 @@ func cmdCode(args []string) {
 	config.Providers = providerNames
 	config.AutoOrchestrate = true
 	config.Verbosity = *verbose
+
+	// MCP client — load config and connect to registered servers
+	mcpCfg, err := mcp.LoadConfig(mcp.DefaultConfigPath())
+	if err != nil {
+		log.Printf("Warning: failed to load MCP config: %v", err)
+	} else if len(mcpCfg.Servers) > 0 {
+		mcpClient := mcp.NewClientFromConfig(mcpCfg)
+		mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		mcpClient.ConnectAll(mcpCtx, 2)
+		mcpCancel()
+		config.MCPClient = mcpClient
+	}
 
 	// Event bus
 	bus := agent.NewEventBus()

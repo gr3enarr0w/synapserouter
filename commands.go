@@ -17,6 +17,7 @@ import (
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/agent"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/app"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/environment"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcpserver"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/worktree"
@@ -45,6 +46,7 @@ Commands:
   serve       Start the HTTP server
   chat        Interactive agent REPL or one-shot message
   code        Pipeline-aware code mode with TUI (default if no command given)
+  mcp         Manage MCP server registrations (add, list, remove, status)
   mcp-serve   Start standalone MCP tool server
   test        Smoke test providers
   eval        Multi-language eval framework
@@ -420,6 +422,18 @@ func cmdChat(args []string) {
 	}
 	config.Providers = providerNames
 	config.AutoOrchestrate = true
+
+	// MCP client — load config and connect to registered servers
+	mcpCfg, mcpErr := mcp.LoadConfig(mcp.DefaultConfigPath())
+	if mcpErr != nil {
+		log.Printf("Warning: failed to load MCP config: %v", mcpErr)
+	} else if len(mcpCfg.Servers) > 0 {
+		mcpClient := mcp.NewClientFromConfig(mcpCfg)
+		mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		mcpClient.ConnectAll(mcpCtx, 2)
+		mcpCancel()
+		config.MCPClient = mcpClient
+	}
 
 	// Event bus for real-time observability
 	bus := agent.NewEventBus()

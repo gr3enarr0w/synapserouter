@@ -66,6 +66,8 @@ func main() {
 			cmdChat(os.Args[2:])
 		case "code":
 			cmdCode(os.Args[2:])
+		case "mcp":
+			cmdMCP(os.Args[2:])
 		case "mcp-serve":
 			cmdMCPServe(os.Args[2:])
 		case "version":
