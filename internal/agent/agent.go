@@ -1319,58 +1319,12 @@ func forceToolsMessage(phaseName string) providers.Message {
 	}
 }
 
-// writeSynrouteMD writes the agent's project state to synroute.md in the working
-// directory. This is the agent's equivalent of CLAUDE.md — created and updated
-// each run so subsequent runs know what was built, what passed, and what to fix.
+// writeSynrouteMD writes the agent's project state to synroute.md with YAML
+// frontmatter for cross-session continuity. Uses the continuity system so
+// the format is consistent between in-session writes and session-end saves.
 func (a *Agent) writeSynrouteMD() {
-	if a.config.WorkDir == "" {
-		return
-	}
-
-	path := filepath.Join(a.config.WorkDir, "synroute.md")
-
-	var buf strings.Builder
-	buf.WriteString("# synroute.md — Project State\n\n")
-
-	// Status
-	buf.WriteString("## Status\n")
-	if a.pipeline != nil {
-		phaseName := "complete"
-		phaseNum := a.pipelinePhase + 1
-		total := len(a.pipeline.Phases)
-		if a.pipelinePhase < total {
-			phaseName = a.pipeline.Phases[a.pipelinePhase].Name
-		}
-		buf.WriteString(fmt.Sprintf("- Pipeline: %s\n", a.pipeline.Name))
-		buf.WriteString(fmt.Sprintf("- Phase: %s (%d/%d)\n", phaseName, phaseNum, total))
-	}
-	if a.config.ProjectLanguage != "" {
-		buf.WriteString(fmt.Sprintf("- Language: %s\n", a.config.ProjectLanguage))
-	}
-	buf.WriteString(fmt.Sprintf("- Last run: %s\n", time.Now().Format("2006-01-02 15:04")))
-	buf.WriteString(fmt.Sprintf("- Tool calls: %d\n", a.toolCallCount))
-	buf.WriteString(fmt.Sprintf("- Provider level: %d\n", a.providerIdx))
-	buf.WriteString(fmt.Sprintf("- Escalation cycles: %d\n\n", a.pipelineCycles))
-
-	// Acceptance criteria (if generated during plan/EDA phase)
-	if a.acceptanceCriteria != "" {
-		buf.WriteString("## Acceptance Criteria\n")
-		buf.WriteString(a.acceptanceCriteria)
-		buf.WriteString("\n\n")
-	}
-
-	// Original request (truncated for readability)
-	if a.originalRequest != "" {
-		req := a.originalRequest
-		if len(req) > 500 {
-			req = req[:500] + "\n...(truncated)"
-		}
-		buf.WriteString("## Original Request\n")
-		buf.WriteString(req)
-		buf.WriteString("\n")
-	}
-
-	if err := os.WriteFile(path, []byte(buf.String()), 0644); err != nil {
+	c := BuildContinuityFromAgent(a)
+	if err := writeSynrouteMD(c); err != nil {
 		log.Printf("[Agent] warning: could not write synroute.md: %v", err)
 	}
 }
