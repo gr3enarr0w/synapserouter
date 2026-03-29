@@ -25,6 +25,7 @@ const (
 	EventCrossReview                     // Cross-review step
 	EventBudgetUpdate                    // Budget state change
 	EventError                           // Error occurred
+	EventTokenStream                     // Streamed token chunk from LLM
 )
 
 var eventTypeNames = map[EventType]string{
@@ -44,6 +45,7 @@ var eventTypeNames = map[EventType]string{
 	EventCrossReview:      "cross_review",
 	EventBudgetUpdate:     "budget_update",
 	EventError:            "error",
+	EventTokenStream:      "token_stream",
 }
 
 // String returns the event type name.
