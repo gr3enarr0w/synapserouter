@@ -27,8 +27,13 @@ type ProjectContinuity struct {
 }
 
 // SaveContinuity persists project continuity state to DB and synroute.md.
+// Skips synroute.md write for system directories (/, /tmp, etc.).
 func SaveContinuity(db *sql.DB, c *ProjectContinuity) error {
 	if db == nil {
+		return nil
+	}
+	// Guard against writing synroute.md in system/root directories
+	if c.ProjectDir == "" || c.ProjectDir == "/" || c.ProjectDir == "/tmp" {
 		return nil
 	}
 
@@ -84,7 +89,9 @@ func LoadContinuity(db *sql.DB, projectDir string) (*ProjectContinuity, error) {
 		return nil, fmt.Errorf("load continuity: %w", err)
 	}
 
-	json.Unmarshal([]byte(manifestJSON), &c.FileManifest)
+	if err := json.Unmarshal([]byte(manifestJSON), &c.FileManifest); err != nil {
+		log.Printf("[Continuity] warning: invalid file_manifest JSON: %v", err)
+	}
 	return &c, nil
 }
 

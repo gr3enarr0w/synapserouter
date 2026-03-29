@@ -299,6 +299,9 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		Content: userMessage,
 	})
 
+	// Reset per-message state
+	a.completionVerifyDone = false
+
 	// Capture original request for domain-specific review
 	if a.originalRequest == "" {
 		a.originalRequest = userMessage
