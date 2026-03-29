@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -46,6 +47,9 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 
 	// Initialize the screen layout
 	cr.renderer.Init()
+
+	// Detect spec/synroute.md in working directory
+	cr.detectProjectFiles()
 
 	// Set up resize handler
 	stopResize := OnResize(func(w, h int) {
@@ -262,6 +266,133 @@ func (cr *CodeREPL) exitRawMode() {
 		cr.restore()
 	}
 	cr.rawMode = false
+}
+
+// detectProjectFiles checks the working directory for spec and synroute.md files
+// on startup and displays what was found. If neither exists, prompts the user to
+// create one.
+func (cr *CodeREPL) detectProjectFiles() {
+	workDir := cr.agent.config.WorkDir
+
+	var specFiles []string
+	var synrouteMD string
+
+	// Check for spec files: spec.md, SPEC.md, *.spec.md
+	candidates := []string{"spec.md", "SPEC.md"}
+	for _, name := range candidates {
+		path := filepath.Join(workDir, name)
+		if _, err := os.Stat(path); err == nil {
+			specFiles = append(specFiles, name)
+		}
+	}
+
+	// Glob for *.spec.md
+	if matches, err := filepath.Glob(filepath.Join(workDir, "*.spec.md")); err == nil {
+		for _, m := range matches {
+			base := filepath.Base(m)
+			// Avoid duplicates with the explicit candidates
+			if base != "spec.md" && base != "SPEC.md" {
+				specFiles = append(specFiles, base)
+			}
+		}
+	}
+
+	// Check for synroute.md
+	synroutePath := filepath.Join(workDir, "synroute.md")
+	if _, err := os.Stat(synroutePath); err == nil {
+		synrouteMD = "synroute.md"
+	}
+
+	cr.renderer.mu.Lock()
+	defer cr.renderer.mu.Unlock()
+
+	if len(specFiles) > 0 || synrouteMD != "" {
+		// Display what was found
+		if len(specFiles) > 0 {
+			cr.renderer.writeContent(cr.renderer.color("\033[32m", fmt.Sprintf("  spec found: %s", strings.Join(specFiles, ", "))))
+		}
+		if synrouteMD != "" {
+			cr.renderer.writeContent(cr.renderer.color("\033[32m", fmt.Sprintf("  project state: %s", synrouteMD)))
+		}
+		cr.renderer.writeContent("")
+		return
+	}
+
+	// Neither found — prompt the user
+	cr.renderer.writeContent(cr.renderer.color("\033[33m", "  No spec or synroute.md found in this directory."))
+	cr.renderer.writeContent(cr.renderer.color("\033[33m", "  Create one? [spec/synroute/no]: "))
+
+	// Read user choice (cooked mode, scanner on stdin)
+	cr.renderer.mu.Unlock() // unlock before blocking on input
+	scanner := bufio.NewScanner(cr.in)
+	scanner.Buffer(make([]byte, 0, 1024), 4096)
+	var choice string
+	if scanner.Scan() {
+		choice = strings.TrimSpace(strings.ToLower(scanner.Text()))
+	}
+	cr.renderer.mu.Lock() // re-lock for deferred unlock
+
+	switch choice {
+	case "spec":
+		cr.createSpecFile(workDir)
+	case "synroute":
+		cr.createSynrouteFile(workDir)
+	default:
+		// "no", empty, or anything else — skip
+	}
+}
+
+// createSpecFile generates a minimal spec.md in the given directory.
+func (cr *CodeREPL) createSpecFile(workDir string) {
+	projectName := filepath.Base(workDir)
+	content := fmt.Sprintf(`# %s — Specification
+
+## Overview
+<!-- Describe what this project does -->
+
+## Requirements
+<!-- List the requirements -->
+
+## Acceptance Criteria
+<!-- Define how to verify the implementation is correct -->
+`, projectName)
+
+	path := filepath.Join(workDir, "spec.md")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		cr.renderer.writeContent(cr.renderer.color("\033[31m", fmt.Sprintf("  error creating spec.md: %v", err)))
+		return
+	}
+	cr.renderer.writeContent(cr.renderer.color("\033[32m", fmt.Sprintf("  created %s — edit it to define your project spec", path)))
+	cr.renderer.writeContent("")
+}
+
+// createSynrouteFile generates a minimal synroute.md project state file.
+func (cr *CodeREPL) createSynrouteFile(workDir string) {
+	projectName := filepath.Base(workDir)
+	now := time.Now().Format("2006-01-02 15:04")
+	content := fmt.Sprintf(`# synroute.md — Project State
+
+## Project
+- Name: %s
+- Created: %s
+
+## Status
+- Last run: %s
+- Tool calls: 0
+- Provider level: 0
+- Escalation cycles: 0
+
+## Original Request
+
+`, projectName, now, now)
+
+	path := filepath.Join(workDir, "synroute.md")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		cr.renderer.writeContent(cr.renderer.color("\033[31m", fmt.Sprintf("  error creating synroute.md: %v", err)))
+		return
+	}
+	cr.renderer.writeContent(cr.renderer.color("\033[32m", fmt.Sprintf("  created %s — project state will be tracked here", path)))
+	cr.renderer.writeContent("")
 }
 
 func (cr *CodeREPL) handleCommand(input string) bool {
