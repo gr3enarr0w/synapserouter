@@ -257,13 +257,16 @@ func cmdCode(args []string) {
 
 	bus.Close()
 
-	// Auto-save session
+	// Auto-save session and project continuity
 	if config.DB != nil {
 		if err := ag.SaveState(config.DB); err != nil {
-			// Can't write to stderr in code mode (TUI owns it)
 			log.Printf("Warning: failed to save session: %v", err)
 		} else {
 			log.Printf("Session saved: %s", ag.SessionID())
+		}
+		continuity := agent.BuildContinuityFromAgent(ag)
+		if err := agent.SaveContinuity(config.DB, continuity); err != nil {
+			log.Printf("Warning: failed to save continuity: %v", err)
 		}
 	}
 }
