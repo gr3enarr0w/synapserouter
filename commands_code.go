@@ -170,8 +170,12 @@ func cmdCode(args []string) {
 		width, height = 80, 24
 	}
 
+	// Detect language
+	detectedLang := config.ProjectLanguage
+
 	// Create code renderer
-	codeRenderer := agent.NewCodeRenderer(os.Stdout, width, height, projectName)
+	codeRenderer := agent.NewCodeRenderer(os.Stdout, width, height, projectName, *model, detectedLang)
+	codeRenderer.SetVersion(version)
 	codeRenderer.SetVerbosity(*verbose)
 
 	// Subscribe renderer to event bus

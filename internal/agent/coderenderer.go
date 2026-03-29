@@ -29,34 +29,47 @@ type CodeRenderer struct {
 	height int
 
 	// State tracked from events
-	project   string
-	phase     string
-	phaseIdx  int
+	project    string
+	language   string
+	phase      string
+	phaseIdx   int
 	phaseCount int
-	model     string
-	provider  string
-	startTime time.Time
-	verbosity int
+	model      string
+	provider   string
+	startTime  time.Time
+	verbosity  int
 
 	// Recent tool calls for ^T display
 	recentTools []ToolEntry
 	maxTools    int
+
+	// Version for display
+	version string
 
 	// Styling
 	noColor bool
 }
 
 // NewCodeRenderer creates a renderer for code mode.
-func NewCodeRenderer(out io.Writer, width, height int, project string) *CodeRenderer {
+func NewCodeRenderer(out io.Writer, width, height int, project, model, language string) *CodeRenderer {
 	return &CodeRenderer{
 		out:       out,
 		width:     width,
 		height:    height,
 		project:   project,
+		model:     model,
+		language:  language,
 		startTime: time.Now(),
 		maxTools:  50,
 		noColor:   os.Getenv("NO_COLOR") != "",
 	}
+}
+
+// SetVersion sets the version string for the launch banner.
+func (cr *CodeRenderer) SetVersion(v string) {
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+	cr.version = v
 }
 
 // ANSI helpers — return empty strings when NO_COLOR is set.
@@ -155,107 +168,37 @@ func (cr *CodeRenderer) Prompt() {
 
 // --- Screen layout ---
 
-// Init sets up the screen: clears, draws status bar and footer, sets scroll region.
+// Init prints a launch banner with project context.
 func (cr *CodeRenderer) Init() {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
-	cr.drawScreen()
+
+	fmt.Fprintln(cr.out)
+	fmt.Fprintln(cr.out, cr.color("\033[1;36m", "  synroute")+" "+cr.color("\033[2m", cr.version)+" "+cr.color("\033[2m", "— code mode"))
+	if cr.project != "" {
+		projectLine := "  Project: " + cr.color("\033[1;37m", cr.project)
+		if cr.language != "" {
+			projectLine += " " + cr.color("\033[2m", "("+cr.language+")")
+		}
+		fmt.Fprintln(cr.out, projectLine)
+	}
+	if cr.model != "" && cr.model != "auto" {
+		fmt.Fprintln(cr.out, "  Model: "+cr.color("\033[34m", cr.model))
+	}
+	fmt.Fprintln(cr.out)
+	fmt.Fprintln(cr.out, cr.color("\033[2m", "  Commands: /plan /review /check /fix /help"))
+	fmt.Fprintln(cr.out)
 }
 
-// Resize updates dimensions and redraws chrome.
+// Resize is a no-op without scroll regions.
 func (cr *CodeRenderer) Resize(width, height int) {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 	cr.width = width
 	cr.height = height
-	cr.drawScreen()
 }
 
-func (cr *CodeRenderer) drawScreen() {
-	// Clear screen
-	fmt.Fprint(cr.out, "\033[2J")
-	// Draw status bar at row 1
-	cr.drawStatusBarLocked()
-	// Draw footer at last row
-	cr.drawFooterLocked()
-	// Set scroll region (rows 2 to h-1)
-	if cr.height > 3 {
-		fmt.Fprintf(cr.out, "\033[2;%dr", cr.height-1)
-	}
-	// Position cursor in scroll region
-	fmt.Fprint(cr.out, "\033[2;1H")
-}
-
-func (cr *CodeRenderer) drawStatusBarLocked() {
-	// Save cursor, move to row 1
-	fmt.Fprint(cr.out, "\033[s\033[1;1H\033[K")
-
-	elapsed := time.Since(cr.startTime).Truncate(time.Second)
-
-	// Build status components
-	left := cr.color("\033[1;37m", " synroute")
-	left += cr.color("\033[2m", " -- ")
-	left += cr.color("\033[1;36m", "code")
-
-	if cr.project != "" {
-		left += cr.color("\033[2m", " -- ")
-		left += cr.color("\033[1;37m", cr.project)
-	}
-
-	if cr.phase != "" {
-		left += cr.color("\033[2m", " -- ")
-		phaseText := cr.phase
-		if cr.phaseCount > 0 {
-			phaseText = fmt.Sprintf("phase %d/%d: %s", cr.phaseIdx+1, cr.phaseCount, cr.phase)
-		}
-		left += cr.color("\033[1;33m", phaseText)
-	}
-
-	if cr.model != "" {
-		left += cr.color("\033[2m", " -- ")
-		left += cr.color("\033[34m", cr.model)
-	}
-
-	right := cr.color("\033[2m", fmt.Sprintf("%s ", elapsed))
-
-	// Write with inverse background
-	bar := left
-	// Pad to width (approximate — ANSI codes make exact calculation hard)
-	// Just write left and right portions
-	fmt.Fprint(cr.out, cr.ansi("\033[7m")) // inverse
-	fmt.Fprint(cr.out, bar)
-	// Fill gap — estimate visible length
-	visibleLeft := cr.visibleLen(left)
-	visibleRight := cr.visibleLen(right)
-	gap := cr.width - visibleLeft - visibleRight
-	if gap > 0 {
-		fmt.Fprint(cr.out, strings.Repeat(" ", gap))
-	}
-	fmt.Fprint(cr.out, right)
-	fmt.Fprint(cr.out, cr.ansi("\033[0m"))
-
-	// Restore cursor
-	fmt.Fprint(cr.out, "\033[u")
-}
-
-func (cr *CodeRenderer) drawFooterLocked() {
-	// Save cursor, move to last row
-	fmt.Fprintf(cr.out, "\033[s\033[%d;1H\033[K", cr.height)
-
-	shortcuts := " ^P pipeline  ^T tools  ^L logs  ^E escalate  ^/ help"
-	fmt.Fprint(cr.out, cr.ansi("\033[7m")) // inverse
-	fmt.Fprint(cr.out, shortcuts)
-	gap := cr.width - len(shortcuts)
-	if gap > 0 {
-		fmt.Fprint(cr.out, strings.Repeat(" ", gap))
-	}
-	fmt.Fprint(cr.out, cr.ansi("\033[0m"))
-
-	// Restore cursor
-	fmt.Fprint(cr.out, "\033[u")
-}
-
-// writeContent writes a line into the scroll region.
+// writeContent writes a line of output.
 func (cr *CodeRenderer) writeContent(line string) {
 	// Truncate to terminal width if needed
 	if cr.visibleLen(line) > cr.width-1 {
@@ -269,22 +212,8 @@ func (cr *CodeRenderer) writeContent(line string) {
 // Run consumes events from the EventBus and updates the display.
 // Call in a goroutine.
 func (cr *CodeRenderer) Run(events <-chan AgentEvent) {
-	// Start elapsed time ticker
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case event, ok := <-events:
-			if !ok {
-				return
-			}
-			cr.handleEvent(event)
-		case <-ticker.C:
-			cr.mu.Lock()
-			cr.drawStatusBarLocked()
-			cr.mu.Unlock()
-		}
+	for event := range events {
+		cr.handleEvent(event)
 	}
 }
 
@@ -303,7 +232,7 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 			cr.writeContent(cr.color("\033[2m", fmt.Sprintf("  skills: %s", strings.Join(skills, ", "))))
 		}
 		cr.writeContent("")
-		cr.drawStatusBarLocked()
+
 
 	case EventPhaseStart:
 		cr.phase = str(e.Data, "phase_name")
@@ -311,7 +240,7 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		cr.writeContent("")
 		cr.writeContent(cr.color("\033[1;33m", fmt.Sprintf("  -- phase %d/%d: %s --", cr.phaseIdx+1, cr.phaseCount, cr.phase)))
 		cr.writeContent("")
-		cr.drawStatusBarLocked()
+
 
 	case EventPhaseComplete:
 		passed, _ := e.Data["passed"].(bool)
@@ -326,7 +255,7 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 	case EventLLMStart:
 		cr.model = str(e.Data, "model")
 		cr.provider = e.Provider
-		cr.drawStatusBarLocked()
+
 		if cr.verbosity >= VerbosityNormal {
 			provider := e.Provider
 			if provider == "" {
@@ -337,7 +266,7 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 
 	case EventLLMComplete:
 		cr.model = ""
-		cr.drawStatusBarLocked()
+
 		if cr.verbosity >= VerbosityNormal {
 			duration := str(e.Data, "duration")
 			tokens := intVal(e.Data, "tokens_used")
@@ -383,7 +312,7 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		cr.writeContent("")
 		cr.writeContent(cr.color("\033[1;33m", fmt.Sprintf("  escalate level %d -> %d | %s", from, to, providers)))
 		cr.writeContent("")
-		cr.drawStatusBarLocked()
+
 
 	case EventSubAgentSpawn:
 		role := str(e.Data, "role")
@@ -481,20 +410,13 @@ func (cr *CodeRenderer) ShowRecentTools() {
 	cr.writeContent("")
 }
 
-// ShowHelp prints keyboard shortcut help.
+// ShowHelp prints command help.
 func (cr *CodeRenderer) ShowHelp() {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 	cr.writeContent("")
-	cr.writeContent(cr.color("\033[1;37m", "  Keyboard Shortcuts"))
+	cr.writeContent(cr.color("\033[1;37m", "  Commands"))
 	cr.writeContent(cr.color("\033[2m", "  "+strings.Repeat("-", 40)))
-	cr.writeContent("  ^P    Show pipeline status")
-	cr.writeContent("  ^T    Show recent tool calls")
-	cr.writeContent("  ^L    Cycle log verbosity (compact/normal/verbose)")
-	cr.writeContent("  ^E    Force provider escalation")
-	cr.writeContent("  ^/    Show this help")
-	cr.writeContent("  ^C    Cancel current request")
-	cr.writeContent("  ^D    Exit")
 	cr.writeContent("")
 	cr.writeContent("  Phase commands:")
 	cr.writeContent("  /plan [msg]     Generate plan + acceptance criteria")
@@ -502,7 +424,17 @@ func (cr *CodeRenderer) ShowHelp() {
 	cr.writeContent("  /check [msg]    Build, test, verify against criteria")
 	cr.writeContent("  /fix <msg>      Targeted fix (requires description)")
 	cr.writeContent("")
-	cr.writeContent("  Other: /exit /clear /model /tools /history /agents /budget")
+	cr.writeContent("  Session:")
+	cr.writeContent("  /model [name]   Show or set model")
+	cr.writeContent("  /tools          List available tools")
+	cr.writeContent("  /history        Show conversation history")
+	cr.writeContent("  /agents         Show sub-agents")
+	cr.writeContent("  /budget         Show budget usage")
+	cr.writeContent("  /clear          Clear conversation")
+	cr.writeContent("  /exit           Exit code mode")
+	cr.writeContent("")
+	cr.writeContent("  Ctrl-C  Cancel current request")
+	cr.writeContent("  Ctrl-D  Exit")
 	cr.writeContent("")
 }
 
@@ -561,13 +493,7 @@ func (cr *CodeRenderer) truncate(s string, maxVisible int) string {
 	return s
 }
 
-// Cleanup restores the terminal scroll region to full screen.
+// Cleanup is a no-op — no scroll regions to restore.
 func (cr *CodeRenderer) Cleanup() {
-	cr.mu.Lock()
-	defer cr.mu.Unlock()
-	// Reset scroll region to full screen
-	fmt.Fprintf(cr.out, "\033[1;%dr", cr.height)
-	// Move cursor to last line
-	fmt.Fprintf(cr.out, "\033[%d;1H", cr.height)
-	fmt.Fprintln(cr.out)
+	// Intentionally empty: readline handles terminal restore.
 }

@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -12,32 +11,35 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/ergochat/readline"
 )
 
-// CodeREPL implements the code mode interactive loop with raw terminal input
-// for keyboard shortcuts and pipeline-aware display.
+// CodeREPL implements the code mode interactive loop with readline-based input
+// for history, tab completion, and proper terminal handling.
 type CodeREPL struct {
 	agent    *Agent
 	renderer *CodeRenderer
-	terminal *Terminal
-	in       io.Reader
 	out      io.Writer
-
-	// Raw mode state
-	restore func()
-	rawMode bool
-	mu      sync.Mutex
-	ctx     context.Context // parent context for phase commands
+	ctx      context.Context // parent context for phase commands
 }
 
-// NewCodeREPL creates a code mode REPL.
-func NewCodeREPL(agent *Agent, renderer *CodeRenderer, terminal *Terminal) *CodeREPL {
+// NewCodeREPL creates a code mode REPL. The Terminal parameter is accepted
+// for API compatibility but no longer used — readline handles terminal mode.
+func NewCodeREPL(agent *Agent, renderer *CodeRenderer, _ *Terminal) *CodeREPL {
 	return &CodeREPL{
 		agent:    agent,
 		renderer: renderer,
-		terminal: terminal,
-		in:       os.Stdin,
 		out:      os.Stdout,
+	}
+}
+
+// slashCommands returns the list of available slash commands for tab completion.
+func slashCommands() []string {
+	return []string{
+		"/plan", "/review", "/check", "/fix", "/help",
+		"/exit", "/clear", "/model", "/tools", "/history",
+		"/agents", "/budget",
 	}
 }
 
@@ -45,7 +47,7 @@ func NewCodeREPL(agent *Agent, renderer *CodeRenderer, terminal *Terminal) *Code
 func (cr *CodeREPL) Run(ctx context.Context) error {
 	cr.ctx = ctx
 
-	// Initialize the screen layout
+	// Initialize the screen layout (prints launch banner)
 	cr.renderer.Init()
 
 	// Detect spec/synroute.md in working directory
@@ -97,24 +99,44 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		}
 	}()
 
-	// Use cooked mode (normal terminal input) with TUI chrome.
-	// Raw mode keyboard shortcuts are available via slash commands instead:
-	// /plan, /review, /check, /fix, /help
-	scanner := bufio.NewScanner(cr.in)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	// Set up history file
+	home, _ := os.UserHomeDir()
+	historyDir := filepath.Join(home, ".synroute")
+	os.MkdirAll(historyDir, 0755)
+	historyFile := filepath.Join(historyDir, "history")
+
+	// Build tab completer for slash commands
+	cmds := slashCommands()
+	completionItems := make([]*readline.PrefixCompleter, len(cmds))
+	for i, cmd := range cmds {
+		completionItems[i] = readline.PcItem(cmd)
+	}
+
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:          "\033[32msynroute>\033[0m ",
+		HistoryFile:     historyFile,
+		AutoComplete:    readline.NewPrefixCompleter(completionItems...),
+		InterruptPrompt: "^C",
+		EOFPrompt:       "bye",
+	})
+	if err != nil {
+		return fmt.Errorf("readline init: %w", err)
+	}
+	defer rl.Close()
 
 	for {
-		// Show prompt
-		cr.renderer.Prompt()
-
-		// Read input in normal cooked mode
-		if !scanner.Scan() {
-			// EOF (Ctrl-D)
-			cr.renderer.Cleanup()
+		line, err := rl.Readline()
+		if err != nil {
+			// readline.ErrInterrupt = Ctrl-C, io.EOF = Ctrl-D
+			if err == readline.ErrInterrupt {
+				continue
+			}
+			// EOF — exit
 			fmt.Fprintln(cr.out, "bye")
 			return nil
 		}
-		input := strings.TrimSpace(scanner.Text())
+
+		input := strings.TrimSpace(line)
 		if input == "" {
 			continue
 		}
@@ -122,7 +144,6 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		// Handle REPL commands
 		if strings.HasPrefix(input, "/") {
 			if done := cr.handleCommand(input); done {
-				cr.renderer.Cleanup()
 				return nil
 			}
 			continue
@@ -152,125 +173,8 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 	}
 }
 
-// readInput handles raw mode key reading. Returns the user's input line,
-// whether to exit, and any error.
-func (cr *CodeREPL) readInput() (string, bool, error) {
-	for {
-		if !cr.rawMode {
-			// Fallback to line reading
-			return cr.readLine()
-		}
-
-		key, err := cr.terminal.ReadKey()
-		if err != nil {
-			return "", false, err
-		}
-
-		if key.Ctrl {
-			switch key.Rune {
-			case 'd': // Ctrl-D — exit
-				return "", true, nil
-			case 'c': // Ctrl-C — handled by signal handler
-				continue
-			case 'p': // Ctrl-P — pipeline status
-				fmt.Fprintln(cr.out) // newline after prompt
-				cr.renderer.ShowPipeline()
-				cr.renderer.Prompt()
-				continue
-			case 't': // Ctrl-T — recent tools
-				fmt.Fprintln(cr.out)
-				cr.renderer.ShowRecentTools()
-				cr.renderer.Prompt()
-				continue
-			case 'l': // Ctrl-L — cycle verbosity
-				fmt.Fprintln(cr.out)
-				cr.renderer.mu.Lock()
-				newLevel := (cr.renderer.verbosity + 1) % 3
-				cr.renderer.mu.Unlock()
-				cr.renderer.SetVerbosity(newLevel)
-				cr.renderer.Prompt()
-				continue
-			case 'e': // Ctrl-E — force escalation
-				fmt.Fprintln(cr.out)
-				cr.renderer.mu.Lock()
-				cr.renderer.writeContent(cr.renderer.color("\033[33m", "  forcing provider escalation..."))
-				cr.renderer.mu.Unlock()
-				cr.agent.ForceEscalate()
-				cr.renderer.Prompt()
-				continue
-			case '/': // Ctrl-/ — help
-				fmt.Fprintln(cr.out)
-				cr.renderer.ShowHelp()
-				cr.renderer.Prompt()
-				continue
-			}
-		}
-
-		// User started typing — switch to cooked mode for full line input
-		cr.exitRawMode()
-
-		// Echo the first character, then read the rest of the line
-		fmt.Fprintf(cr.out, "%c", key.Rune)
-		line, eof := cr.readRestOfLine()
-		if eof {
-			return "", true, nil
-		}
-
-		fullInput := string(key.Rune) + line
-		return strings.TrimSpace(fullInput), false, nil
-	}
-}
-
-// readLine reads a full line in cooked mode.
-func (cr *CodeREPL) readLine() (string, bool, error) {
-	scanner := bufio.NewScanner(cr.in)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	if !scanner.Scan() {
-		return "", true, nil
-	}
-	return strings.TrimSpace(scanner.Text()), false, nil
-}
-
-// readRestOfLine reads the remainder of a line after the first character.
-func (cr *CodeREPL) readRestOfLine() (string, bool) {
-	scanner := bufio.NewScanner(cr.in)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	if !scanner.Scan() {
-		return "", true
-	}
-	return scanner.Text(), false
-}
-
-func (cr *CodeREPL) enterRawMode() {
-	cr.mu.Lock()
-	defer cr.mu.Unlock()
-	if cr.rawMode {
-		return
-	}
-	restore, err := cr.terminal.MakeRaw()
-	if err != nil {
-		// Fall back to cooked mode
-		return
-	}
-	cr.restore = restore
-	cr.rawMode = true
-}
-
-func (cr *CodeREPL) exitRawMode() {
-	cr.mu.Lock()
-	defer cr.mu.Unlock()
-	if !cr.rawMode {
-		return
-	}
-	if cr.restore != nil {
-		cr.restore()
-	}
-	cr.rawMode = false
-}
-
 // detectProjectFiles checks the working directory for spec and synroute.md files
-// on startup and displays what was found. If neither exists, prompts the user to
-// create one.
+// on startup and displays what was found.
 func (cr *CodeREPL) detectProjectFiles() {
 	workDir := cr.agent.config.WorkDir
 
@@ -290,7 +194,6 @@ func (cr *CodeREPL) detectProjectFiles() {
 	if matches, err := filepath.Glob(filepath.Join(workDir, "*.spec.md")); err == nil {
 		for _, m := range matches {
 			base := filepath.Base(m)
-			// Avoid duplicates with the explicit candidates
 			if base != "spec.md" && base != "SPEC.md" {
 				specFiles = append(specFiles, base)
 			}
@@ -306,93 +209,15 @@ func (cr *CodeREPL) detectProjectFiles() {
 	cr.renderer.mu.Lock()
 	defer cr.renderer.mu.Unlock()
 
+	if len(specFiles) > 0 {
+		cr.renderer.writeContent(cr.renderer.color("\033[32m", fmt.Sprintf("  spec found: %s", strings.Join(specFiles, ", "))))
+	}
+	if synrouteMD != "" {
+		cr.renderer.writeContent(cr.renderer.color("\033[32m", fmt.Sprintf("  project state: %s", synrouteMD)))
+	}
 	if len(specFiles) > 0 || synrouteMD != "" {
-		// Display what was found
-		if len(specFiles) > 0 {
-			cr.renderer.writeContent(cr.renderer.color("\033[32m", fmt.Sprintf("  spec found: %s", strings.Join(specFiles, ", "))))
-		}
-		if synrouteMD != "" {
-			cr.renderer.writeContent(cr.renderer.color("\033[32m", fmt.Sprintf("  project state: %s", synrouteMD)))
-		}
 		cr.renderer.writeContent("")
-		return
 	}
-
-	// Neither found — prompt the user
-	cr.renderer.writeContent(cr.renderer.color("\033[33m", "  No spec or synroute.md found in this directory."))
-	cr.renderer.writeContent(cr.renderer.color("\033[33m", "  Create one? [spec/synroute/no]: "))
-
-	// Read user choice (cooked mode, scanner on stdin)
-	cr.renderer.mu.Unlock() // unlock before blocking on input
-	scanner := bufio.NewScanner(cr.in)
-	scanner.Buffer(make([]byte, 0, 1024), 4096)
-	var choice string
-	if scanner.Scan() {
-		choice = strings.TrimSpace(strings.ToLower(scanner.Text()))
-	}
-	cr.renderer.mu.Lock() // re-lock for deferred unlock
-
-	switch choice {
-	case "spec":
-		cr.createSpecFile(workDir)
-	case "synroute":
-		cr.createSynrouteFile(workDir)
-	default:
-		// "no", empty, or anything else — skip
-	}
-}
-
-// createSpecFile generates a minimal spec.md in the given directory.
-func (cr *CodeREPL) createSpecFile(workDir string) {
-	projectName := filepath.Base(workDir)
-	content := fmt.Sprintf(`# %s — Specification
-
-## Overview
-<!-- Describe what this project does -->
-
-## Requirements
-<!-- List the requirements -->
-
-## Acceptance Criteria
-<!-- Define how to verify the implementation is correct -->
-`, projectName)
-
-	path := filepath.Join(workDir, "spec.md")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		cr.renderer.writeContent(cr.renderer.color("\033[31m", fmt.Sprintf("  error creating spec.md: %v", err)))
-		return
-	}
-	cr.renderer.writeContent(cr.renderer.color("\033[32m", fmt.Sprintf("  created %s — edit it to define your project spec", path)))
-	cr.renderer.writeContent("")
-}
-
-// createSynrouteFile generates a minimal synroute.md project state file.
-func (cr *CodeREPL) createSynrouteFile(workDir string) {
-	projectName := filepath.Base(workDir)
-	now := time.Now().Format("2006-01-02 15:04")
-	content := fmt.Sprintf(`# synroute.md — Project State
-
-## Project
-- Name: %s
-- Created: %s
-
-## Status
-- Last run: %s
-- Tool calls: 0
-- Provider level: 0
-- Escalation cycles: 0
-
-## Original Request
-
-`, projectName, now, now)
-
-	path := filepath.Join(workDir, "synroute.md")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		cr.renderer.writeContent(cr.renderer.color("\033[31m", fmt.Sprintf("  error creating synroute.md: %v", err)))
-		return
-	}
-	cr.renderer.writeContent(cr.renderer.color("\033[32m", fmt.Sprintf("  created %s — project state will be tracked here", path)))
-	cr.renderer.writeContent("")
 }
 
 func (cr *CodeREPL) handleCommand(input string) bool {
@@ -401,7 +226,6 @@ func (cr *CodeREPL) handleCommand(input string) bool {
 
 	switch cmd {
 	case "/exit", "/quit":
-		cr.renderer.Cleanup()
 		fmt.Fprintln(cr.out, "bye")
 		return true
 
