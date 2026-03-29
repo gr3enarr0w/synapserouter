@@ -29,7 +29,7 @@ func DefaultRegistry() *Registry {
 	r.Register(&GrepTool{})
 	r.Register(&GlobTool{})
 	r.Register(&GitTool{})
-	r.Register(&WebSearchTool{})
+	r.Register(NewWebSearchTool())
 	r.Register(&WebFetchTool{})
 	return r
 }

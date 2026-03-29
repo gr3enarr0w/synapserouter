@@ -2,10 +2,12 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -24,8 +26,32 @@ type SearchResult struct {
 	Snippet string `json:"snippet"`
 }
 
-// WebSearchTool searches the web using DuckDuckGo HTML interface.
-type WebSearchTool struct{}
+// SearchBackend is the interface for pluggable search providers.
+type SearchBackend interface {
+	Name() string
+	Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error)
+}
+
+// WebSearchTool searches the web using a configurable backend.
+// Default: DuckDuckGo. Set TAVILY_API_KEY for Tavily. Set SEARXNG_URL for SearXNG.
+type WebSearchTool struct {
+	backend SearchBackend
+}
+
+// NewWebSearchTool creates a web search tool with auto-detected backend.
+func NewWebSearchTool() *WebSearchTool {
+	return &WebSearchTool{backend: detectSearchBackend()}
+}
+
+func detectSearchBackend() SearchBackend {
+	if key := os.Getenv("TAVILY_API_KEY"); key != "" {
+		return &TavilyBackend{apiKey: key}
+	}
+	if url := os.Getenv("SEARXNG_URL"); url != "" {
+		return &SearXNGBackend{baseURL: url}
+	}
+	return &DuckDuckGoBackend{}
+}
 
 func (t *WebSearchTool) Name() string     { return "web_search" }
 func (t *WebSearchTool) Description() string {
@@ -67,7 +93,11 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]interface{}
 	ctx, cancel := context.WithTimeout(ctx, defaultSearchTimeout)
 	defer cancel()
 
-	results, err := duckDuckGoSearch(ctx, query, maxResults)
+	backend := t.backend
+	if backend == nil {
+		backend = &DuckDuckGoBackend{}
+	}
+	results, err := backend.Search(ctx, query, maxResults)
 	if err != nil {
 		return &ToolResult{Error: fmt.Sprintf("search failed: %v", err)}, nil
 	}
@@ -79,7 +109,16 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]interface{}
 	return &ToolResult{Output: formatSearchResults(results)}, nil
 }
 
-// duckDuckGoSearch performs an HTTP POST to DuckDuckGo's HTML endpoint and parses results.
+// --- DuckDuckGo Backend ---
+
+// DuckDuckGoBackend searches via DuckDuckGo's HTML interface (no API key needed).
+type DuckDuckGoBackend struct{}
+
+func (b *DuckDuckGoBackend) Name() string { return "duckduckgo" }
+func (b *DuckDuckGoBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
+	return duckDuckGoSearch(ctx, query, maxResults)
+}
+
 func duckDuckGoSearch(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	form := url.Values{}
 	form.Set("q", query)
@@ -201,6 +240,125 @@ func stripHTML(s string) string {
 		s = strings.ReplaceAll(s, entity, replacement)
 	}
 	return strings.TrimSpace(s)
+}
+
+// --- Tavily Backend ---
+
+// TavilyBackend uses Tavily's AI-optimized search API.
+type TavilyBackend struct {
+	apiKey string
+}
+
+func (b *TavilyBackend) Name() string { return "tavily" }
+
+func (b *TavilyBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"api_key":            b.apiKey,
+		"query":              query,
+		"max_results":        maxResults,
+		"search_depth":       "basic",
+		"include_answer":     false,
+		"include_raw_content": false,
+	})
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.tavily.com/search", strings.NewReader(string(reqBody)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("tavily API error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var tavilyResp struct {
+		Results []struct {
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Content string `json:"content"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tavilyResp); err != nil {
+		return nil, fmt.Errorf("parse tavily response: %w", err)
+	}
+
+	results := make([]SearchResult, 0, len(tavilyResp.Results))
+	for _, r := range tavilyResp.Results {
+		results = append(results, SearchResult{
+			Title:   r.Title,
+			URL:     r.URL,
+			Snippet: r.Content,
+		})
+	}
+	return results, nil
+}
+
+// --- SearXNG Backend ---
+
+// SearXNGBackend uses a self-hosted SearXNG instance.
+type SearXNGBackend struct {
+	baseURL string
+}
+
+func (b *SearXNGBackend) Name() string { return "searxng" }
+
+func (b *SearXNGBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
+	u, err := url.Parse(b.baseURL + "/search")
+	if err != nil {
+		return nil, err
+	}
+	params := url.Values{}
+	params.Set("q", query)
+	params.Set("format", "json")
+	params.Set("categories", "general")
+	u.RawQuery = params.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("searxng error: %d", resp.StatusCode)
+	}
+
+	var searxResp struct {
+		Results []struct {
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Content string `json:"content"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&searxResp); err != nil {
+		return nil, fmt.Errorf("parse searxng response: %w", err)
+	}
+
+	results := make([]SearchResult, 0, maxResults)
+	for i, r := range searxResp.Results {
+		if i >= maxResults {
+			break
+		}
+		results = append(results, SearchResult{
+			Title:   r.Title,
+			URL:     r.URL,
+			Snippet: r.Content,
+		})
+	}
+	return results, nil
 }
 
 // formatSearchResults formats results for display.
