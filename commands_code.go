@@ -31,20 +31,6 @@ func cmdCode(args []string) {
 	verbose := fs.Int("verbose", 1, "Verbosity level: 0=compact, 1=normal, 2=verbose")
 	fs.Parse(args)
 
-	ac, err := app.InitLight(context.Background())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error initializing: %v\n", err)
-		os.Exit(1)
-	}
-	defer ac.Close()
-
-	if len(ac.Providers) == 0 {
-		fmt.Fprintln(os.Stderr, "No providers configured for this profile")
-		os.Exit(1)
-	}
-
-	ac.InitFull()
-
 	registry := tools.DefaultRegistry()
 	cwd, _ := os.Getwd()
 
@@ -63,7 +49,7 @@ func cmdCode(args []string) {
 		projectName = *project
 	}
 
-	// Set up timestamped log file
+	// Set up timestamped log file BEFORE provider init so all logs go to file
 	logDir := filepath.Join(cwd, ".synroute", "logs")
 	os.MkdirAll(logDir, 0755)
 	logTimestamp := time.Now().Format("2006-01-02T15-04-05")
@@ -73,6 +59,20 @@ func cmdCode(args []string) {
 		log.SetOutput(logFile)
 		defer logFile.Close()
 	}
+
+	ac, err := app.InitLight(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing: %v\n", err)
+		os.Exit(1)
+	}
+	defer ac.Close()
+
+	if len(ac.Providers) == 0 {
+		fmt.Fprintln(os.Stderr, "No providers configured for this profile")
+		os.Exit(1)
+	}
+
+	ac.InitFull()
 
 	config := agent.DefaultConfig()
 	config.Model = *model
