@@ -347,6 +347,7 @@ func cmdChat(args []string) {
 	sessionID := fs.String("session", "", "Resume specific session ID")
 	verbose := fs.Int("verbose", 0, "Verbosity level: 0=compact, 1=normal, 2=verbose (also -v/-vv)")
 	jsonEvents := fs.Bool("json-events", false, "Emit events as JSON lines to stderr")
+	usePipeline := fs.Bool("pipeline", false, "Force legacy 6-phase pipeline (default: frontier model with pipeline tools)")
 	fs.Parse(args)
 
 	// Support -v / -vv shorthand via remaining args
@@ -421,7 +422,7 @@ func cmdChat(args []string) {
 		providerNames[i] = p.Name()
 	}
 	config.Providers = providerNames
-	config.AutoOrchestrate = true
+	config.AutoOrchestrate = *usePipeline
 
 	// MCP client — load config and connect to registered servers
 	mcpCfg, mcpErr := mcp.LoadConfig(mcp.DefaultConfigPath())
@@ -572,6 +573,9 @@ func cmdChat(args []string) {
 	// Register delegation tools
 	registry.Register(agent.NewDelegateTool(ag))
 	registry.Register(agent.NewHandoffTool(ag))
+	if !config.AutoOrchestrate {
+		agent.RegisterPipelineTools(registry, ag)
+	}
 
 	// Set budget tracker if configured
 	if config.Budget != nil {

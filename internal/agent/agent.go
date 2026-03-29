@@ -451,6 +451,31 @@ func (a *Agent) SessionID() string {
 	return a.sessionID
 }
 
+// GetAcceptanceCriteria returns the stored acceptance criteria.
+func (a *Agent) GetAcceptanceCriteria() string {
+	return a.acceptanceCriteria
+}
+
+// SetAcceptanceCriteria stores acceptance criteria for pipeline tools.
+func (a *Agent) SetAcceptanceCriteria(criteria string) {
+	a.acceptanceCriteria = criteria
+}
+
+// GetOriginalRequest returns the original user request.
+func (a *Agent) GetOriginalRequest() string {
+	return a.originalRequest
+}
+
+// GetConfig returns the agent's config.
+func (a *Agent) GetConfig() Config {
+	return a.config
+}
+
+// Emit publishes an event to the bus (exported wrapper for pipeline tools).
+func (a *Agent) Emit(eventType EventType, provider string, data map[string]any) {
+	a.emit(eventType, provider, data)
+}
+
 // RunPhase runs the agent with a single pipeline phase. Used by REPL slash
 // commands (/plan, /review, /check, /fix). The message is composed with
 // phase-appropriate context.

@@ -30,6 +30,7 @@ func cmdCode(args []string) {
 	resume := fs.Bool("resume", false, "Resume most recent session")
 	sessionID := fs.String("session", "", "Resume specific session ID")
 	verbose := fs.Int("verbose", 1, "Verbosity level: 0=compact, 1=normal, 2=verbose")
+	usePipeline := fs.Bool("pipeline", false, "Force legacy 6-phase pipeline (default: frontier model with pipeline tools)")
 	fs.Parse(args)
 
 	registry := tools.DefaultRegistry()
@@ -96,7 +97,7 @@ func cmdCode(args []string) {
 		providerNames[i] = p.Name()
 	}
 	config.Providers = providerNames
-	config.AutoOrchestrate = true
+	config.AutoOrchestrate = *usePipeline
 	config.Verbosity = *verbose
 
 	// MCP client — load config and connect to registered servers
@@ -220,6 +221,9 @@ func cmdCode(args []string) {
 	ag.SetPool(pool)
 	registry.Register(agent.NewDelegateTool(ag))
 	registry.Register(agent.NewHandoffTool(ag))
+	if !config.AutoOrchestrate {
+		agent.RegisterPipelineTools(registry, ag)
+	}
 	ag.SetInputGuardrails(agent.NewGuardrailChain(&agent.SecretPatternGuardrail{}))
 
 	// One-shot mode — use the same agent (no RunOneShot to avoid duplicate LogRenderer)
