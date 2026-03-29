@@ -2114,21 +2114,57 @@ Say VERIFIED_CORRECT if everything passes, or NEEDS_FIX with remaining issues.`,
 	return lastResult
 }
 
+// cloneForSubAgent creates a lightweight clone of the agent with its own
+// copy of mutable escalation state (providerIdx, levelRotationIdx).
+// Shared immutable state (config, executor, registry, tools) is referenced,
+// not copied. This prevents data races in runParallelSubAgentPhases.
+func (a *Agent) cloneForSubAgent() *Agent {
+	clone := &Agent{
+		executor:           a.executor,
+		registry:           a.registry,
+		permissions:        a.permissions,
+		conversation:       a.conversation,
+		renderer:           a.renderer,
+		config:             a.config,
+		sessionID:          a.sessionID,
+		pool:               a.pool,
+		trace:              a.trace,
+		metrics:            a.metrics,
+		bus:                a.bus,
+		providerIdx:        a.providerIdx,
+		levelRotationIdx:   a.levelRotationIdx,
+		originalRequest:    a.originalRequest,
+		acceptanceCriteria: a.acceptanceCriteria,
+		cachedSkillContext: a.cachedSkillContext,
+		cachedPromptLevel:  a.cachedPromptLevel,
+		specConstraints:    a.specConstraints,
+		reviewTracker:      &ReviewCycleTracker{},
+	}
+	return clone
+}
+
 // runParallelSubAgentPhases runs two UseSubAgent phases simultaneously.
 // Both phases spawn independent sub-agents with no shared context, so they
-// can safely execute in parallel. Returns results from both phases.
+// can safely execute in parallel. Each goroutine gets a snapshot of the
+// provider state to avoid racing on providerIdx and levelRotationIdx.
 func (a *Agent) runParallelSubAgentPhases(phase1, phase2 PipelinePhase) (string, string) {
+	// Snapshot mutable escalation state before spawning goroutines.
+	// Each sub-agent clone gets its own copy so concurrent escalation
+	// calls don't race on the parent's fields.
+	snapshot1 := a.cloneForSubAgent()
+	snapshot2 := a.cloneForSubAgent()
+
 	var result1, result2 string
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	go func() {
 		defer wg.Done()
-		result1 = a.runSubAgentPhase(phase1)
+		result1 = snapshot1.runSubAgentPhase(phase1)
 	}()
 	go func() {
 		defer wg.Done()
-		result2 = a.runSubAgentPhase(phase2)
+		result2 = snapshot2.runSubAgentPhase(phase2)
 	}()
 
 	wg.Wait()

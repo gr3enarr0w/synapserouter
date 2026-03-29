@@ -47,6 +47,17 @@ var (
 //go:embed migrations/*.sql
 var embeddedMigrations embed.FS
 
+func makeHTTPRequestWithTimeout(urlStr string, timeout time.Duration) (*http.Response, error) {
+	url, err := http.NewRequest("GET", urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{
+		Timeout: timeout,
+	}
+	return client.Do(url)
+}
+
 func main() {
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
@@ -66,6 +77,7 @@ func main() {
 			cmdChat(os.Args[2:])
 		case "code":
 			cmdCode(os.Args[2:])
+			return
 		case "mcp":
 			cmdMCP(os.Args[2:])
 		case "mcp-serve":
@@ -80,6 +92,7 @@ func main() {
 		}
 		return
 	}
+
 	// No command given — default to code mode (interactive TUI)
 	cmdCode(nil)
 }

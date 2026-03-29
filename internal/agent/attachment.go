@@ -120,6 +120,7 @@ func ParseAttachments(message string, workDir string) (string, []Attachment) {
 }
 
 // resolveAttachmentPath resolves a file reference to an absolute path.
+// Relative paths are confined to workDir to prevent path traversal.
 func resolveAttachmentPath(ref string, workDir string) string {
 	if strings.HasPrefix(ref, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -129,7 +130,12 @@ func resolveAttachmentPath(ref string, workDir string) string {
 	if filepath.IsAbs(ref) {
 		return filepath.Clean(ref)
 	}
-	return filepath.Clean(filepath.Join(workDir, ref))
+	resolved := filepath.Clean(filepath.Join(workDir, ref))
+	// Ensure relative references stay within workDir (prevent ../../../etc/passwd)
+	if !strings.HasPrefix(resolved, filepath.Clean(workDir)+string(filepath.Separator)) && resolved != filepath.Clean(workDir) {
+		return filepath.Clean(workDir) // fall back to workDir itself
+	}
+	return resolved
 }
 
 // readAttachment reads a file and creates an Attachment.
@@ -299,10 +305,16 @@ func expandDirReferences(message string, workDir string) (string, []Attachment) 
 	}
 
 	var attachments []Attachment
-	cleaned := message
 
-	for i := len(matches) - 1; i >= 0; i-- {
-		match := matches[i]
+	// Collect removal ranges (relative to original message) and attachments.
+	// We process all matches first, then build the cleaned string in one pass
+	// to avoid index corruption from incremental modifications.
+	type removal struct {
+		start, end int
+	}
+	var removals []removal
+
+	for _, match := range matches {
 		dirRef := message[match[2]:match[3]]
 		absDir := resolveAttachmentPath(dirRef, workDir)
 
@@ -330,16 +342,24 @@ func expandDirReferences(message string, workDir string) (string, []Attachment) 
 			count++
 		}
 
-		// Remove the @dir/ reference from the message
+		// Record the @dir/ reference range for removal
 		fullMatch := message[match[0]:match[1]]
 		atIdx := strings.Index(fullMatch, "@")
 		if atIdx >= 0 {
-			removeStart := match[0] + atIdx
-			cleaned = cleaned[:removeStart] + cleaned[match[3]:]
+			removals = append(removals, removal{start: match[0] + atIdx, end: match[3]})
 		}
 	}
 
-	return cleaned, attachments
+	// Build cleaned string by copying segments between removals
+	var cleaned strings.Builder
+	prev := 0
+	for _, r := range removals {
+		cleaned.WriteString(message[prev:r.start])
+		prev = r.end
+	}
+	cleaned.WriteString(message[prev:])
+
+	return cleaned.String(), attachments
 }
 
 // FormatAttachments formats a list of attachments for injection into the conversation.

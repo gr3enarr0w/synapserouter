@@ -58,7 +58,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{},
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; SynapseRouter/1.0)")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := ssrfSafeClient.Do(req)
 	if err != nil {
 		return &ToolResult{Error: fmt.Sprintf("fetch failed: %v", err)}, nil
 	}

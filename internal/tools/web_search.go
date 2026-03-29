@@ -130,7 +130,7 @@ func duckDuckGoSearch(ctx context.Context, query string, maxResults int) ([]Sear
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; SynapseRouter/1.0)")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := ssrfSafeClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
@@ -267,7 +267,7 @@ func (b *TavilyBackend) Search(ctx context.Context, query string, maxResults int
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := ssrfSafeClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +326,7 @@ func (b *SearXNGBackend) Search(ctx context.Context, query string, maxResults in
 	}
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := ssrfSafeClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

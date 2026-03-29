@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -45,6 +47,7 @@ Subcommands:
 func cmdMCPAdd(args []string) {
 	if len(args) < 2 {
 		fmt.Fprintln(os.Stderr, "Usage: synroute mcp add <name> <url> [api-key]")
+		fmt.Fprintln(os.Stderr, "  api-key can also be set via MCP_API_KEY env var (preferred)")
 		os.Exit(1)
 	}
 
@@ -53,6 +56,21 @@ func cmdMCPAdd(args []string) {
 	apiKey := ""
 	if len(args) >= 3 {
 		apiKey = args[2]
+	}
+	// Prefer env var over CLI arg to avoid exposing keys in process list
+	if envKey := os.Getenv("MCP_API_KEY"); envKey != "" {
+		apiKey = envKey
+	}
+	// If no key from args or env, prompt on stdin (if interactive)
+	if apiKey == "" {
+		stat, _ := os.Stdin.Stat()
+		if stat != nil && stat.Mode()&os.ModeCharDevice != 0 {
+			fmt.Fprint(os.Stderr, "API key (enter to skip): ")
+			scanner := bufio.NewScanner(os.Stdin)
+			if scanner.Scan() {
+				apiKey = strings.TrimSpace(scanner.Text())
+			}
+		}
 	}
 
 	cfgPath := mcp.DefaultConfigPath()
