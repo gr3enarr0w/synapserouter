@@ -1001,7 +1001,22 @@ func (a *Agent) matchedSkillContext() string {
 	return a.cachedSkillContext
 }
 
+// skillContextBudget returns the max bytes allowed for skill injection
+// based on the current provider level (smaller models get less context).
+func (a *Agent) skillContextBudget() int {
+	switch {
+	case a.providerIdx == 0:
+		return 4096 // ~1K tokens for small models (14-30B)
+	case a.providerIdx <= 2:
+		return 16384 // ~4K tokens for mid models (120B)
+	default:
+		return 65536 // ~16K tokens for frontier models (480B+)
+	}
+}
+
 // computeSkillContext does the actual skill matching and formatting.
+// Respects a size budget based on the current provider level — small models
+// get abbreviated skill context to avoid overwhelming their context window.
 func (a *Agent) computeSkillContext() string {
 	if len(a.config.Skills) == 0 {
 		return ""
@@ -1024,17 +1039,37 @@ func (a *Agent) computeSkillContext() string {
 	}
 
 	chain := orchestration.BuildSkillChain(matched)
+	budget := a.skillContextBudget()
 
 	var b strings.Builder
 	b.WriteString("=== Active Skills ===\n")
+	used := b.Len()
+
 	for _, skill := range chain {
-		b.WriteString("\n## " + skill.Name + "\n")
-		if skill.Instructions != "" {
-			b.WriteString(skill.Instructions)
-		} else {
-			b.WriteString(skill.Description)
+		content := skill.Description
+		if skill.Instructions != "" && a.providerIdx > 0 {
+			// Only inject full instructions for mid+ models
+			content = skill.Instructions
 		}
-		b.WriteString("\n")
+
+		entry := "\n## " + skill.Name + "\n" + content + "\n"
+		if used+len(entry) > budget {
+			// Over budget — add abbreviated entry
+			abbreviated := "\n## " + skill.Name + " (abbreviated)\n" + skill.Description + "\n"
+			if used+len(abbreviated) <= budget {
+				b.WriteString(abbreviated)
+				used += len(abbreviated)
+			}
+			// Skip remaining skills if we're out of budget
+			if used >= budget {
+				b.WriteString(fmt.Sprintf("\n[%d more skills truncated for model capacity]\n",
+					len(chain)-countBefore(chain, skill.Name)))
+				break
+			}
+			continue
+		}
+		b.WriteString(entry)
+		used += len(entry)
 	}
 	b.WriteString("=== End Skills ===")
 
@@ -1044,6 +1079,16 @@ func (a *Agent) computeSkillContext() string {
 	}
 
 	return b.String()
+}
+
+// countBefore returns the index of skill with given name in the chain.
+func countBefore(chain []orchestration.Skill, name string) int {
+	for i, s := range chain {
+		if s.Name == name {
+			return i
+		}
+	}
+	return len(chain)
 }
 
 // invokeMCPToolsForSkills calls MCP tools bound to the matched skill chain
