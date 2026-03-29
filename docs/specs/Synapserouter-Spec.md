@@ -119,6 +119,7 @@ Two independent database backends. User picks based on environment.
 8. **Runtime-agnostic isolation.** Docker and Podman are equal, independent container runtimes. Neither is primary.
 9. **Database-agnostic.** SQLite and PostgreSQL are equal, independent database backends.
 10. **Skills are self-contained.** Adding a skill means dropping one `.md` file and rebuilding. No Go code changes.
+11. **Skills are the trigger layer for MCPs.** MCP servers provide tools (GitHub, document creation, web search, etc.). Skills define WHEN those tools are invoked via trigger matching and `mcp_tools` bindings. The agent never discovers or calls MCP tools directly — skills mediate all MCP access. This means any MCP server added to synroute must have a corresponding skill that defines its triggers and usage context.
 
 ### Agent Intents
 
