@@ -93,31 +93,27 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		}
 	}()
 
-	for {
-		// Enter raw mode for keyboard shortcuts
-		cr.enterRawMode()
+	// Use cooked mode (normal terminal input) with TUI chrome.
+	// Raw mode keyboard shortcuts are available via slash commands instead:
+	// /plan, /review, /check, /fix, /help
+	scanner := bufio.NewScanner(cr.in)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
+	for {
 		// Show prompt
 		cr.renderer.Prompt()
 
-		// Read input — starts in raw mode, switches to cooked for line input
-		input, exit, err := cr.readInput()
-		if err != nil {
-			cr.exitRawMode()
-			return err
-		}
-		if exit {
-			cr.exitRawMode()
+		// Read input in normal cooked mode
+		if !scanner.Scan() {
+			// EOF (Ctrl-D)
 			cr.renderer.Cleanup()
 			fmt.Fprintln(cr.out, "bye")
 			return nil
 		}
+		input := strings.TrimSpace(scanner.Text())
 		if input == "" {
 			continue
 		}
-
-		// Make sure we're out of raw mode for agent execution
-		cr.exitRawMode()
 
 		// Handle REPL commands
 		if strings.HasPrefix(input, "/") {

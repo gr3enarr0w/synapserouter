@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -229,33 +228,10 @@ func cmdCode(args []string) {
 		return
 	}
 
-	// Enter raw terminal mode with cleanup
-	restore, err := term.MakeRaw()
-	if err != nil {
-		// Fallback to regular REPL if raw mode fails
-		repl := agent.NewREPL(ag, codeRenderer)
-		if err := repl.Run(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		}
-	} else {
-		defer restore()
-
-		// Also restore on panic
-		defer func() {
-			if r := recover(); r != nil {
-				restore()
-				panic(r)
-			}
-		}()
-
-		codeRepl := agent.NewCodeREPL(ag, codeRenderer, term)
-
-		// Temporarily exit raw mode — the CodeREPL manages raw/cooked transitions
-		restore()
-
-		if err := codeRepl.Run(ctx); err != nil {
-			fmt.Fprintf(io.Discard, "%v", err) // logged to file
-		}
+	// Run the code mode REPL (uses cooked mode input with TUI chrome)
+	codeRepl := agent.NewCodeREPL(ag, codeRenderer, term)
+	if err := codeRepl.Run(ctx); err != nil {
+		log.Printf("REPL error: %v", err)
 	}
 
 	bus.Close()
