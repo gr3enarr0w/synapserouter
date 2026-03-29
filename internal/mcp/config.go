@@ -45,7 +45,7 @@ func LoadConfig(path string) (*MCPConfig, error) {
 
 // SaveConfig writes MCP server config to the given path.
 func SaveConfig(path string, cfg *MCPConfig) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 
@@ -54,7 +54,8 @@ func SaveConfig(path string, cfg *MCPConfig) error {
 		return fmt.Errorf("marshal mcp config: %w", err)
 	}
 
-	return os.WriteFile(path, data, 0644)
+	// 0600: owner-only read/write — file may contain API keys
+	return os.WriteFile(path, data, 0600)
 }
 
 // AddServerConfig adds a server to the config, replacing if name exists.

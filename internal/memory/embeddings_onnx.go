@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"strings"
 	"sync"
 	"unicode"
@@ -194,7 +195,6 @@ func buildBasicVocab() map[string]int32 {
 }
 
 func findONNXRuntimeLib() string {
-	// Platform-specific paths for onnxruntime shared library
 	candidates := []string{
 		"/usr/local/lib/libonnxruntime.dylib",
 		"/usr/local/lib/libonnxruntime.so",
@@ -203,7 +203,9 @@ func findONNXRuntimeLib() string {
 		"libonnxruntime.so",
 	}
 	for _, path := range candidates {
-		return path // ort.SetSharedLibraryPath will fail gracefully if not found
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
 	}
-	return "libonnxruntime.so"
+	return "libonnxruntime.so" // fallback — ort will fail gracefully if not found
 }

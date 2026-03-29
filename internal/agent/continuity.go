@@ -159,14 +159,18 @@ func BuildContinuityFromAgent(a *Agent) *ProjectContinuity {
 func writeSynrouteMD(c *ProjectContinuity) error {
 	path := filepath.Join(c.ProjectDir, "synroute.md")
 
+	sanitize := func(s string) string {
+		return strings.ReplaceAll(strings.ReplaceAll(s, "\n", " "), "\r", "")
+	}
+
 	var b strings.Builder
 	b.WriteString("---\n")
-	b.WriteString(fmt.Sprintf("session_id: %s\n", c.SessionID))
-	b.WriteString(fmt.Sprintf("phase: %s\n", c.Phase))
-	b.WriteString(fmt.Sprintf("build_status: %s\n", c.BuildStatus))
-	b.WriteString(fmt.Sprintf("test_status: %s\n", c.TestStatus))
-	b.WriteString(fmt.Sprintf("language: %s\n", c.Language))
-	b.WriteString(fmt.Sprintf("model: %s\n", c.Model))
+	b.WriteString(fmt.Sprintf("session_id: %s\n", sanitize(c.SessionID)))
+	b.WriteString(fmt.Sprintf("phase: %s\n", sanitize(c.Phase)))
+	b.WriteString(fmt.Sprintf("build_status: %s\n", sanitize(c.BuildStatus)))
+	b.WriteString(fmt.Sprintf("test_status: %s\n", sanitize(c.TestStatus)))
+	b.WriteString(fmt.Sprintf("language: %s\n", sanitize(c.Language)))
+	b.WriteString(fmt.Sprintf("model: %s\n", sanitize(c.Model)))
 	b.WriteString(fmt.Sprintf("updated_at: %s\n", time.Now().Format(time.RFC3339)))
 	b.WriteString("---\n\n")
 	b.WriteString("# synroute.md — Project State\n\n")
