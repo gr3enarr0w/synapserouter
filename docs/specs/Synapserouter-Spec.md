@@ -471,7 +471,7 @@ Three model tiers auto-classified from OLLAMA_CHAIN position:
 | **Mid** | Self-check, complex fixes, architecture | Large coders at mid-range levels | Middle third of levels |
 | **Cheap** | Write code, run builds, file ops, sub-agents | Cheapest adequate | Bottom third of levels |
 
-The parent REPL agent starts at frontier tier for conversation quality. Coding sub-agents are spawned at cheap tier. `providerIdx` remains monotonic — tier selection never decreases the floor.
+The parent REPL agent starts at the configured conversation tier. Default: frontier (personal profile), mid (work profile). Override with `SYNROUTE_CONVERSATION_TIER` env var (`cheap`, `mid`, `frontier`). Coding sub-agents are spawned at cheap tier. `providerIdx` remains monotonic — tier selection never decreases the floor.
 
 **Pipeline phase defaults:** plan=frontier, implement=cheap, self-check=mid, code-review=frontier, acceptance-test=frontier, deploy=cheap.
 
@@ -627,7 +627,7 @@ No layer silently fails. Every fallback is logged.
 
 ### 3.1 Tool Registry
 
-9 built-in tools plus 2 agent tools:
+10 built-in tools plus 2 agent tools:
 
 | Tool | Category | Arguments | Purpose |
 |------|----------|-----------|---------|
@@ -639,8 +639,9 @@ No layer silently fails. Every fallback is logged.
 | `glob` | read_only | `pattern` (string), `path` (string, optional) | File pattern matching |
 | `git` | write | `args` (string) | Git operations. Safety: blocks `push --force`, `branch -D`, `checkout --force`. Use bash for explicit dangerous git ops. |
 | `recall` | read_only | `id` (int, optional), `query` (string, optional), `tool_name` (string, optional) | Retrieve from memory. Three modes: by ID, semantic search, tool output search. |
-| `web_search` | read_only | `query` (string) | *Planned (#227).* Search external information. |
-| `web_fetch` | read_only | `url` (string) | *Planned (#227).* Read URL content. |
+| `web_search` | read_only | `query` (string), `max_results` (int, optional) | Search the web via DuckDuckGo (default), Tavily (`TAVILY_API_KEY`), or SearXNG (`SEARXNG_URL`). SSRF-safe. |
+| `web_fetch` | read_only | `url` (string) | Fetch URL content as plain text (HTML stripped). 5MB limit, SSRF-safe client. |
+| `notebook_edit` | write | `path` (string), `cell` (int), `source` (string), `cell_type` (string, optional) | Edit a Jupyter notebook (.ipynb) cell by index. `file_read` auto-renders .ipynb as readable cells. |
 | `delegate` | agent | `task` (string), `model` (string, optional) | Spawn sub-agent for parallel work |
 | `handoff` | agent | `target` (string), `context` (string) | Transfer context to specialist agent (Swarm-style) |
 
@@ -740,19 +741,37 @@ Concurrency-limited agent management:
 - Rate limited at 3 corrections per session
 - All corrective messages pass through `scrubSecrets()`
 
-### 3.6 Loop Detection
+### 3.6 Loop and Stall Detection
 
-Intent-based fingerprinting detects when the agent is stuck:
-- Fingerprints built from tool calls + arguments
-- Warning counter increments on repeated fingerprints
-- After threshold: force phase advance or terminate
+Intent-based fingerprinting detects when the agent is stuck in ALL modes (pipeline and direct conversation):
+- Fingerprints built from tool calls + arguments (path-only for file ops, normalized bash)
+- Sliding window of 40 fingerprints with cumulative warning counter
+- Tiered response: 3+ repeats → warning injected; 3+ warnings or 4+ repeats → provider escalation; 6+ warnings or 6+ repeats → force phase advance (pipeline) or exit loop (direct mode)
+- Stall detection: 2 consecutive turns without tool calls → provider escalation (active in all modes)
+- Review stability tracking: detects when review findings increase 2+ consecutive cycles → force-advances pipeline to prevent infinite cost growth
 
-### 3.7 Regression Detection (Planned, #201)
+### 3.7 Regression Detection
 
-Currently no detection when changes make things worse (e.g., compilation errors go from 2 to 332). Planned:
-- Track build/test metrics between iterations
-- Flag when metrics regress beyond threshold
-- Revert or escalate on regression
+`RegressionTracker` monitors compilation error counts across build attempts:
+- Counts error lines using regex pattern matching
+- Compares current error count to previous build
+- After 2+ consecutive worsenings: warns agent to stop creating files and fix existing ones
+- Resets counter when errors decrease or build succeeds
+- Implemented in `internal/agent/regression.go`
+
+### 3.8 Text-Based Tool Call Parsing
+
+When models (especially open-source via Ollama Cloud) output tool calls as text markers instead of structured JSON `tool_calls`, the agent parses 5 known formats:
+
+1. Dash-separated blocks (`---\ntool_call\n---\nname\n---\n{args}\n---`)
+2. Markdown code blocks (`` ```tool_call\nname({args})\n``` ``)
+3. XML-like tags (`[tool_calls][{...}][/tool_calls]`)
+4. Narrated JSON (`tool_call\n```json\n{args}\n```) with tool name inferred from argument keys
+5. Key-value format (`tool_call_name=X\ntool_call_arguments={...}`)
+
+Also includes completion signal detection (`isCompletionSignal`) — exits the agent loop when the model signals task completion ("task complete", "successfully completed", etc.) to prevent infinite re-confirmation loops.
+
+Implemented in `internal/agent/text_tool_parser.go`.
 
 ### 3.8 Session Continuity (Planned, Epic #220)
 
@@ -790,7 +809,7 @@ Per-agent resource limits:
 
 - **Tracing** (`internal/agent/trace.go`): structured event spans for llm_call, tool_call, handoff
 - **Metrics** (`internal/agent/metrics.go`): request/tool/sub-agent performance tracking
-- **Streaming** (`internal/agent/streaming.go`): line-by-line output via `StreamWriter`
+- **Streaming**: Token-level SSE streaming via `StreamingProvider` interface. Providers implementing `ChatCompletionStream` (Ollama Cloud, Vertex AI) deliver token deltas via `TokenCallback`. Agent loop emits `EventTokenStream` for each token; `CodeRenderer` prints tokens inline as they arrive. `StreamWriter` provides line-buffered output for tool results. Both wired into the agent loop (`callLLMWithStreaming` tries streaming first, falls back to non-streaming).
 
 ### 3.12 State Persistence
 
@@ -926,7 +945,7 @@ How agent intents (from Section 1) map to pipeline behavior. Intents are NOT sin
 |--------|-------------|:-:|-------|
 | **Chat** | respond directly | Yes | No tools, no pipeline |
 | **Explain** | read code -> explain | Yes | Uses file_read/grep but no pipeline phases |
-| **Research** | search -> analyze -> report | Yes | Web search + local analysis. *(Needs #227)* |
+| **Research** | search -> analyze -> report | Yes | Web search + local analysis via `web_search` and `web_fetch` tools. |
 | **Plan** | perceive spec -> decompose -> criteria -> output | Yes | Generates plan + acceptance criteria |
 | **Generate Spec** | converse -> clarify -> draft -> refine -> output | Yes | Back-and-forth with user. *(Implemented)* |
 | **Build** | plan -> implement -> self-check -> code-review -> acceptance-test -> deploy | Plan=frontier, code=cheap | Full 6-phase pipeline |
@@ -1010,6 +1029,10 @@ Tool categories and approval:
 | `write` (file_write, file_edit, git) | Prompt | Auto | Deny |
 | `dangerous` (bash) | Prompt + confirm | Auto | Deny |
 | `agent` (delegate, handoff) | Auto | Auto | Auto |
+
+**Interactive prompt implementation:** In code mode, permission prompts read from `/dev/tty` directly (bypassing terminal ownership conflicts with the input layer). Single-byte responses: `y` (approve), `n` (deny), `a` (approve all remaining). 30-second timeout with auto-approve fallback. Piped input (`echo | synroute code`) auto-detects non-TTY stdin and uses `auto_approve` mode. Implemented in `internal/agent/permission_prompt.go`.
+
+**Note:** Permission prompting is temporarily disabled in code mode for v1 due to terminal state conflicts. Active in chat mode. Will be restored in v1.01 with Bubble Tea textinput integration.
 
 ### 3.20 MCP Server Mode
 
@@ -1134,14 +1157,17 @@ Each command persists state via project_continuity so the next command picks up 
 | `auto_approve` | Allow all tool executions without prompting |
 | `read_only` | Deny all write operations |
 
-### 4.5 File Attachment (Planned, #228)
+### 4.5 File Attachment
 
-Accept file paths or URLs in messages. The agent reads them and includes content in conversation context.
+`@filename` and `@dir/` references in messages are parsed, file content read and injected into conversation context. Implemented in `internal/agent/attachment.go`.
 
-- Images: base64 encode for multimodal models
-- PDFs: extract text
-- Large files: chunk and summarize
-- Syntax: `@file` references in messages
+- `@file` — reads file content (10KB max, truncated with file_read fallback)
+- `@dir/` — expands directory to list of files (up to 50), each attached individually
+- Path resolution: absolute, relative (confined to workDir), `~/` expansion
+- Path traversal protection: relative paths cannot escape workDir
+- MIME type detection for 30+ file types
+- Binary file detection (null bytes, non-printable characters)
+- Remaining (planned): image base64 encoding, PDF text extraction, URL attachment
 
 ### 4.6 CLI Color System (Planned, #231)
 
@@ -1491,6 +1517,11 @@ User-configured. Set based on your subscription limits. No built-in defaults -- 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `STALL_TIMEOUT_SECONDS` | `180` | Stall detection timeout |
+| `SYNROUTE_CONVERSATION_TIER` | `frontier` (personal), `mid` (work) | Conversation tier for parent agent |
+| `WORK_CHAIN` | (default 3-level) | Work profile escalation chain (pipe\|comma format like OLLAMA_CHAIN) |
+| `WORK_CHAIN_TIERS` | (auto) | Tier classification for work chain levels |
+| `MODELS_CORP_BASE_URL` | -- | Red Hat AI Inference endpoint (OpenAI-compatible, VPN required) |
+| `MODELS_CORP_USER_KEY` | -- | models.corp user_key credential |
 
 **Planned:** `--cost-limit <dollars>` flag for API cost budgets on pay-per-token providers (see Section 3.10). Sets a dollar ceiling instead of token count. Requires per-provider cost tracking based on model pricing. *(No issue filed yet)*
 
@@ -1606,7 +1637,7 @@ synroute setup
 - [ ] **AC-T4:** `recall` tool returns results from current session and all parent sessions
 - [ ] **AC-T5:** Tool outputs >2KB stored in DB and summarized in conversation with back-reference
 - [ ] **AC-T6:** All tool outputs pass through `scrubSecrets()` before DB storage
-- [ ] **AC-T7 (planned):** `web_search` and `web_fetch` tools available for external research (#227)
+- [x] **AC-T7:** `web_search` (DuckDuckGo/Tavily/SearXNG) and `web_fetch` (SSRF-safe) tools implemented
 
 ### 9.4 Memory System
 
@@ -1693,7 +1724,7 @@ synroute setup
 ### 9.13 Quality and Safety
 
 - [ ] **AC-Q1:** Agent MUST run build command before declaring implement phase complete (#236)
-- [ ] **AC-Q2:** Regression detection flags when build/test metrics worsen between iterations (#201)
+- [x] **AC-Q2:** Regression detection implemented — `RegressionTracker` flags when compilation errors increase
 - [ ] **AC-Q3:** Secrets scrubbed from tool output storage (Story 0.4)
 - [ ] **AC-Q4:** `SecretPatternGuardrail` detects Bearer tokens, API keys, passwords
 - [ ] **AC-Q5:** Agent does not create duplicate project structures (#200)
@@ -1723,7 +1754,7 @@ Summary of key open bugs from GitHub issues:
 | #204 | Sub-agents cannot resolve ~/ paths from temp dirs | Medium |
 | #203 | No research-only pipeline mode | Medium |
 | #202 | Verification gates never execute (phases 3-6 never reached) | High |
-| #201 | No regression detection | High |
+| #201 | ~~No regression detection~~ | ~~High~~ (Fixed — `RegressionTracker`) |
 | #200 | Agent creates 26 duplicate Java classes | Medium |
 | #199 | Sub-agent TargetProvider has no fallback on circuit-open | Medium |
 | #198 | Skill matching is language-agnostic (go-testing on Java) | Medium |
