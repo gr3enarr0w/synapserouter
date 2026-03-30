@@ -3119,8 +3119,21 @@ func (a *Agent) callLLMWithRetry(ctx context.Context, req providers.ChatRequest)
 			return providers.ChatResponse{}, ctx.Err()
 		}
 
-		// All providers at current level failed — escalate instead of retrying same level
+		// All providers at current level failed
 		if strings.Contains(err.Error(), "all providers at level") {
+			// Rate limit (429) — wait and retry same level instead of escalating.
+			// Vertex AI Claude has 3-5 RPM default; waiting 30s usually clears it.
+			if isRateLimitErr(err) && attempt < 2 {
+				waitDur := 30 * time.Second
+				log.Printf("[Agent] rate limited at level %d — waiting %v before retry (attempt %d)",
+					a.providerIdx, waitDur, attempt+1)
+				select {
+				case <-time.After(waitDur):
+				case <-ctx.Done():
+					return providers.ChatResponse{}, ctx.Err()
+				}
+				continue
+			}
 			if a.escalateProvider() {
 				log.Printf("[Agent] all providers at level %d failed — escalated to level %d",
 					a.providerIdx-1, a.providerIdx)
@@ -3196,6 +3209,16 @@ func (a *Agent) storeMessagesToDB(msgs []providers.Message, source string) {
 
 // isContextOverflowError returns true if the error indicates the request exceeds
 // the model's context window. Previously dead code — now wired into callLLMWithRetry.
+// isRateLimitErr detects 429/rate-limit/quota errors in the error chain.
+func isRateLimitErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "429") || strings.Contains(s, "rate limit") ||
+		strings.Contains(s, "resource_exhausted") || strings.Contains(s, "quota")
+}
+
 func isContextOverflowError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "too long") ||
