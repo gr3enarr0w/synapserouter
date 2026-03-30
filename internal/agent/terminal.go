@@ -22,10 +22,12 @@ type Terminal struct {
 }
 
 // NewTerminal creates a terminal wrapper for the given file descriptor.
+// Uses os.Stdin directly instead of os.NewFile to avoid fd ownership —
+// os.NewFile creates a file that closes the fd on GC, which would kill stdin.
 func NewTerminal(fd int) *Terminal {
 	return &Terminal{
 		fd:   fd,
-		file: os.NewFile(uintptr(fd), "/dev/stdin"),
+		file: os.Stdin, // reuse existing file, don't create new one that owns the fd
 	}
 }
 

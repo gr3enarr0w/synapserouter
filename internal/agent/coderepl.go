@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"bufio"
 	"io"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -175,11 +176,13 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		}
 
 		if !inputScanner.Scan() {
-			// EOF (Ctrl-D) or input closed
+			scanErr := inputScanner.Err()
+			log.Printf("[REPL] Scanner.Scan() returned false: err=%v", scanErr)
 			fmt.Fprintln(cr.out, "bye")
 			return nil
 		}
 		line := inputScanner.Text()
+		log.Printf("[REPL] got input: %q", line)
 
 		input := strings.TrimSpace(line)
 		if input == "" {
