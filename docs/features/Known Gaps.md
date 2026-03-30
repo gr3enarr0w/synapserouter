@@ -20,8 +20,8 @@ Gaps are ordered by when they will be addressed. Phase 1 is active work; later p
 | Recall tool session scoping for sub-agents | High | 0.5 | 2 |
 | Compaction summary missing key context | High | 0.6 | 2 |
 | Skill injection has no token budget | Low | 0.7 | 2 |
-| No tool call verification on text-only responses | High | 1.1 | 3 |
-| Review cycle spinning (no improvement detection) | High | 1.2 | 3 |
+| ~~No tool call verification on text-only responses~~ | ~~High~~ | ~~1.1~~ | ~~3~~ | **CLOSED** -- text-based tool call parser (5 formats) + completion signal detection |
+| ~~Review cycle spinning (no improvement detection)~~ | ~~High~~ | ~~1.2~~ | ~~3~~ | **CLOSED** -- review stability/divergence detection implemented |
 | Language detection false positives | Medium | 3.2 | 1 |
 | Context propagation / thread safety | High | 2.2 | 2 |
 | diagnostics.go file race with concurrent agents | Low | 2.2 | 2 |
@@ -51,7 +51,7 @@ Gaps are ordered by when they will be addressed. Phase 1 is active work; later p
 | Gap | Severity | Story |
 |---|---|---|
 | No rich content creation (docs, presentations) | Medium | 8.1 |
-| No terminal UI beyond basic REPL | Low | 9.1 |
+| ~~No terminal UI beyond basic REPL~~ | ~~Low~~ | ~~9.1~~ | **CLOSED** -- code mode TUI with status bar, scroll regions, keyboard shortcuts (^P, ^T, ^L, ^E, ^/) |
 | SQLite single-writer bottleneck at scale | Low | 10.1 |
 
 ---
@@ -74,12 +74,9 @@ Gaps are ordered by when they will be addressed. Phase 1 is active work; later p
 
 ### High
 
-#### No tool call verification on text-only responses
+#### ~~No tool call verification on text-only responses~~ (CLOSED)
 - **Found:** First E2E test -- agent described creating files without using tools
-- **Impact:** LLM can "complete" a task by describing what it would do
-- **Partial fix:** System prompt now says "Every response must include tool calls"
-- **Better fix:** Detect text-only responses that claim completion, force tool verification
-- **Roadmap:** Phase 1 (Story 1.1 -- review mode pipeline)
+- **Status:** Fixed -- text-based tool call parser (`internal/agent/text_tool_parser.go`) parses 5 tool call formats from Ollama models that don't support native function calling. Completion signal detection prevents infinite loops when the agent has finished its task.
 
 #### Sub-agent permissions in worktrees
 - **Found:** All worktree agents -- Write and Bash denied

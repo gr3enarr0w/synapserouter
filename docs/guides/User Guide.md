@@ -60,11 +60,19 @@ GCP_REGION=us-central1
 ./synroute models         # List available models
 ```
 
-### Start the Server
+### Start Code Mode (Default)
 
 ```bash
-./synroute                # Starts HTTP server on :8090 (default)
-./synroute serve          # Same, explicit command
+./synroute                # Starts code mode TUI (default)
+./synroute code           # Same, explicit command
+```
+
+Code mode is the primary interface -- a full terminal UI with status bar, keyboard shortcuts, and token streaming. See the "Using synroute code" section below.
+
+### Start the HTTP Server
+
+```bash
+./synroute serve          # Start HTTP server on :8090
 ```
 
 The server exposes the OpenAI-compatible API at `/v1/chat/completions` and diagnostic endpoints. See [[CLI Commands#synroute serve]] for details.
@@ -81,7 +89,9 @@ The `chat` command is the primary interface for the coding agent. It supports tw
 ./synroute chat
 ```
 
-This opens an interactive session where you can converse with the agent. The agent has access to tools (bash, file read/write/edit, grep, glob, git) and will execute them to complete your tasks.
+This opens an interactive session where you can converse with the agent. The agent has access to 10 built-in tools (bash, file read/write/edit, grep, glob, git, web_search, web_fetch, notebook_edit) plus 2 agent tools (delegate, handoff) and will execute them to complete your tasks.
+
+You can attach files to your messages using `@file` or `@dir/` references (with path traversal protection).
 
 **REPL commands:**
 
@@ -94,6 +104,11 @@ This opens an interactive session where you can converse with the agent. The age
 | `/history`  | Show conversation history      |
 | `/agents`   | Show sub-agent status          |
 | `/budget`   | Show token budget usage        |
+| `/plan`     | Enter plan mode                |
+| `/review`   | Enter review mode              |
+| `/check`    | Run self-check                 |
+| `/fix`      | Enter fix mode                 |
+| `/help`     | Show help and keyboard shortcuts |
 
 ### One-Shot Mode
 
@@ -150,6 +165,37 @@ Worktrees have a 24-hour TTL, a 2GB per-tree size cap, and a 10GB total cap. Bac
 
 ---
 
+## Using synroute code (Code Mode TUI)
+
+Code mode is the default command (`synroute` or `synroute code`). It provides a full terminal UI with status bar, scroll regions, and keyboard shortcuts.
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `^P` | Show pipeline status |
+| `^T` | Show recent tool calls |
+| `^L` | Cycle verbosity level |
+| `^E` | Force provider escalation |
+| `^/` | Show help and shortcuts |
+| `Ctrl-C` | Multi-mode: during LLM call cancels request; at idle prompt, press twice to exit |
+
+### Token Streaming
+
+Code mode supports token-by-token streaming via SSE for providers that implement the `StreamingProvider` interface (currently Ollama). Tokens appear as they are generated rather than waiting for the full response.
+
+### Clean Banner
+
+At normal verbosity, the startup banner shows "N tiers engaged" without debug LLM lines. Increase verbosity with `^L` or `-v`/`-vv` flags for more detail.
+
+### Conversation Tier
+
+The parent agent starts at a configurable conversation tier. Set `SYNROUTE_CONVERSATION_TIER` to override the default:
+- Personal profile default: `frontier`
+- Work profile default: `mid`
+
+---
+
 ## Using the Agent API
 
 The server exposes an agent endpoint for programmatic access.
@@ -191,9 +237,12 @@ Synroute supports two profiles that control which providers are available.
 
 ### Work
 
-- **Vertex AI only** with native GCP authentication
+- **Vertex AI** with 3-tier escalation chain (haiku → sonnet+gemini → opus+gemini)
 - Claude models via `rawPredict`, Gemini models via `generateContent`
 - Uses model names without dates (e.g., `claude-sonnet-4-6`)
+- Chain configurable via `WORK_CHAIN` env var (same pipe-separated format as `OLLAMA_CHAIN`)
+- Optional: `models.corp` as additional OpenAI-compatible provider (`MODELS_CORP_BASE_URL`)
+- Default conversation tier: `mid` (configurable via `SYNROUTE_CONVERSATION_TIER`)
 
 ### Switching Profiles
 

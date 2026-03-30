@@ -31,12 +31,33 @@ Subscription providers can be disabled entirely with `SUBSCRIPTIONS_DISABLED=tru
 
 ### Work Profile
 
-The work profile uses **Vertex AI** exclusively:
+The work profile uses **Vertex AI** with a 3-tier escalation chain, plus an optional `models.corp` provider:
 
 | Provider | Backend | Auth | Config Env Vars |
 |---|---|---|---|
 | `vertex-claude` | Claude via Vertex rawPredict | ADC (Application Default Credentials) | `VERTEX_CLAUDE_PROJECT`, `VERTEX_CLAUDE_REGION` (default: `us-east5`) |
 | `vertex-gemini` | Gemini via Vertex generateContent | ADC or service account | `VERTEX_GEMINI_PROJECT`, `VERTEX_GEMINI_LOCATION` (default: `global`), `VERTEX_GEMINI_SA_KEY` |
+| `models-corp` | OpenAI-compatible (optional) | API key | `MODELS_CORP_BASE_URL`, `MODELS_CORP_USER_KEY`, `MODELS_CORP_MODEL` |
+
+#### Work Profile Escalation Chain
+
+The default 3-tier chain escalates from cheap to frontier models:
+
+| Tier | Models | Class |
+|---|---|---|
+| T0 | haiku | Fast/cheap |
+| T1 | sonnet + gemini | Mid-range |
+| T2 | opus + gemini | Frontier |
+
+The chain is configurable via the `WORK_CHAIN` env var using the same pipe-separated format as `OLLAMA_CHAIN`:
+
+```env
+WORK_CHAIN=vertex-claude-cheap|vertex-claude-mid,vertex-gemini-mid|vertex-claude-frontier,vertex-gemini-frontier
+```
+
+If `WORK_CHAIN` is not set, the default 3-tier chain is created from available providers.
+
+The default conversation tier for the work profile is `mid` (configurable via `SYNROUTE_CONVERSATION_TIER`).
 
 No Ollama Cloud or subscription providers are loaded in work profile.
 

@@ -34,7 +34,7 @@ Synapserouter is an active, early-stage project. The core router and agent are f
 | 6 | Future Infrastructure | PLANNED | 0 of 9 stories done | Phase 3 |
 | 7 | Chat Backend API | PLANNED | 0 of 3 stories done | Phase 3 |
 | 8 | Rich Content | PLANNED | 0 of 2 stories done | Future |
-| 9 | CLI Terminal UI | PLANNED | 0 of 3 stories done | Future |
+| 9 | CLI Terminal UI | IN PROGRESS | 2 of 3 stories done | Active |
 | 10 | Scale | PLANNED | 0 of 2 stories done | Future |
 
 **Overall: ~1 of 36 stories complete. Most work is ahead.**
@@ -660,22 +660,22 @@ Chat-driven creation of PPTX, DOCX, XLSX, and diagrams via document-mcp. AI-gene
 
 ### Story 9.1: Chat mode -- conversational terminal interface
 
-**Status:** PLANNED
+**Status:** DONE
 
-Clean TUI with status bar, keyboard shortcuts (^H history, ^S sessions, ^N new, ^F files), no TUI framework (raw ANSI + Go stdlib).
+Clean TUI with status bar, keyboard shortcuts, no TUI framework (raw ANSI + Go stdlib via golang.org/x/term). Implemented in `internal/agent/coderepl.go` and `internal/agent/coderenderer.go`. Keyboard shortcuts: ^P pipeline, ^T tools, ^L verbosity, ^E escalate, ^/ help. Multi-mode Ctrl-C handling. Phase slash commands: /plan, /review, /check, /fix, /help. Permission prompting via /dev/tty (chat mode only, disabled in code mode due to raw terminal conflicts).
 
-**Dependencies:** Epic 7 (Story 7.1)
+**Root cause fix:** `os.NewFile(stdin fd)` was closing the fd on GC, killing the REPL. Fixed by using `os.Stdin` directly in `internal/agent/terminal.go`.
+
 **Effort:** Large
 
 ---
 
 ### Story 9.2: Code mode -- pipeline-aware agent interface
 
-**Status:** PLANNED
+**Status:** DONE
 
-Dedicated code mode showing pipeline phase, tool calls, ^P pipeline status, ^R recall, ^E escalate. No shared conversation with chat mode.
+Dedicated code mode (`synroute code`, default command) showing pipeline phase, tool calls, ^P pipeline status, ^T recent tools, ^E escalate. Token streaming via SSE (StreamingProvider interface, Ollama implements). Clean banner at normal verbosity ("N tiers engaged"). Configurable conversation tier via `SYNROUTE_CONVERSATION_TIER` env var. Implemented in `commands_code.go`, `internal/agent/coderepl.go`, `internal/agent/coderenderer.go`.
 
-**Dependencies:** Story 9.1
 **Effort:** Medium
 
 ---
