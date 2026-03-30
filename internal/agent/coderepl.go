@@ -59,9 +59,16 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 	})
 	defer stopResize()
 
-	// Handle Ctrl-C — cancel current request, don't exit
+	// Multi-mode Ctrl-C handling:
+	// 1. During LLM call: cancel current request, return to prompt
+	// 2. At empty prompt: first press shows message, rapid second press exits
+	// 3. At prompt with text: clears the line (handled by readline)
 	var reqMu sync.Mutex
 	var cancelFn context.CancelFunc
+	var agentRunning bool // true while agent.Run is executing
+	var ctrlCCount int    // consecutive Ctrl-C presses at idle prompt
+	var lastCtrlC time.Time
+
 	newReqCtx := func() context.Context {
 		reqMu.Lock()
 		defer reqMu.Unlock()
@@ -70,7 +77,14 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		}
 		var reqCtx context.Context
 		reqCtx, cancelFn = context.WithCancel(ctx)
+		agentRunning = true
+		ctrlCCount = 0
 		return reqCtx
+	}
+	markDone := func() {
+		reqMu.Lock()
+		agentRunning = false
+		reqMu.Unlock()
 	}
 	defer func() {
 		reqMu.Lock()
@@ -84,18 +98,49 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 	signal.Notify(sigCh, syscall.SIGINT)
 	defer signal.Stop(sigCh)
 
+	exitCh := make(chan struct{})
+
 	go func() {
 		for range sigCh {
 			reqMu.Lock()
-			if cancelFn != nil {
-				cancelFn()
-			}
+			running := agentRunning
 			reqMu.Unlock()
-			cr.renderer.mu.Lock()
-			cr.renderer.writeContent("")
-			cr.renderer.writeContent(cr.renderer.color("\033[33m", "  (interrupted)"))
-			cr.renderer.writeContent("")
-			cr.renderer.mu.Unlock()
+
+			if running {
+				// During LLM call — cancel the request
+				reqMu.Lock()
+				if cancelFn != nil {
+					cancelFn()
+				}
+				reqMu.Unlock()
+				cr.renderer.mu.Lock()
+				cr.renderer.writeContent("")
+				cr.renderer.writeContent(cr.renderer.color("\033[33m", "  (interrupted)"))
+				cr.renderer.writeContent("")
+				cr.renderer.mu.Unlock()
+			} else {
+				// At prompt — track consecutive presses for exit
+				now := time.Now()
+				if now.Sub(lastCtrlC) < 2*time.Second {
+					ctrlCCount++
+				} else {
+					ctrlCCount = 1
+				}
+				lastCtrlC = now
+
+				if ctrlCCount >= 2 {
+					// Rapid double Ctrl-C at prompt — exit
+					cr.renderer.mu.Lock()
+					cr.renderer.writeContent("")
+					cr.renderer.writeContent("bye")
+					cr.renderer.mu.Unlock()
+					close(exitCh)
+					return
+				}
+				cr.renderer.mu.Lock()
+				cr.renderer.writeContent(cr.renderer.color("\033[2m", "  (press Ctrl-C again to exit, or type /exit)"))
+				cr.renderer.mu.Unlock()
+			}
 		}
 	}()
 
@@ -125,9 +170,16 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 	defer rl.Close()
 
 	for {
+		// Check if double Ctrl-C exit was triggered
+		select {
+		case <-exitCh:
+			return nil
+		default:
+		}
+
 		line, err := rl.Readline()
 		if err != nil {
-			// readline.ErrInterrupt = Ctrl-C, io.EOF = Ctrl-D
+			// readline.ErrInterrupt = Ctrl-C at prompt, io.EOF = Ctrl-D
 			if err == readline.ErrInterrupt {
 				continue
 			}
@@ -141,7 +193,39 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 			continue
 		}
 
-		// Handle REPL commands
+		// Handle keyboard shortcuts (Ctrl-key combos sent as single chars)
+		if len(input) == 1 {
+			switch input[0] {
+			case 0x10: // ^P — pipeline status
+				cr.renderer.ShowPipeline()
+				continue
+			case 0x14: // ^T — recent tools
+				cr.renderer.ShowRecentTools()
+				continue
+			case 0x0C: // ^L — cycle verbosity
+				v := (cr.renderer.verbosity + 1) % 3
+				cr.renderer.SetVerbosity(v)
+				continue
+			case 0x05: // ^E — force escalation
+				if cr.agent.ForceEscalate() {
+					cr.renderer.mu.Lock()
+					cr.renderer.writeContent(cr.renderer.color("\033[33m", "  escalated to next tier"))
+					cr.renderer.mu.Unlock()
+				} else {
+					cr.renderer.mu.Lock()
+					cr.renderer.writeContent(cr.renderer.color("\033[2m", "  already at highest tier"))
+					cr.renderer.mu.Unlock()
+				}
+				continue
+			}
+		}
+		// ^/ — help (0x1F)
+		if len(input) == 1 && input[0] == 0x1F {
+			cr.renderer.ShowHelp()
+			continue
+		}
+
+		// Handle REPL slash commands
 		if strings.HasPrefix(input, "/") {
 			if done := cr.handleCommand(input); done {
 				return nil
@@ -158,6 +242,7 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		cr.renderer.mu.Unlock()
 
 		response, err := cr.agent.Run(reqCtx, input)
+		markDone()
 		if err != nil {
 			cr.renderer.Error(err.Error())
 			continue

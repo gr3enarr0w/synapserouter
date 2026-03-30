@@ -459,8 +459,14 @@ func (cr *CodeRenderer) ShowHelp() {
 	cr.writeContent("  /clear          Clear conversation")
 	cr.writeContent("  /exit           Exit code mode")
 	cr.writeContent("")
-	cr.writeContent("  Ctrl-C  Cancel current request")
+	cr.writeContent("  Keyboard shortcuts:")
+	cr.writeContent("  Ctrl-C  Cancel current request (2x to exit)")
 	cr.writeContent("  Ctrl-D  Exit")
+	cr.writeContent("  Ctrl-P  Pipeline status")
+	cr.writeContent("  Ctrl-T  Recent tool calls")
+	cr.writeContent("  Ctrl-L  Cycle verbosity (compact/normal/verbose)")
+	cr.writeContent("  Ctrl-E  Force escalation to next tier")
+	cr.writeContent("  Ctrl-/  Show this help")
 	cr.writeContent("")
 }
 
