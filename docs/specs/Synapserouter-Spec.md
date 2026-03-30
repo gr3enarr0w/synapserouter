@@ -1,7 +1,7 @@
 # Synapserouter Product Specification
 
-**Version:** 1.1
-**Date:** 2026-03-27
+**Version:** 1.0
+**Date:** 2026-03-30
 **Status:** Living document -- updated as features ship
 
 ---
