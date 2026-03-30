@@ -82,6 +82,13 @@ func NewRouter(
 		breakers[p.Name()] = NewCircuitBreaker(db, p.Name())
 	}
 
+	// Reset any stale open circuits from previous sessions.
+	// Rate limit 429s should be handled by the rate limiter, not persist as
+	// open circuits blocking providers across restarts.
+	if db != nil {
+		db.Exec("UPDATE circuit_breaker_state SET state = 'closed', failure_count = 0 WHERE state = 'open' AND open_until < datetime('now')")
+	}
+
 	return &Router{
 		providers:       providerList,
 		usageTracker:    tracker,
@@ -658,13 +665,10 @@ func (r *Router) ChatCompletionStreamForProvider(
 
 func (r *Router) findFirstHealthyCandidate(ctx context.Context, candidates []providers.Provider) (providers.Provider, error) {
 	for _, p := range candidates {
-		// Skip if circuit breaker is open
 		if r.circuitBreakers[p.Name()].IsOpen() {
 			log.Printf("[Router] Skipping %s (circuit breaker open)", p.Name())
 			continue
 		}
-
-		// Check health (cached to avoid burning API quota)
 		if r.isHealthyCached(ctx, p) {
 			return p, nil
 		}

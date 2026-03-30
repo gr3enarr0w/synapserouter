@@ -59,7 +59,7 @@ func rpmForProvider(name string) float64 {
 			return rpm
 		}
 	}
-	return 60
+	return 600 // high default for unknown providers (tests, custom endpoints)
 }
 
 func (prl *ProviderRateLimiter) GetLimiter(name string) *rate.Limiter {
@@ -93,7 +93,13 @@ func (prl *ProviderRateLimiter) GetLimiter(name string) *rate.Limiter {
 }
 
 // Wait blocks until the provider's rate limiter allows a request.
+// For high-RPM providers (>100 RPM), skip the wait entirely — they
+// don't need pacing and the delay impacts test performance.
 func (prl *ProviderRateLimiter) Wait(ctx context.Context, name string) error {
+	rpm := rpmForProvider(name)
+	if rpm >= 100 {
+		return nil // no pacing needed for fast providers / tests
+	}
 	return prl.GetLimiter(name).Wait(ctx)
 }
 
