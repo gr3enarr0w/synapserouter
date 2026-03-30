@@ -200,23 +200,13 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 				continue
 			}
 			// EOF — could be real (Ctrl-D) or spurious (cursor position response
-			// from readline's terminal queries leaking as \033[row;colR).
-			// Only exit on real EOF: if the agent has been used, retry once.
-			if eofRetries < 2 && cr.agent != nil {
-				eofRetries++
-				log.Printf("[REPL] spurious EOF (retry %d/2) — readline cursor response leak", eofRetries)
-				// Recreate readline to reset terminal state
-				rl.Close()
-				rl, err = readline.NewEx(&readline.Config{
-					Prompt:       "\033[32msynroute>\033[0m ",
-					HistoryFile:  historyFile,
-					AutoComplete: readline.NewPrefixCompleter(completionItems...),
-					InterruptPrompt: "",
-					EOFPrompt:    "bye",
-				})
-				if err != nil {
-					return fmt.Errorf("readline reinit: %w", err)
-				}
+			// \033[row;colR from readline's \033[6n query arriving late).
+			// Just retry on the same readline instance — the stale bytes were
+			// consumed by the failed Readline() call. Only exit after 3
+			// consecutive EOFs with no successful reads in between.
+			eofRetries++
+			if eofRetries <= 3 {
+				log.Printf("[REPL] EOF retry %d/3 (likely stale cursor position response)", eofRetries)
 				continue
 			}
 			fmt.Fprintln(cr.out, "bye")
