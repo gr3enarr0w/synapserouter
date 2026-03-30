@@ -37,7 +37,22 @@ func NewREPL(agent *Agent, renderer TerminalRenderer) *REPL {
 // Run starts the interactive REPL loop. Blocks until exit.
 func (r *REPL) Run(ctx context.Context) error {
 	r.ctx = ctx
-	fmt.Fprintln(r.out, "synroute agent — type /help for commands, /exit to quit")
+	// Brain-circuit logo
+	noColor := os.Getenv("NO_COLOR") != ""
+	c := func(code, text string) string {
+		if noColor {
+			return text
+		}
+		return code + text + "\033[0m"
+	}
+	fmt.Fprintln(r.out)
+	fmt.Fprintln(r.out, c("\033[36m", "      ╭──╮")+c("\033[35m", "  ╭─╮"))
+	fmt.Fprintln(r.out, c("\033[36m", "   ╭──╯")+c("\033[96m", "◈◈")+c("\033[36m", "╰──")+c("\033[35m", "╯")+c("\033[95m", "◈")+c("\033[35m", "╰╮"))
+	fmt.Fprintln(r.out, c("\033[36m", "  ╭╯")+c("\033[96m", "─◈──◈─")+c("\033[35m", "──")+c("\033[95m", "◈──")+c("\033[35m", "╮"))
+	fmt.Fprintln(r.out, c("\033[36m", "  ╰╮")+c("\033[96m", " ◈")+c("\033[34m", "──")+c("\033[95m", "◈")+c("\033[35m", "──")+c("\033[95m", "◈─")+c("\033[35m", "╯"))
+	fmt.Fprintln(r.out, c("\033[36m", "   ╰──")+c("\033[96m", "◈")+c("\033[34m", "─╯")+c("\033[95m", " ╰──╯"))
+	fmt.Fprintln(r.out, c("\033[1;36m", "  Syn")+c("\033[1;35m", "Route")+c("\033[2m", " — chat mode"))
+	fmt.Fprintln(r.out, c("\033[2m", "  /help for commands, /exit to quit"))
 	fmt.Fprintln(r.out)
 
 	scanner := bufio.NewScanner(r.in)

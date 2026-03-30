@@ -31,6 +31,7 @@ var (
 )
 
 func cmdVersion() {
+	printLogo()
 	profile := app.GetActiveProfile()
 	fmt.Printf("synroute %s (%s) built %s | profile: %s | %s\n",
 		version, commit, buildDate, profile, runtime.Version())

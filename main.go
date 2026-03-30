@@ -63,6 +63,25 @@ func init() {
 	app.RegisterMigrations(embeddedMigrations)
 }
 
+// printLogo prints the SynRoute brain-circuit logo to stdout.
+func printLogo() {
+	noColor := os.Getenv("NO_COLOR") != ""
+	c := func(code, text string) string {
+		if noColor {
+			return text
+		}
+		return code + text + "\033[0m"
+	}
+	fmt.Println()
+	fmt.Println(c("\033[36m", "      ╭──╮") + c("\033[35m", "  ╭─╮"))
+	fmt.Println(c("\033[36m", "   ╭──╯") + c("\033[96m", "◈◈") + c("\033[36m", "╰──") + c("\033[35m", "╯") + c("\033[95m", "◈") + c("\033[35m", "╰╮"))
+	fmt.Println(c("\033[36m", "  ╭╯") + c("\033[96m", "─◈──◈─") + c("\033[35m", "──") + c("\033[95m", "◈──") + c("\033[35m", "╮"))
+	fmt.Println(c("\033[36m", "  ╰╮") + c("\033[96m", " ◈") + c("\033[34m", "──") + c("\033[95m", "◈") + c("\033[35m", "──") + c("\033[95m", "◈─") + c("\033[35m", "╯"))
+	fmt.Println(c("\033[36m", "   ╰──") + c("\033[96m", "◈") + c("\033[34m", "─╯") + c("\033[95m", " ╰──╯"))
+	fmt.Println(c("\033[1;36m", "  Syn") + c("\033[1;35m", "Route"))
+	fmt.Println()
+}
+
 func main() {
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
@@ -350,6 +369,7 @@ func startServer() {
 		log.Println("🔓 No SYNROUTE_ADMIN_TOKEN set — admin endpoints restricted to localhost")
 	}
 	logStartupCheck(startupCheck)
+	printLogo()
 
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal(err)
