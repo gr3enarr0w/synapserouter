@@ -42,6 +42,9 @@ func extractTextToolCalls(content string) ([]map[string]interface{}, string) {
 	// Format 3: [tool_calls][{...}][/tool_calls] — XML-like tags with JSON array
 	remaining = parseXMLTagFormat(remaining, &toolCalls)
 
+	// Format 4: tool_call\n```json\n{"command":"ls"}\n``` — narrated tool call with JSON block
+	remaining = parseNarratedJSONFormat(remaining, &toolCalls)
+
 	if len(toolCalls) == 0 {
 		return nil, content
 	}
@@ -138,4 +141,75 @@ func parseXMLTagFormat(content string, toolCalls *[]map[string]interface{}) stri
 	}
 
 	return xmlTagToolCallRe.ReplaceAllString(content, "")
+}
+
+// parseNarratedJSONFormat handles models that narrate a tool call then provide
+// a JSON code block with arguments. Matches patterns like:
+//
+//	tool_call
+//	```json
+//	{"command": "ls -la"}
+//	```
+//
+// The tool name is inferred from the JSON keys (e.g., "command" → bash, "path" → file_read).
+var narratedJSONRe = regexp.MustCompile("(?s)tool_call\\s*\\n```(?:json)?\\s*\\n(\\{.+?\\})\\s*\\n```")
+
+// toolNameFromArgs infers the tool name from the argument keys.
+var argKeyToTool = map[string]string{
+	"command":     "bash",
+	"path":        "file_read",
+	"content":     "file_write",
+	"old_string":  "file_edit",
+	"pattern":     "grep",
+	"query":       "web_search",
+	"url":         "web_fetch",
+	"subcommand":  "git",
+	"cell":        "notebook_edit",
+}
+
+func parseNarratedJSONFormat(content string, toolCalls *[]map[string]interface{}) string {
+	matches := narratedJSONRe.FindAllStringSubmatchIndex(content, -1)
+	if len(matches) == 0 {
+		return content
+	}
+
+	for _, match := range matches {
+		argsStr := content[match[2]:match[3]]
+
+		var args map[string]interface{}
+		if err := json.Unmarshal([]byte(argsStr), &args); err != nil {
+			log.Printf("[Agent] text tool call parse error (narrated-json): %v", err)
+			continue
+		}
+
+		// Infer tool name from argument keys
+		toolName := ""
+		for key, name := range argKeyToTool {
+			if _, ok := args[key]; ok {
+				toolName = name
+				break
+			}
+		}
+		if toolName == "" {
+			continue // can't determine tool
+		}
+
+		// file_write needs both path and content; file_read only needs path
+		if toolName == "file_read" {
+			if _, hasContent := args["content"]; hasContent {
+				toolName = "file_write"
+			}
+		}
+
+		*toolCalls = append(*toolCalls, map[string]interface{}{
+			"id":   "text-tc-" + toolName,
+			"type": "function",
+			"function": map[string]interface{}{
+				"name":      toolName,
+				"arguments": argsStr,
+			},
+		})
+	}
+
+	return narratedJSONRe.ReplaceAllString(content, "")
 }

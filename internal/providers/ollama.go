@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -96,6 +97,14 @@ func (p *OllamaCloudProvider) ChatCompletion(ctx context.Context, req ChatReques
 	var chatResp ChatResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
 		return ChatResponse{}, fmt.Errorf("failed to parse ollama response: %w", err)
+	}
+
+	// Debug: log when model returns text but no tool calls (helps diagnose function calling issues)
+	if len(chatResp.Choices) > 0 && len(chatResp.Choices[0].Message.ToolCalls) == 0 && chatResp.Choices[0].Message.Content != "" {
+		if strings.Contains(chatResp.Choices[0].Message.Content, "tool_call") ||
+			strings.Contains(chatResp.Choices[0].Message.Content, "function") {
+			log.Printf("[Ollama] WARNING: model %s returned text containing 'tool_call'/'function' but no structured tool_calls — model may not support function calling via API", p.model)
+		}
 	}
 
 	// Normalize tool calls: some Ollama models return tool calls under
