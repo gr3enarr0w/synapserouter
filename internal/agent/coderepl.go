@@ -296,6 +296,12 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 			cr.renderer.writeContent("")
 			cr.renderer.mu.Unlock()
 		}
+
+		// Flush stale cursor position responses from stdin before next Readline().
+		// readline sends \033[6n (cursor position query) on every prompt.
+		// During long LLM calls, the response \033[row;colR arrives late and
+		// causes Readline() to return io.EOF. tcflush discards these stale bytes.
+		flushStdin()
 	}
 }
 
