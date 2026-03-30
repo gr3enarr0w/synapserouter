@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -68,6 +69,7 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 	var agentRunning bool // true while agent.Run is executing
 	var ctrlCCount int    // consecutive Ctrl-C presses at idle prompt
 	var lastCtrlC time.Time
+	var eofRetries int    // spurious EOF retries (readline cursor position leak)
 
 	newReqCtx := func() context.Context {
 		reqMu.Lock()
@@ -197,11 +199,31 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 				cr.renderer.mu.Unlock()
 				continue
 			}
-			// EOF (Ctrl-D) — exit
+			// EOF — could be real (Ctrl-D) or spurious (cursor position response
+			// from readline's terminal queries leaking as \033[row;colR).
+			// Only exit on real EOF: if the agent has been used, retry once.
+			if eofRetries < 2 && cr.agent != nil {
+				eofRetries++
+				log.Printf("[REPL] spurious EOF (retry %d/2) — readline cursor response leak", eofRetries)
+				// Recreate readline to reset terminal state
+				rl.Close()
+				rl, err = readline.NewEx(&readline.Config{
+					Prompt:       "\033[32msynroute>\033[0m ",
+					HistoryFile:  historyFile,
+					AutoComplete: readline.NewPrefixCompleter(completionItems...),
+					InterruptPrompt: "",
+					EOFPrompt:    "bye",
+				})
+				if err != nil {
+					return fmt.Errorf("readline reinit: %w", err)
+				}
+				continue
+			}
 			fmt.Fprintln(cr.out, "bye")
 			return nil
 		}
 		ctrlCCount = 0 // reset on any normal input
+		eofRetries = 0 // reset on successful read
 
 		input := strings.TrimSpace(line)
 		if input == "" {
