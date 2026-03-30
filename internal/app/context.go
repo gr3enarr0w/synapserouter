@@ -266,15 +266,6 @@ func initializeWorkProviders() []providers.Provider {
 	if claudeRegion == "" {
 		claudeRegion = "us-east5"
 	}
-	if claudeProject != "" {
-		providerList = append(providerList, providers.NewVertexProvider(providers.VertexConfig{
-			Name:      "vertex-claude",
-			Project:   claudeProject,
-			Location:  claudeRegion,
-			Publisher: "anthropic",
-			Prefix:    "claude",
-		}))
-	}
 
 	geminiProject := envFirst("VERTEX_GEMINI_PROJECT", "GEMINI_PROJECT")
 	geminiLocation := envFirst("VERTEX_GEMINI_LOCATION", "GEMINI_LOCATION")
@@ -282,15 +273,70 @@ func initializeWorkProviders() []providers.Provider {
 		geminiLocation = "global"
 	}
 	geminiSAKey := envFirst("VERTEX_GEMINI_SA_KEY", "GOOGLE_SERVICE_ACCOUNT_JSON")
+
+	// Create tiered providers: 2 per level (Claude + Gemini)
+	// L0 cheap: haiku + flash
+	// L1 mid: sonnet + pro
+	// L2 frontier: opus + pro-preview
+	// Vertex model names per tier
+	// Claude: haiku-4.5 (cheap), sonnet-4.6 (mid), opus-4.6 (frontier)
+	// Gemini: flash (cheap), pro (mid+frontier) — only 2 distinct tiers
+	claudeModels := []struct{ name, model string }{
+		{"vertex-claude-cheap", "claude-haiku-4-5"},
+		{"vertex-claude-mid", "claude-sonnet-4-6"},
+		{"vertex-claude-frontier", "claude-opus-4-6"},
+	}
+	geminiModels := []struct{ name, model string }{
+		{"vertex-gemini-cheap", "gemini-3-flash-preview"},
+		{"vertex-gemini-mid", "gemini-3.1-pro-preview"},
+		{"vertex-gemini-frontier", "gemini-3.1-pro-preview"},
+	}
+
+	if claudeProject != "" {
+		for _, m := range claudeModels {
+			providerList = append(providerList, providers.NewVertexProvider(providers.VertexConfig{
+				Name:      m.name,
+				Project:   claudeProject,
+				Location:  claudeRegion,
+				Publisher: "anthropic",
+				Prefix:    "claude",
+				Model:     m.model,
+			}))
+		}
+		log.Printf("✓ vertex-claude: 3 tiers (haiku/sonnet/opus) on %s/%s", claudeProject, claudeRegion)
+	}
+
 	if geminiProject != "" {
-		providerList = append(providerList, providers.NewVertexProvider(providers.VertexConfig{
-			Name:      "vertex-gemini",
-			Project:   geminiProject,
-			Location:  geminiLocation,
-			Publisher: "google",
-			SAKeyFile: geminiSAKey,
-			Prefix:    "gemini",
-		}))
+		for _, m := range geminiModels {
+			providerList = append(providerList, providers.NewVertexProvider(providers.VertexConfig{
+				Name:      m.name,
+				Project:   geminiProject,
+				Location:  geminiLocation,
+				Publisher: "google",
+				SAKeyFile: geminiSAKey,
+				Prefix:    "gemini",
+				Model:     m.model,
+			}))
+		}
+		log.Printf("✓ vertex-gemini: 3 tiers (flash/pro/pro-preview) on %s/%s", geminiProject, geminiLocation)
+	}
+
+	// models.corp (Red Hat AI Inference) — OpenAI-compatible endpoint
+	// Requires VPN. Auth via user_key. Configure:
+	//   MODELS_CORP_BASE_URL=https://models.corp.redhat.com/v1
+	//   MODELS_CORP_USER_KEY=your-user-key
+	//   MODELS_CORP_MODEL=model-name (optional, default: auto)
+	modelsCorpURL := os.Getenv("MODELS_CORP_BASE_URL")
+	modelsCorpKey := os.Getenv("MODELS_CORP_USER_KEY")
+	modelsCorpModel := os.Getenv("MODELS_CORP_MODEL")
+	if modelsCorpURL != "" {
+		if modelsCorpModel == "" {
+			modelsCorpModel = "auto"
+		}
+		providerList = append(providerList, providers.NewOllamaCloudProvider(
+			modelsCorpURL, modelsCorpKey, modelsCorpModel, "models-corp",
+		))
+		log.Printf("✓ models-corp provider initialized (%s)", modelsCorpURL)
 	}
 
 	return providerList
@@ -305,8 +351,34 @@ func initializeWorkProviders() []providers.Provider {
 //     each level gets the corresponding tier.
 //   - Otherwise, auto-classifies: bottom third = cheap, middle = mid, top third = frontier.
 //   - Subscription providers always get frontier tier.
+// buildWorkEscalationChain creates a 3-level chain for the work profile:
+//
+//	L0 (cheap):    claude-haiku — 1 model, fastest/cheapest
+//	L1 (mid):      claude-sonnet + gemini-pro — 2 models, cross-review
+//	L2 (frontier): claude-opus + gemini-pro + models.corp — 2-3 models
+func buildWorkEscalationChain() []agent.EscalationLevel {
+	chain := []agent.EscalationLevel{
+		{Providers: []string{"vertex-claude-cheap"}, Tier: agent.TierCheap},
+		{Providers: []string{"vertex-claude-mid", "vertex-gemini-mid"}, Tier: agent.TierMid},
+		{Providers: []string{"vertex-claude-frontier", "vertex-gemini-frontier"}, Tier: agent.TierFrontier},
+	}
+
+	// Add models.corp to frontier if configured
+	if os.Getenv("MODELS_CORP_BASE_URL") != "" {
+		chain[2].Providers = append(chain[2].Providers, "models-corp")
+	}
+
+	log.Printf("[Agent] work escalation chain: 3 levels — L0: haiku, L1: sonnet+gemini, L2: opus+gemini")
+	return chain
+}
+
 func buildEscalationChain(profile string) []agent.EscalationLevel {
 	var chain []agent.EscalationLevel
+
+	// Work profile: Vertex AI escalation chain (Claude + Gemini per level)
+	if profile == "work" {
+		return buildWorkEscalationChain()
+	}
 
 	chainLevels := ParseOllamaChain(os.Getenv("OLLAMA_CHAIN"))
 	explicitTiers := parseChainTiers(os.Getenv("OLLAMA_CHAIN_TIERS"))
