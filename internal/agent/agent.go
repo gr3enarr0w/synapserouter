@@ -703,9 +703,11 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			}
 			// Don't exit on first text-only turn if agent narrated tool calls in text.
 			// The text parser may have missed a format — give stall detection a chance.
+			// Only check for tool name keywords (language-independent).
 			if a.noToolTurns == 1 && a.toolCallCount > 0 && msg.Content != "" &&
 				(strings.Contains(msg.Content, "tool_call") || strings.Contains(msg.Content, "file_read") ||
-					strings.Contains(msg.Content, "Let me read") || strings.Contains(msg.Content, "Let me check")) {
+					strings.Contains(msg.Content, "file_write") || strings.Contains(msg.Content, "notebook_edit") ||
+					strings.Contains(msg.Content, "```json")) {
 				log.Printf("[Agent] text-only turn with tool narration after %d calls — continuing", a.toolCallCount)
 				continue
 			}

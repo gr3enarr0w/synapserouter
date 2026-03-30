@@ -47,6 +47,11 @@ func (t *NotebookEditTool) Execute(ctx context.Context, args map[string]interfac
 		return &ToolResult{Error: err.Error()}, nil
 	}
 
+	// Spec file protection
+	if IsProtectedPath(path) {
+		return &ToolResult{Error: fmt.Sprintf("Cannot modify protected file '%s'. This is the source spec.", filepath.Base(path))}, nil
+	}
+
 	if !strings.HasSuffix(strings.ToLower(filepath.Base(path)), ".ipynb") {
 		return &ToolResult{Error: "notebook_edit only works on .ipynb files"}, nil
 	}

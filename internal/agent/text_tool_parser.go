@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"regexp"
 	"strings"
@@ -74,7 +75,7 @@ func parseDashFormat(content string, toolCalls *[]map[string]interface{}) string
 		}
 
 		*toolCalls = append(*toolCalls, map[string]interface{}{
-			"id":   "text-tc-" + toolName,
+			"id":   fmt.Sprintf("text-tc-%s-%d", toolName, len(*toolCalls)),
 			"type": "function",
 			"function": map[string]interface{}{
 				"name":      toolName,
@@ -107,7 +108,7 @@ func parseCodeBlockFormat(content string, toolCalls *[]map[string]interface{}) s
 		}
 
 		*toolCalls = append(*toolCalls, map[string]interface{}{
-			"id":   "text-tc-" + toolName,
+			"id":   fmt.Sprintf("text-tc-%s-%d", toolName, len(*toolCalls)),
 			"type": "function",
 			"function": map[string]interface{}{
 				"name":      toolName,
@@ -202,7 +203,7 @@ func parseNarratedJSONFormat(content string, toolCalls *[]map[string]interface{}
 		}
 
 		*toolCalls = append(*toolCalls, map[string]interface{}{
-			"id":   "text-tc-" + toolName,
+			"id":   fmt.Sprintf("text-tc-%s-%d", toolName, len(*toolCalls)),
 			"type": "function",
 			"function": map[string]interface{}{
 				"name":      toolName,

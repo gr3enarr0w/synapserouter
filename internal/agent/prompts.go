@@ -44,7 +44,7 @@ func LoadProjectInstructions(workDir string) string {
 		// Strip YAML frontmatter (--- block at start of file)
 		if strings.HasPrefix(content, "---") {
 			if end := strings.Index(content[3:], "---"); end >= 0 {
-				content = strings.TrimSpace(content[end+6:]) // skip past closing ---
+				content = strings.TrimSpace(content[3+end+3:]) // 3 (first ---) + end + 3 (closing ---)
 			}
 		}
 		if content != "" {
