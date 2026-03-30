@@ -58,6 +58,11 @@ func makeHTTPRequestWithTimeout(urlStr string, timeout time.Duration) (*http.Res
 	return client.Do(url)
 }
 
+func init() {
+	// Register embedded migrations so InitLight can apply them for all modes (not just serve)
+	app.RegisterMigrations(embeddedMigrations)
+}
+
 func main() {
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"fmt"
 	"log"
 	"os"
@@ -67,6 +68,13 @@ func InitLight(ctx context.Context) (*AppContext, error) {
 		return nil, err
 	}
 
+	// Run embedded migrations if registered (ensures all tables exist for code mode)
+	if hasMigrations {
+		if err := RunEmbeddedMigrations(db, registeredMigrations); err != nil {
+			log.Printf("Warning: embedded migration error: %v", err)
+		}
+	}
+
 	tracker, err := usage.NewTracker(dbPath)
 	if err != nil {
 		db.Close()
@@ -91,6 +99,43 @@ func InitLight(ctx context.Context) (*AppContext, error) {
 // InitFull extends InitLight by creating the Router. Suitable for server mode.
 func (ac *AppContext) InitFull() {
 	ac.ProxyRouter = router.NewRouter(ac.Providers, ac.UsageTracker, ac.VectorMemory, ac.DB)
+}
+
+// registeredMigrations holds the embedded migration FS, set by RegisterMigrations.
+var (
+	registeredMigrations    embed.FS
+	hasMigrations           bool
+)
+
+// RegisterMigrations stores the embedded migration FS for use by InitLight.
+// Call from main.go init() or before InitLight.
+func RegisterMigrations(fs embed.FS) {
+	registeredMigrations = fs
+	hasMigrations = true
+}
+
+// RunEmbeddedMigrations applies all .sql files from the embedded FS to the database.
+func RunEmbeddedMigrations(db *sql.DB, fs embed.FS) error {
+	files, err := fs.ReadDir("migrations")
+	if err != nil {
+		return fmt.Errorf("read migrations dir: %w", err)
+	}
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), ".sql") {
+			continue
+		}
+		data, err := fs.ReadFile("migrations/" + file.Name())
+		if err != nil {
+			return fmt.Errorf("read migration %s: %w", file.Name(), err)
+		}
+		if _, err := db.Exec(string(data)); err != nil {
+			if strings.Contains(err.Error(), "duplicate column") {
+				continue
+			}
+			return fmt.Errorf("execute migration %s: %w", file.Name(), err)
+		}
+	}
+	return nil
 }
 
 // Close releases resources.
