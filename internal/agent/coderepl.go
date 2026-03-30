@@ -3,8 +3,8 @@ package agent
 import (
 	"context"
 	"fmt"
+	"bufio"
 	"io"
-	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ergochat/readline"
+	// readline removed — ioloop goroutine dies after agent output (v1.01: use Bubble Tea)
 )
 
 // CodeREPL implements the code mode interactive loop with readline-based input
@@ -69,7 +69,6 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 	var agentRunning bool // true while agent.Run is executing
 	var ctrlCCount int    // consecutive Ctrl-C presses at idle prompt
 	var lastCtrlC time.Time
-	var eofRetries int    // spurious EOF retries (readline cursor position leak)
 
 	newReqCtx := func() context.Context {
 		reqMu.Lock()
@@ -108,24 +107,14 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 	os.MkdirAll(historyDir, 0755)
 	historyFile := filepath.Join(historyDir, "history")
 
-	// Build tab completer for slash commands
-	cmds := slashCommands()
-	completionItems := make([]*readline.PrefixCompleter, len(cmds))
-	for i, cmd := range cmds {
-		completionItems[i] = readline.PcItem(cmd)
-	}
-
-	rl, err := readline.NewEx(&readline.Config{
-		Prompt:          "\033[32msynroute>\033[0m ",
-		HistoryFile:     historyFile,
-		AutoComplete:    readline.NewPrefixCompleter(completionItems...),
-		InterruptPrompt: "",  // empty = return ErrInterrupt (don't just print ^C and loop)
-		EOFPrompt:       "bye",
-	})
-	if err != nil {
-		return fmt.Errorf("readline init: %w", err)
-	}
-	defer rl.Close()
+	// Use bufio.Scanner instead of readline for input.
+	// readline's ioloop goroutine dies after agent output due to cursor
+	// position query responses (\033[6n → \033[row;colR) interfering with
+	// the internal read state. Known issue: Node.js #57602, Ruby reline #674.
+	// TODO(v1.01): restore tab completion + history via Bubble Tea textinput.
+	_ = historyFile
+	inputScanner := bufio.NewScanner(os.Stdin)
+	inputScanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	// Start signal handler goroutine AFTER readline is created (needs rl reference)
 	go func() {
@@ -159,7 +148,6 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 					cr.renderer.writeContent("")
 					cr.renderer.writeContent("bye")
 					cr.renderer.mu.Unlock()
-					rl.Close()
 					close(exitCh)
 					return
 				}
@@ -178,42 +166,20 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		default:
 		}
 
-		line, err := rl.Readline()
-		if err != nil {
-			// readline.ErrInterrupt = Ctrl-C at prompt
-			if err == readline.ErrInterrupt {
-				now := time.Now()
-				if now.Sub(lastCtrlC) < 2*time.Second {
-					ctrlCCount++
-				} else {
-					ctrlCCount = 1
-				}
-				lastCtrlC = now
+		// Print prompt
+		noColor := os.Getenv("NO_COLOR") != ""
+		if noColor {
+			fmt.Fprint(cr.out, "synroute> ")
+		} else {
+			fmt.Fprint(cr.out, "\033[32msynroute>\033[0m ")
+		}
 
-				if ctrlCCount >= 2 {
-					fmt.Fprintln(cr.out, "\nbye")
-					return nil
-				}
-				cr.renderer.mu.Lock()
-				cr.renderer.writeContent(cr.renderer.color("\033[2m", "  (press Ctrl-C again to exit, or type /exit)"))
-				cr.renderer.mu.Unlock()
-				continue
-			}
-			// EOF — could be real (Ctrl-D) or spurious (cursor position response
-			// \033[row;colR from readline's \033[6n query arriving late).
-			// Just retry on the same readline instance — the stale bytes were
-			// consumed by the failed Readline() call. Only exit after 3
-			// consecutive EOFs with no successful reads in between.
-			eofRetries++
-			if eofRetries <= 3 {
-				log.Printf("[REPL] EOF retry %d/3 (likely stale cursor position response)", eofRetries)
-				continue
-			}
+		if !inputScanner.Scan() {
+			// EOF (Ctrl-D) or input closed
 			fmt.Fprintln(cr.out, "bye")
 			return nil
 		}
-		ctrlCCount = 0 // reset on any normal input
-		eofRetries = 0 // reset on successful read
+		line := inputScanner.Text()
 
 		input := strings.TrimSpace(line)
 		if input == "" {
@@ -287,11 +253,10 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 			cr.renderer.mu.Unlock()
 		}
 
-		// Flush stale cursor position responses from stdin before next Readline().
-		// readline sends \033[6n (cursor position query) on every prompt.
-		// During long LLM calls, the response \033[row;colR arrives late and
-		// causes Readline() to return io.EOF. tcflush discards these stale bytes.
-		flushStdin()
+		// Note: do NOT flush stdin here — readline's ioloop goroutine reads
+		// from a bufio.Reader wrapping stdin. Flushing the underlying fd
+		// causes ioloop to get a read error, which closes the terminal,
+		// which makes all future Readline() calls return io.EOF.
 	}
 }
 
