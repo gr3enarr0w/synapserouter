@@ -2274,10 +2274,16 @@ func (a *Agent) SetMinProviderLevel(level int) {
 	providers := a.config.EscalationChain[a.providerIdx].Providers
 	log.Printf("[Agent] escalating to level %d/%d: %v",
 		a.providerIdx+1, len(a.config.EscalationChain), providers)
+	tier := ""
+	if a.providerIdx < len(a.config.EscalationChain) {
+		tier = string(a.config.EscalationChain[a.providerIdx].Tier)
+	}
 	a.emit(EventEscalation, "", map[string]any{
-		"from_level": fromLevel,
-		"to_level":   a.providerIdx,
-		"providers":  fmt.Sprintf("%v", providers),
+		"from_level":  fromLevel,
+		"to_level":    a.providerIdx,
+		"total_levels": len(a.config.EscalationChain),
+		"tier":        tier,
+		"providers":   fmt.Sprintf("%v", providers),
 	})
 }
 

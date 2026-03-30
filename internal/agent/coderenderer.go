@@ -327,12 +327,11 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		}
 
 	case EventEscalation:
-		from := intVal(e.Data, "from_level")
-		to := intVal(e.Data, "to_level")
-		providers := str(e.Data, "providers")
-		cr.writeContent("")
-		cr.writeContent(cr.color("\033[1;33m", fmt.Sprintf("  escalate level %d -> %d | %s", from, to, providers)))
-		cr.writeContent("")
+		total := intVal(e.Data, "total_levels")
+		if total == 0 {
+			total = 6
+		}
+		cr.writeContent(cr.color("\033[2m", fmt.Sprintf("  %d tiers engaged", total)))
 
 
 	case EventSubAgentSpawn:
