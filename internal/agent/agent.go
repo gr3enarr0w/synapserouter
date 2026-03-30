@@ -587,6 +587,10 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			endSpan(err)
 		}
 		if err != nil {
+			// Context cancelled (Ctrl-C) — return empty, don't show error
+			if ctx != nil && ctx.Err() != nil {
+				return "", ctx.Err()
+			}
 			a.emit(EventError, a.config.TargetProvider, map[string]any{
 				"source":  "llm_call",
 				"message": err.Error(),
@@ -3077,11 +3081,21 @@ func (a *Agent) callLLMWithRetry(ctx context.Context, req providers.ChatRequest)
 	var lastErr error
 
 	for attempt := 0; attempt <= len(backoffs); attempt++ {
+		// Check for context cancellation (Ctrl-C) — return immediately, don't retry
+		if ctx != nil && ctx.Err() != nil {
+			return providers.ChatResponse{}, ctx.Err()
+		}
+
 		resp, err := a.executeForCurrentProvider(ctx, req)
 		if err == nil {
 			return resp, nil
 		}
 		lastErr = err
+
+		// Context cancelled during call — return immediately
+		if ctx != nil && ctx.Err() != nil {
+			return providers.ChatResponse{}, ctx.Err()
+		}
 
 		// All providers at current level failed — escalate instead of retrying same level
 		if strings.Contains(err.Error(), "all providers at level") {

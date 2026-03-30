@@ -1,14 +1,15 @@
 package agent
 
 import (
-	"bufio"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
+	"golang.org/x/term"
 )
 
 // DefaultPermissionPrompt creates a permission prompt function that writes
@@ -56,23 +57,31 @@ func DefaultPermissionPrompt(out io.Writer, in io.Reader) tools.PermissionPrompt
 		}
 		fmt.Fprint(out, c("\033[33m", "  Allow? [y/n/a] "))
 
-		// Read from /dev/tty directly to avoid conflicting with readline's stdin
-		tty, err := os.Open("/dev/tty")
+		// Read a single byte from /dev/tty — terminal may be in raw mode
+		// so we can't wait for a line ending. Just read y, n, or a.
+		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 		if err != nil {
-			// Can't open TTY — fall through to the provided reader
-			scanner := bufio.NewScanner(in)
-			if !scanner.Scan() {
-				return false
-			}
-			return parsePermissionResponse(scanner.Text(), &approveAll)
+			// Can't open TTY — auto-approve as fallback
+			log.Printf("[Permission] can't open /dev/tty: %v — auto-approving", err)
+			return true
 		}
-		defer tty.Close()
 
-		scanner := bufio.NewScanner(tty)
-		if !scanner.Scan() {
-			return false
+		// Temporarily set cooked mode so we get line-buffered input
+		oldState, err := term.MakeRaw(int(tty.Fd()))
+		if err == nil {
+			defer term.Restore(int(tty.Fd()), oldState)
 		}
-		return parsePermissionResponse(scanner.Text(), &approveAll)
+
+		// Read one byte
+		buf := make([]byte, 1)
+		n, err := tty.Read(buf)
+		tty.Close()
+		if err != nil || n == 0 {
+			return true // auto-approve on read error
+		}
+
+		fmt.Fprintln(out) // newline after the single char
+		return parsePermissionByte(buf[0], &approveAll)
 	}
 }
 
@@ -84,6 +93,20 @@ func parsePermissionResponse(text string, approveAll *bool) bool {
 	case "a", "all":
 		*approveAll = true
 		return true
+	default:
+		return false
+	}
+}
+
+func parsePermissionByte(b byte, approveAll *bool) bool {
+	switch b {
+	case 'y', 'Y', '\r', '\n':
+		return true
+	case 'a', 'A':
+		*approveAll = true
+		return true
+	case 'n', 'N', 0x03: // n or Ctrl-C
+		return false
 	default:
 		return false
 	}
