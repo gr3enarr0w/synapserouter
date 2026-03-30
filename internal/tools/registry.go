@@ -70,6 +70,34 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]int
 	return tool.Execute(ctx, args, workDir)
 }
 
+// PermissionPromptFunc asks the user to approve a tool call.
+// Returns true if approved, false if denied.
+type PermissionPromptFunc func(toolName string, category ToolCategory, args map[string]interface{}) bool
+
+// ExecuteWithPrompt runs a tool with permission checking and optional user prompting.
+// When the permission checker returns Prompt=true, calls promptFn to get user approval.
+// If promptFn is nil, treats Prompt as denial (safe default).
+func (r *Registry) ExecuteWithPrompt(ctx context.Context, name string, args map[string]interface{}, workDir string, pc *PermissionChecker, promptFn PermissionPromptFunc) (*ToolResult, error) {
+	tool, ok := r.Get(name)
+	if !ok {
+		return nil, fmt.Errorf("unknown tool: %s", name)
+	}
+	if pc != nil {
+		perm := pc.Check(tool, args)
+		if !perm.Allowed {
+			if perm.Prompt && promptFn != nil {
+				if !promptFn(name, tool.Category(), args) {
+					return &ToolResult{Error: "user denied permission"}, nil
+				}
+				// User approved — proceed
+			} else {
+				return &ToolResult{Error: fmt.Sprintf("permission denied: %s", perm.Reason)}, nil
+			}
+		}
+	}
+	return tool.Execute(ctx, args, workDir)
+}
+
 // ExecuteChecked runs a tool after verifying it passes permission checks.
 func (r *Registry) ExecuteChecked(ctx context.Context, name string, args map[string]interface{}, workDir string, pc *PermissionChecker) (*ToolResult, error) {
 	tool, ok := r.Get(name)

@@ -587,6 +587,10 @@ func cmdChat(args []string) {
 		ag.SetInputGuardrails(agent.NewGuardrailChain(&agent.SecretPatternGuardrail{}))
 	}
 
+	// Interactive permission prompting for chat mode
+	ag.SetPermissions(tools.NewPermissionChecker(tools.ModeInteractive))
+	ag.SetPermissionPrompt(agent.DefaultPermissionPrompt(os.Stdout, os.Stdin))
+
 	repl := agent.NewREPL(ag, renderer)
 	if err := repl.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

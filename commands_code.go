@@ -231,8 +231,15 @@ func cmdCode(args []string) {
 	}
 	ag.SetInputGuardrails(agent.NewGuardrailChain(&agent.SecretPatternGuardrail{}))
 
+	// Interactive mode: prompt user for write/dangerous tool calls
+	// One-shot mode: auto-approve (no user to prompt)
+	ag.SetPermissions(tools.NewPermissionChecker(tools.ModeInteractive))
+	ag.SetPermissionPrompt(agent.DefaultPermissionPrompt(os.Stdout, os.Stdin))
+
 	// One-shot mode — use the same agent (no RunOneShot to avoid duplicate LogRenderer)
 	if *message != "" {
+		// One-shot: switch to auto-approve since there's no user to prompt
+		ag.SetPermissions(tools.NewPermissionChecker(tools.ModeAutoApprove))
 		ag.SetNonInteractive(true)
 		if *specFile != "" {
 			specContent, err := os.ReadFile(*specFile)

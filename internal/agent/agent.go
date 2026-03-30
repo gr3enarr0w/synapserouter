@@ -40,7 +40,8 @@ type ProviderAwareExecutor interface {
 type Agent struct {
 	executor     ChatExecutor
 	registry     *tools.Registry
-	permissions  *tools.PermissionChecker
+	permissions       *tools.PermissionChecker
+	permissionPrompt tools.PermissionPromptFunc
 	conversation *Conversation
 	renderer     TerminalRenderer
 	config       Config
@@ -138,6 +139,11 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRende
 // SetPermissions sets the permission checker for tool execution.
 func (a *Agent) SetPermissions(pc *tools.PermissionChecker) {
 	a.permissions = pc
+}
+
+// SetPermissionPrompt sets the callback for interactive permission prompting.
+func (a *Agent) SetPermissionPrompt(fn tools.PermissionPromptFunc) {
+	a.permissionPrompt = fn
 }
 
 // SetPool sets the agent pool for concurrency management.
@@ -815,7 +821,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		// timeout fails, the agent won't hang forever on a single tool call.
 		toolCtx, toolCancel := context.WithTimeout(ctx, 5*time.Minute)
 		toolStart := time.Now()
-		result, execErr := a.registry.ExecuteChecked(toolCtx, name, args, a.config.WorkDir, a.permissions)
+		result, execErr := a.registry.ExecuteWithPrompt(toolCtx, name, args, a.config.WorkDir, a.permissions, a.permissionPrompt)
 		toolCancel()
 		toolDuration := time.Since(toolStart)
 
