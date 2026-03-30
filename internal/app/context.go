@@ -351,24 +351,43 @@ func initializeWorkProviders() []providers.Provider {
 //     each level gets the corresponding tier.
 //   - Otherwise, auto-classifies: bottom third = cheap, middle = mid, top third = frontier.
 //   - Subscription providers always get frontier tier.
-// buildWorkEscalationChain creates a 3-level chain for the work profile:
+// buildWorkEscalationChain builds the escalation chain for the work profile.
+// Uses WORK_CHAIN env var (same format as OLLAMA_CHAIN: pipe-separated levels,
+// comma-separated providers within a level). Provider names reference the
+// tiered providers created by initializeWorkProviders.
 //
-//	L0 (cheap):    claude-haiku — 1 model, fastest/cheapest
-//	L1 (mid):      claude-sonnet + gemini-pro — 2 models, cross-review
-//	L2 (frontier): claude-opus + gemini-pro + models.corp — 2-3 models
+// Example: WORK_CHAIN=vertex-claude-cheap|vertex-claude-mid,vertex-gemini-mid|vertex-claude-frontier,vertex-gemini-frontier
+//
+// If WORK_CHAIN is not set, creates a default 3-level chain from available providers.
 func buildWorkEscalationChain() []agent.EscalationLevel {
+	// User-configured chain
+	if workChain := os.Getenv("WORK_CHAIN"); workChain != "" {
+		levels := ParseOllamaChain(workChain) // same format
+		var chain []agent.EscalationLevel
+		for _, providers := range levels {
+			chain = append(chain, agent.EscalationLevel{Providers: providers})
+		}
+		// Apply explicit tiers if set
+		if tiers := parseChainTiers(os.Getenv("WORK_CHAIN_TIERS")); len(tiers) > 0 {
+			for i := range chain {
+				if i < len(tiers) {
+					chain[i].Tier = tiers[i]
+				}
+			}
+		} else {
+			autoClassifyTiers(chain, len(chain))
+		}
+		log.Printf("[Agent] work escalation chain (configured): %d levels", len(chain))
+		return chain
+	}
+
+	// Default: 3 levels from available tiered providers
 	chain := []agent.EscalationLevel{
 		{Providers: []string{"vertex-claude-cheap"}, Tier: agent.TierCheap},
 		{Providers: []string{"vertex-claude-mid", "vertex-gemini-mid"}, Tier: agent.TierMid},
 		{Providers: []string{"vertex-claude-frontier", "vertex-gemini-frontier"}, Tier: agent.TierFrontier},
 	}
-
-	// Add models.corp to frontier if configured
-	if os.Getenv("MODELS_CORP_BASE_URL") != "" {
-		chain[2].Providers = append(chain[2].Providers, "models-corp")
-	}
-
-	log.Printf("[Agent] work escalation chain: 3 levels — L0: haiku, L1: sonnet+gemini, L2: opus+gemini")
+	log.Printf("[Agent] work escalation chain (default): 3 levels")
 	return chain
 }
 

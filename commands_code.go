@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/agent"
@@ -221,9 +222,22 @@ func cmdCode(args []string) {
 
 	ag.SetPool(pool)
 
-	// Spec §2.14: "The parent REPL agent starts at frontier tier for conversation quality."
-	// Cheap/mid tiers are for sub-agent pipeline work (implement=cheap, review=frontier).
-	ag.SetMinProviderLevel(ag.ProviderLevelForTier(agent.TierFrontier))
+	// Set conversation tier — configurable via SYNROUTE_CONVERSATION_TIER env var.
+	// Default: frontier (personal), mid (work). Sub-agents use their own tiers.
+	convTier := agent.TierFrontier
+	if tierEnv := os.Getenv("SYNROUTE_CONVERSATION_TIER"); tierEnv != "" {
+		switch strings.ToLower(tierEnv) {
+		case "cheap":
+			convTier = agent.TierCheap
+		case "mid":
+			convTier = agent.TierMid
+		case "frontier":
+			convTier = agent.TierFrontier
+		}
+	} else if ac.Profile == "work" {
+		convTier = agent.TierMid // work default: sonnet-level for conversation
+	}
+	ag.SetMinProviderLevel(ag.ProviderLevelForTier(convTier))
 
 	registry.Register(agent.NewDelegateTool(ag))
 	registry.Register(agent.NewHandoffTool(ag))
