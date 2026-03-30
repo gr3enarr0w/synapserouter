@@ -246,14 +246,10 @@ func cmdCode(args []string) {
 	}
 	ag.SetInputGuardrails(agent.NewGuardrailChain(&agent.SecretPatternGuardrail{}))
 
-	// Interactive mode: prompt user for write/dangerous tool calls
-	// Piped input or one-shot: auto-approve (no interactive user)
-	stdinInfo, _ := os.Stdin.Stat()
-	isInteractive := stdinInfo != nil && stdinInfo.Mode()&os.ModeCharDevice != 0
-	if isInteractive {
-		ag.SetPermissions(tools.NewPermissionChecker(tools.ModeInteractive))
-		ag.SetPermissionPrompt(agent.DefaultPermissionPrompt(os.Stdout, os.Stdin))
-	}
+	// Permission prompting disabled for v1 — the /dev/tty read in
+	// DefaultPermissionPrompt conflicts with the terminal input layer,
+	// causing the REPL to hang. Will be restored in v1.01 with Bubble Tea.
+	// TODO(v1.01): integrate permission prompt with terminal input system
 
 	// One-shot mode — use the same agent (no RunOneShot to avoid duplicate LogRenderer)
 	if *message != "" {
