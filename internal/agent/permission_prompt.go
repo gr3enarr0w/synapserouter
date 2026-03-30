@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
-	"golang.org/x/term"
 )
 
 // DefaultPermissionPrompt creates a permission prompt function that writes
@@ -57,27 +57,34 @@ func DefaultPermissionPrompt(out io.Writer, in io.Reader) tools.PermissionPrompt
 		}
 		fmt.Fprint(out, c("\033[33m", "  Allow? [y/n/a] "))
 
-		// Read a single byte from /dev/tty — terminal may be in raw mode
-		// so we can't wait for a line ending. Just read y, n, or a.
+		// Read user response from /dev/tty.
+		// Terminal is in raw mode (readline), so we read single bytes.
+		// Flush any pending input first (cursor position reports etc).
 		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 		if err != nil {
-			// Can't open TTY — auto-approve as fallback
 			log.Printf("[Permission] can't open /dev/tty: %v — auto-approving", err)
 			return true
 		}
+		defer tty.Close()
 
-		// Temporarily set cooked mode so we get line-buffered input
-		oldState, err := term.MakeRaw(int(tty.Fd()))
-		if err == nil {
-			defer term.Restore(int(tty.Fd()), oldState)
-		}
+		// Drain any pending bytes (readline cursor queries produce \033[...R responses)
+		tty.SetDeadline(time.Now().Add(100 * time.Millisecond))
+		drain := make([]byte, 64)
+		tty.Read(drain)
 
-		// Read one byte
+		// Now read the actual user input with a proper timeout
+		tty.SetDeadline(time.Now().Add(30 * time.Second))
 		buf := make([]byte, 1)
-		n, err := tty.Read(buf)
-		tty.Close()
-		if err != nil || n == 0 {
-			return true // auto-approve on read error
+		for {
+			n, err := tty.Read(buf)
+			if err != nil || n == 0 {
+				return true // timeout or error — auto-approve
+			}
+			// Skip escape sequences and non-printable chars
+			if buf[0] < 0x20 && buf[0] != '\r' && buf[0] != '\n' && buf[0] != 0x03 {
+				continue // skip control chars (escape sequences from readline)
+			}
+			break
 		}
 
 		fmt.Fprintln(out) // newline after the single char

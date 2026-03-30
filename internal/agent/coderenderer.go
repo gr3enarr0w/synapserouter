@@ -204,10 +204,7 @@ func (cr *CodeRenderer) Init() {
 	fmt.Fprintln(cr.out)
 	fmt.Fprintln(cr.out, cr.color("\033[2m", "  /plan  /review  /check  /fix  /help"))
 
-	// Detect synroute.md
-	if _, err := os.Stat("synroute.md"); err == nil {
-		fmt.Fprintln(cr.out, cr.color("\033[2m", "  project state: synroute.md"))
-	}
+	// synroute.md detection handled by CodeREPL.detectProjectFiles()
 	fmt.Fprintln(cr.out)
 }
 

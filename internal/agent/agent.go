@@ -627,6 +627,14 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 				msg.Content = cleanedContent
 			}
 		}
+		// Truncate excessively long responses — some models output training data
+		// (Erlang blog posts, Java docs, etc.) when confused. Cap at 4000 chars
+		// for text-only responses (tool call responses can be longer).
+		if len(msg.ToolCalls) == 0 && len(msg.Content) > 4000 {
+			log.Printf("[Agent] truncating excessive response: %d chars → 4000", len(msg.Content))
+			msg.Content = msg.Content[:4000] + "\n\n[response truncated — model output exceeded limit]"
+		}
+
 		// Skip empty assistant messages (no content, no tool calls).
 		// Some models return these when confused or context is too large.
 		// Adding them to conversation causes 400 errors on strict models.
