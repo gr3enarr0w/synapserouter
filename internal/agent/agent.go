@@ -82,7 +82,8 @@ type Agent struct {
 	cachedSkillContext string // computed once from originalRequest, injected into all sub-agents
 	skillContextOnce   sync.Once
 	noToolTurns        int // consecutive turns without tool calls (stall detection)
-	textContinuations  int // how many times we've continued past text-only turns (cap at 2)
+	textContinuations  int  // how many times we've continued past text-only turns (cap at 2)
+	testsPassedClean   bool // true after a test command exits 0 — suppresses continuations (#340)
 	reviewTracker      *ReviewCycleTracker // detects stable review cycles (no progress)
 	phaseRetries       int // consecutive quality gate rejections in current phase
 	phaseTurns         int // turns spent in current phase (hard cap at maxPhaseTurns)
@@ -720,6 +721,12 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 					continue // re-enter loop for one fix attempt
 				}
 			}
+			// Bug #340: If tests passed cleanly, exit immediately on text-only turn.
+			// The task is done — continuing risks overwriting working code.
+			if a.testsPassedClean {
+				log.Printf("[Agent] tests passed cleanly — exiting promptly (#340)")
+				return msg.Content, nil
+			}
 			// Detect completion signals — if the model says the task is done, exit
 			if isCompletionSignal(msg.Content) {
 				log.Printf("[Agent] completion signal detected — exiting")
@@ -943,6 +950,13 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		// Record ground-truth facts for hallucination detection
 		if a.factTracker != nil {
 			a.factTracker.RecordToolOutput(name, args, resultContent, exitCode, storedOutputID)
+			// Bug #340: track when tests pass so we exit promptly
+			if tr := a.factTracker.LastTestResult(); tr != nil {
+				a.testsPassedClean = tr.Passed
+				if tr.Passed {
+					log.Printf("[Agent] tests passed (exit 0) — will exit on next text-only turn")
+				}
+			}
 		}
 
 		a.conversation.Add(providers.Message{
