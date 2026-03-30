@@ -100,50 +100,6 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 
 	exitCh := make(chan struct{})
 
-	go func() {
-		for range sigCh {
-			reqMu.Lock()
-			running := agentRunning
-			reqMu.Unlock()
-
-			if running {
-				// During LLM call — cancel the request
-				reqMu.Lock()
-				if cancelFn != nil {
-					cancelFn()
-				}
-				reqMu.Unlock()
-				cr.renderer.mu.Lock()
-				cr.renderer.writeContent("")
-				cr.renderer.writeContent(cr.renderer.color("\033[33m", "  (interrupted)"))
-				cr.renderer.writeContent("")
-				cr.renderer.mu.Unlock()
-			} else {
-				// At prompt — track consecutive presses for exit
-				now := time.Now()
-				if now.Sub(lastCtrlC) < 2*time.Second {
-					ctrlCCount++
-				} else {
-					ctrlCCount = 1
-				}
-				lastCtrlC = now
-
-				if ctrlCCount >= 2 {
-					// Rapid double Ctrl-C at prompt — exit
-					cr.renderer.mu.Lock()
-					cr.renderer.writeContent("")
-					cr.renderer.writeContent("bye")
-					cr.renderer.mu.Unlock()
-					close(exitCh)
-					return
-				}
-				cr.renderer.mu.Lock()
-				cr.renderer.writeContent(cr.renderer.color("\033[2m", "  (press Ctrl-C again to exit, or type /exit)"))
-				cr.renderer.mu.Unlock()
-			}
-		}
-	}()
-
 	// Set up history file
 	home, _ := os.UserHomeDir()
 	historyDir := filepath.Join(home, ".synroute")
@@ -161,13 +117,56 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		Prompt:          "\033[32msynroute>\033[0m ",
 		HistoryFile:     historyFile,
 		AutoComplete:    readline.NewPrefixCompleter(completionItems...),
-		InterruptPrompt: "^C",
+		InterruptPrompt: "",  // empty = return ErrInterrupt (don't just print ^C and loop)
 		EOFPrompt:       "bye",
 	})
 	if err != nil {
 		return fmt.Errorf("readline init: %w", err)
 	}
 	defer rl.Close()
+
+	// Start signal handler goroutine AFTER readline is created (needs rl reference)
+	go func() {
+		for range sigCh {
+			reqMu.Lock()
+			running := agentRunning
+			reqMu.Unlock()
+
+			if running {
+				reqMu.Lock()
+				if cancelFn != nil {
+					cancelFn()
+				}
+				reqMu.Unlock()
+				cr.renderer.mu.Lock()
+				cr.renderer.writeContent("")
+				cr.renderer.writeContent(cr.renderer.color("\033[33m", "  (interrupted)"))
+				cr.renderer.writeContent("")
+				cr.renderer.mu.Unlock()
+			} else {
+				now := time.Now()
+				if now.Sub(lastCtrlC) < 2*time.Second {
+					ctrlCCount++
+				} else {
+					ctrlCCount = 1
+				}
+				lastCtrlC = now
+
+				if ctrlCCount >= 2 {
+					cr.renderer.mu.Lock()
+					cr.renderer.writeContent("")
+					cr.renderer.writeContent("bye")
+					cr.renderer.mu.Unlock()
+					rl.Close()
+					close(exitCh)
+					return
+				}
+				cr.renderer.mu.Lock()
+				cr.renderer.writeContent(cr.renderer.color("\033[2m", "  (press Ctrl-C again to exit, or type /exit)"))
+				cr.renderer.mu.Unlock()
+			}
+		}
+	}()
 
 	for {
 		// Check if double Ctrl-C exit was triggered
@@ -179,14 +178,30 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 
 		line, err := rl.Readline()
 		if err != nil {
-			// readline.ErrInterrupt = Ctrl-C at prompt, io.EOF = Ctrl-D
+			// readline.ErrInterrupt = Ctrl-C at prompt
 			if err == readline.ErrInterrupt {
+				now := time.Now()
+				if now.Sub(lastCtrlC) < 2*time.Second {
+					ctrlCCount++
+				} else {
+					ctrlCCount = 1
+				}
+				lastCtrlC = now
+
+				if ctrlCCount >= 2 {
+					fmt.Fprintln(cr.out, "\nbye")
+					return nil
+				}
+				cr.renderer.mu.Lock()
+				cr.renderer.writeContent(cr.renderer.color("\033[2m", "  (press Ctrl-C again to exit, or type /exit)"))
+				cr.renderer.mu.Unlock()
 				continue
 			}
-			// EOF — exit
+			// EOF (Ctrl-D) — exit
 			fmt.Fprintln(cr.out, "bye")
 			return nil
 		}
+		ctrlCCount = 0 // reset on any normal input
 
 		input := strings.TrimSpace(line)
 		if input == "" {
