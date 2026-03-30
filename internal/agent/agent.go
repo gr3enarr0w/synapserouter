@@ -708,12 +708,15 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 					continue // re-enter loop for one fix attempt
 				}
 			}
-			// Don't exit on first text-only turn if agent was mid-work AND has an
-			// escalation chain to try bigger models. Without an escalation chain
-			// (e.g., tests), exit normally. Cap at 2 continuations to prevent loops.
-			if a.noToolTurns == 1 && a.toolCallCount > 0 && len(a.config.EscalationChain) > 1 && a.textContinuations < 2 {
+			// Don't exit on first text-only turn if:
+			// 1. Agent was mid-work (toolCallCount > 0), OR
+			// 2. Agent is in non-interactive mode (must try harder, no user fallback)
+			// Only continue if escalation chain exists (not tests). Cap at 2.
+			shouldContinue := a.noToolTurns == 1 && len(a.config.EscalationChain) > 1 && a.textContinuations < 2 &&
+				(a.toolCallCount > 0 || a.config.NonInteractive)
+			if shouldContinue {
 				a.textContinuations++
-				log.Printf("[Agent] text-only turn after %d tool calls — continuing (%d/2 chances)", a.toolCallCount, a.textContinuations)
+				log.Printf("[Agent] text-only turn — continuing (%d/2 chances, tools=%d)", a.textContinuations, a.toolCallCount)
 				continue
 			}
 			return msg.Content, nil
