@@ -3099,7 +3099,10 @@ func (a *Agent) callLLMWithStreaming(ctx context.Context, req providers.ChatRequ
 			if err == nil {
 				return resp, nil
 			}
-			log.Printf("[Agent] streaming failed, falling back to non-streaming: %v", err)
+			// Don't log circuit-open errors — they're expected during rate limiting
+			if !strings.Contains(err.Error(), "circuit open") && !strings.Contains(err.Error(), "unavailable") {
+				log.Printf("[Agent] streaming failed, falling back to non-streaming: %v", err)
+			}
 		}
 	}
 	return a.callLLMWithRetry(ctx, req)
