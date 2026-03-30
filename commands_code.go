@@ -219,6 +219,11 @@ func cmdCode(args []string) {
 	}
 
 	ag.SetPool(pool)
+
+	// Spec §2.14: "The parent REPL agent starts at frontier tier for conversation quality."
+	// Cheap/mid tiers are for sub-agent pipeline work (implement=cheap, review=frontier).
+	ag.SetMinProviderLevel(ag.ProviderLevelForTier(agent.TierFrontier))
+
 	registry.Register(agent.NewDelegateTool(ag))
 	registry.Register(agent.NewHandoffTool(ag))
 	if !config.AutoOrchestrate {
@@ -228,6 +233,7 @@ func cmdCode(args []string) {
 
 	// One-shot mode — use the same agent (no RunOneShot to avoid duplicate LogRenderer)
 	if *message != "" {
+		ag.SetNonInteractive(true)
 		if *specFile != "" {
 			specContent, err := os.ReadFile(*specFile)
 			if err == nil {

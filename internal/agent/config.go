@@ -59,6 +59,9 @@ type Config struct {
 	DB        *sql.DB // SQLite database for session persistence
 	Resume    bool    // Resume most recent session on startup
 	SessionID string  // Resume a specific session ID
+
+	// Non-interactive mode (--message flag) — suppresses follow-up questions
+	NonInteractive bool
 }
 
 // ModelTier classifies escalation levels by capability cost.

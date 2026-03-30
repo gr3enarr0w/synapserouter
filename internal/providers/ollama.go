@@ -98,7 +98,59 @@ func (p *OllamaCloudProvider) ChatCompletion(ctx context.Context, req ChatReques
 		return ChatResponse{}, fmt.Errorf("failed to parse ollama response: %w", err)
 	}
 
+	// Normalize tool calls: some Ollama models return tool calls under
+	// alternative field names or nested structures that json.Unmarshal
+	// into ChatResponse silently drops. Check the raw JSON for tool calls
+	// that didn't make it into the parsed response.
+	if len(chatResp.Choices) > 0 && len(chatResp.Choices[0].Message.ToolCalls) == 0 {
+		normalizeOllamaToolCalls(respBody, &chatResp)
+	}
+
 	return chatResp, nil
+}
+
+// normalizeOllamaToolCalls checks raw JSON for tool calls that may have been
+// dropped during standard unmarshaling due to format differences.
+func normalizeOllamaToolCalls(raw []byte, resp *ChatResponse) {
+	// Parse raw response to check for tool_calls under message
+	var rawResp struct {
+		Choices []struct {
+			Message struct {
+				ToolCalls []json.RawMessage `json:"tool_calls"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(raw, &rawResp); err != nil {
+		return
+	}
+	if len(rawResp.Choices) == 0 || len(rawResp.Choices[0].Message.ToolCalls) == 0 {
+		return
+	}
+
+	// Tool calls exist in raw JSON but were dropped — try to parse each one
+	for _, rawTC := range rawResp.Choices[0].Message.ToolCalls {
+		var tc map[string]interface{}
+		if err := json.Unmarshal(rawTC, &tc); err != nil {
+			continue
+		}
+		// Normalize: ensure it has the expected structure
+		if _, hasFunc := tc["function"]; !hasFunc {
+			// Some models put name/arguments at top level instead of nested in "function"
+			if name, ok := tc["name"].(string); ok {
+				normalized := map[string]interface{}{
+					"id":   tc["id"],
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":      name,
+						"arguments": tc["arguments"],
+					},
+				}
+				resp.Choices[0].Message.ToolCalls = append(resp.Choices[0].Message.ToolCalls, normalized)
+				continue
+			}
+		}
+		resp.Choices[0].Message.ToolCalls = append(resp.Choices[0].Message.ToolCalls, tc)
+	}
 }
 
 func (p *OllamaCloudProvider) SupportsModel(model string) bool {

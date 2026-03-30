@@ -31,6 +31,7 @@ func DefaultRegistry() *Registry {
 	r.Register(&GitTool{})
 	r.Register(NewWebSearchTool())
 	r.Register(&WebFetchTool{})
+	r.Register(&NotebookEditTool{})
 	return r
 }
 

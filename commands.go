@@ -511,6 +511,7 @@ func cmdChat(args []string) {
 	}
 
 	if *message != "" {
+		config.NonInteractive = true
 		// If --spec-file provided with --message, prepend spec content to message
 		if *specFile != "" {
 			specContent, err := os.ReadFile(*specFile)
@@ -569,6 +570,9 @@ func cmdChat(args []string) {
 	}
 
 	ag.SetPool(pool)
+
+	// Spec §2.14: "The parent REPL agent starts at frontier tier for conversation quality."
+	ag.SetMinProviderLevel(ag.ProviderLevelForTier(agent.TierFrontier))
 
 	// Register delegation tools
 	registry.Register(agent.NewDelegateTool(ag))

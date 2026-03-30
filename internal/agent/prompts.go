@@ -37,10 +37,19 @@ func LoadProjectInstructions(workDir string) string {
 		}
 	}
 
-	// Load agent's own project state (synroute.md)
+	// Load agent's own project state (synroute.md) — strip YAML frontmatter
 	synroutePath := filepath.Join(workDir, "synroute.md")
 	if data, err := os.ReadFile(synroutePath); err == nil {
-		parts = append(parts, string(data))
+		content := string(data)
+		// Strip YAML frontmatter (--- block at start of file)
+		if strings.HasPrefix(content, "---") {
+			if end := strings.Index(content[3:], "---"); end >= 0 {
+				content = strings.TrimSpace(content[end+6:]) // skip past closing ---
+			}
+		}
+		if content != "" {
+			parts = append(parts, content)
+		}
 	}
 
 	if len(parts) == 0 {

@@ -95,13 +95,13 @@ func (a *Agent) SpawnChild(cfg SpawnConfig) *Agent {
 	// Tier-based routing: cheap=bottom third, mid=middle third, frontier=top third.
 	// Parent's current level is the floor — never go below it (monotonic).
 	if len(escalationChain) > 0 {
-		tierLevel := a.providerLevelForTier(cfg.Tier)
+		tierLevel := a.ProviderLevelForTier(cfg.Tier)
 		if tierLevel > 0 {
-			child.setMinProviderLevel(tierLevel)
+			child.SetMinProviderLevel(tierLevel)
 		}
 		// Parent's current level is the absolute minimum
 		if a.providerIdx > 0 {
-			child.setMinProviderLevel(a.providerIdx)
+			child.SetMinProviderLevel(a.providerIdx)
 		}
 	}
 

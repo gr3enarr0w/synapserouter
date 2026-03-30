@@ -607,6 +607,14 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		if strings.TrimSpace(msg.Role) == "" {
 			msg.Role = "assistant"
 		}
+		// Text-based tool call fallback: some models (especially open-source via Ollama)
+		// output tool calls as text markers instead of structured JSON. Parse them.
+		if len(msg.ToolCalls) == 0 && msg.Content != "" {
+			if textToolCalls, cleanedContent := extractTextToolCalls(msg.Content); len(textToolCalls) > 0 {
+				msg.ToolCalls = textToolCalls
+				msg.Content = cleanedContent
+			}
+		}
 		// Skip empty assistant messages (no content, no tool calls).
 		// Some models return these when confused or context is too large.
 		// Adding them to conversation causes 400 errors on strict models.
@@ -644,21 +652,22 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		// No tool calls → stall detection + pipeline advancement
 		if len(msg.ToolCalls) == 0 {
 			a.noToolTurns++
-			if a.config.AutoOrchestrate {
-				// Stall detection: if model hasn't made tool calls in 2 consecutive turns,
-				// escalate to a bigger model regardless of prior tool call history.
-				if a.noToolTurns >= 2 {
-					phaseName := "unknown"
-					if a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
-						phaseName = a.pipeline.Phases[a.pipelinePhase].Name
-					}
-					log.Printf("[Agent] stall detected in phase %s: %d turns without tools at level %d",
-						phaseName, a.noToolTurns, a.providerIdx)
-					a.escalateProvider()
-					a.noToolTurns = 0
-					a.conversation.Add(forceToolsMessage(phaseName))
-					continue
+			// Stall detection: if model hasn't made tool calls in 2 consecutive turns,
+			// escalate to a bigger model regardless of mode (pipeline or direct).
+			if a.noToolTurns >= 2 {
+				phaseName := "direct"
+				if a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
+					phaseName = a.pipeline.Phases[a.pipelinePhase].Name
 				}
+				log.Printf("[Agent] stall detected: %d turns without tools at level %d (phase: %s)",
+					a.noToolTurns, a.providerIdx, phaseName)
+				a.escalateProvider()
+				a.noToolTurns = 0
+				a.conversation.Add(forceToolsMessage(phaseName))
+				continue
+			}
+			// Pipeline-specific advancement stays inside AutoOrchestrate guard
+			if a.config.AutoOrchestrate {
 				// Try to advance pipeline (plan phase may produce text-only output)
 				if a.advancePipeline(msg.Content) {
 					continue
@@ -704,39 +713,42 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		// Uses intent-based fingerprinting (path-only for file ops, normalized bash)
 		// plus a cumulative warning counter that escalates even when per-window
 		// repeat counts stay low (e.g., 7-file rotation keeps repeats at 3).
-		if a.config.AutoOrchestrate {
-			for _, tc := range msg.ToolCalls {
-				name, args := extractToolCallNameArgs(tc)
-				a.toolFingerprints = append(a.toolFingerprints, toolCallFingerprint(name, args))
-			}
-			if len(a.toolFingerprints) > 40 {
-				a.toolFingerprints = a.toolFingerprints[len(a.toolFingerprints)-40:]
-			}
+		// Always active regardless of pipeline mode.
+		for _, tc := range msg.ToolCalls {
+			name, args := extractToolCallNameArgs(tc)
+			a.toolFingerprints = append(a.toolFingerprints, toolCallFingerprint(name, args))
+		}
+		if len(a.toolFingerprints) > 40 {
+			a.toolFingerprints = a.toolFingerprints[len(a.toolFingerprints)-40:]
+		}
 
-			repeats := maxRepeatCount(a.toolFingerprints)
-			if repeats >= 3 {
-				a.loopWarningCount++
-				log.Printf("[Agent] loop warning #%d: same tool call %d times in window",
+		repeats := maxRepeatCount(a.toolFingerprints)
+		if repeats >= 3 {
+			a.loopWarningCount++
+			log.Printf("[Agent] loop warning #%d: same tool call %d times in window",
+				a.loopWarningCount, repeats)
+
+			if a.loopWarningCount >= 6 || repeats >= 6 {
+				log.Printf("[Agent] action loop: %d warnings, %d repeats — breaking",
 					a.loopWarningCount, repeats)
-
-				if a.loopWarningCount >= 6 || repeats >= 6 {
-					log.Printf("[Agent] action loop: %d warnings, %d repeats — skipping phase",
-						a.loopWarningCount, repeats)
-					a.toolFingerprints = nil
-					a.loopWarningCount = 0
-					a.advancePipeline("PHASE_SKIPPED_LOOP")
-				} else if a.loopWarningCount >= 3 || repeats >= 4 {
-					log.Printf("[Agent] action loop: %d warnings, %d repeats — escalating",
-						a.loopWarningCount, repeats)
-					a.escalateProvider()
-					a.toolFingerprints = nil
-					a.conversation.Add(loopDetectedMessage(repeats))
-				} else {
-					a.conversation.Add(loopDetectedMessage(repeats))
-				}
-			} else {
+				a.toolFingerprints = nil
 				a.loopWarningCount = 0
+				if a.config.AutoOrchestrate {
+					a.advancePipeline("PHASE_SKIPPED_LOOP")
+				} else {
+					break // exit loop in direct mode
+				}
+			} else if a.loopWarningCount >= 3 || repeats >= 4 {
+				log.Printf("[Agent] action loop: %d warnings, %d repeats — escalating",
+					a.loopWarningCount, repeats)
+				a.escalateProvider()
+				a.toolFingerprints = nil
+				a.conversation.Add(loopDetectedMessage(repeats))
+			} else {
+				a.conversation.Add(loopDetectedMessage(repeats))
 			}
+		} else {
+			a.loopWarningCount = 0
 		}
 
 		// Check for phase signals in the LLM's text content even when tool calls
@@ -976,6 +988,11 @@ func (a *Agent) buildMessages() []providers.Message {
 		// Inject intent-based mode adjustment (review, implement, single)
 		if a.intentPromptAdjustment != "" {
 			sysPrompt += "\n\n" + a.intentPromptAdjustment
+		}
+
+		// Non-interactive mode: suppress follow-up questions (#315)
+		if a.config.NonInteractive {
+			sysPrompt += "\n\nNON-INTERACTIVE MODE: Complete the full task. Do not ask follow-up questions — there is no user to answer them. If requirements are ambiguous, make reasonable assumptions and document them."
 		}
 
 		a.cachedSystemPrompt = sysPrompt
@@ -1533,16 +1550,16 @@ func (a *Agent) advancePipeline(content string) bool {
 		// preferred tier. providerIdx is monotonically increasing, so this only
 		// escalates UP, never back down to cheaper models.
 		if nextPhase.Tier != "" && len(a.config.EscalationChain) > 1 {
-			tierLevel := a.providerLevelForTier(nextPhase.Tier)
+			tierLevel := a.ProviderLevelForTier(nextPhase.Tier)
 			if tierLevel > a.providerIdx {
-				a.setMinProviderLevel(tierLevel)
+				a.SetMinProviderLevel(tierLevel)
 				log.Printf("[Agent] tier routing: phase %s wants %s tier → level %d: %v",
 					nextPhase.Name, nextPhase.Tier, a.providerIdx,
 					a.config.EscalationChain[a.providerIdx].Providers)
 			}
 		} else if currentPhase.Name == "implement" && a.providerIdx == 0 && len(a.config.EscalationChain) > 1 {
 			// Legacy fallback: advance past Level 0 coders after implement
-			a.setMinProviderLevel(1)
+			a.SetMinProviderLevel(1)
 			log.Printf("[Agent] advanced past coder level to review level %d: %v",
 				a.providerIdx, a.config.EscalationChain[a.providerIdx].Providers)
 		}
@@ -2228,9 +2245,9 @@ Your job:
 	return result, nil
 }
 
-// setMinProviderLevel enforces monotonic escalation. The provider level can
+// SetMinProviderLevel enforces monotonic escalation. The provider level can
 // only go UP, never down. This is the ONLY way to change providerIdx.
-func (a *Agent) setMinProviderLevel(level int) {
+func (a *Agent) SetMinProviderLevel(level int) {
 	if level <= a.providerIdx {
 		return // already at or above this level
 	}
@@ -2253,6 +2270,12 @@ func (a *Agent) setMinProviderLevel(level int) {
 	})
 }
 
+// SetNonInteractive marks the agent as running in one-shot mode (--message).
+// The system prompt will instruct the agent not to ask follow-up questions.
+func (a *Agent) SetNonInteractive(v bool) {
+	a.config.NonInteractive = v
+}
+
 // ForceEscalate is the public API for manually triggering provider escalation
 // (e.g., from the code mode ^E shortcut).
 func (a *Agent) ForceEscalate() bool {
@@ -2268,7 +2291,7 @@ func (a *Agent) escalateProvider() bool {
 		log.Printf("[Agent] escalation chain exhausted — staying on level %d", a.providerIdx)
 		return false
 	}
-	a.setMinProviderLevel(a.providerIdx + 1)
+	a.SetMinProviderLevel(a.providerIdx + 1)
 	return true
 }
 
@@ -2286,12 +2309,12 @@ func (a *Agent) currentLevelProviders() []string {
 	return a.config.EscalationChain[idx].Providers
 }
 
-// providerLevelForTier returns the first escalation chain index that matches
+// ProviderLevelForTier returns the first escalation chain index that matches
 // the given tier. Returns 0 if no tier is set or no matching level is found.
 // Tier classification: cheap = bottom third, mid = middle third, frontier = top third.
 // If OLLAMA_CHAIN_TIERS was parsed, uses explicit tier assignments.
 // Otherwise auto-classifies from chain position.
-func (a *Agent) providerLevelForTier(tier ModelTier) int {
+func (a *Agent) ProviderLevelForTier(tier ModelTier) int {
 	if tier == "" || len(a.config.EscalationChain) == 0 {
 		return 0
 	}
