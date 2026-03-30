@@ -82,6 +82,16 @@ type Provider interface {
 	SupportsModel(model string) bool
 }
 
+// TokenCallback is called for each streamed token chunk from the LLM.
+type TokenCallback func(token string)
+
+// StreamingProvider extends Provider with streaming support.
+// Providers that support SSE streaming implement this interface.
+type StreamingProvider interface {
+	Provider
+	ChatCompletionStream(ctx context.Context, req ChatRequest, sessionID string, onToken TokenCallback) (ChatResponse, error)
+}
+
 // BaseProvider contains common fields for all providers
 type BaseProvider struct {
 	name       string

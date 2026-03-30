@@ -363,6 +363,12 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		msg := str(e.Data, "message")
 		cr.writeContent(cr.color("\033[31m", fmt.Sprintf("  error [%s] %s", source, msg)))
 
+	case EventTokenStream:
+		// Print streamed tokens inline as they arrive — no newline
+		if token, ok := e.Data["token"].(string); ok {
+			fmt.Fprint(cr.out, token)
+		}
+
 	case EventBudgetUpdate:
 		if cr.verbosity >= VerbosityVerbose {
 			cr.writeContent(cr.color("\033[2m", fmt.Sprintf("  budget turns=%d tokens=%d elapsed=%s",

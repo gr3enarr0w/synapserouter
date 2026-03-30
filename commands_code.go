@@ -79,6 +79,7 @@ func cmdCode(args []string) {
 	config := agent.DefaultConfig()
 	config.Model = *model
 	config.WorkDir = cwd
+	config.Streaming = true // Enable token streaming for code mode TUI
 	config.MaxAgents = *maxAgents
 	config.DB = ac.DB
 	config.ToolStore = agent.NewToolOutputStore(ac.DB)

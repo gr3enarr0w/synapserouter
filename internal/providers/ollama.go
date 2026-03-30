@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -116,6 +117,111 @@ func (p *OllamaCloudProvider) ChatCompletion(ctx context.Context, req ChatReques
 	}
 
 	return chatResp, nil
+}
+
+// ChatCompletionStream implements StreamingProvider for Ollama Cloud.
+// Sends SSE streaming request and calls onToken for each content delta.
+// Returns the accumulated ChatResponse after streaming completes.
+func (p *OllamaCloudProvider) ChatCompletionStream(ctx context.Context, req ChatRequest, sessionID string, onToken TokenCallback) (ChatResponse, error) {
+	if req.Model == "" || strings.EqualFold(req.Model, "auto") {
+		req.Model = p.model
+	}
+	req.Stream = true
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST",
+		p.baseURL+"/v1/chat/completions", bytes.NewBuffer(body))
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if p.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return ChatResponse{}, fmt.Errorf("ollama stream request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return ChatResponse{}, fmt.Errorf("ollama stream error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	// Parse SSE stream: each line is "data: {json}\n" or "data: [DONE]\n"
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	var content strings.Builder
+	var toolCalls []map[string]interface{}
+	var lastResp ChatResponse
+	var finishReason string
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk struct {
+			ID      string `json:"id"`
+			Model   string `json:"model"`
+			Choices []struct {
+				Delta struct {
+					Content   string                   `json:"content"`
+					ToolCalls []map[string]interface{} `json:"tool_calls"`
+				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+			Usage Usage `json:"usage"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+
+		if len(chunk.Choices) > 0 {
+			delta := chunk.Choices[0].Delta
+			if delta.Content != "" {
+				content.WriteString(delta.Content)
+				if onToken != nil {
+					onToken(delta.Content)
+				}
+			}
+			if len(delta.ToolCalls) > 0 {
+				toolCalls = append(toolCalls, delta.ToolCalls...)
+			}
+			if chunk.Choices[0].FinishReason != "" {
+				finishReason = chunk.Choices[0].FinishReason
+			}
+		}
+		if chunk.Usage.TotalTokens > 0 {
+			lastResp.Usage = chunk.Usage
+		}
+		lastResp.ID = chunk.ID
+		lastResp.Model = chunk.Model
+	}
+
+	// Build final response
+	lastResp.Choices = []Choice{{
+		Message: Message{
+			Role:      "assistant",
+			Content:   content.String(),
+			ToolCalls: toolCalls,
+		},
+		FinishReason: finishReason,
+	}}
+
+	return lastResp, nil
 }
 
 // normalizeOllamaToolCalls checks raw JSON for tool calls that may have been

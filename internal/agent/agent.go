@@ -581,7 +581,7 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			endSpan = a.trace.StartSpan("llm_call", "llm_call", map[string]interface{}{"turn": turn})
 		}
 		llmStart := time.Now()
-		resp, err := a.callLLMWithRetry(ctx, req)
+		resp, err := a.callLLMWithStreaming(ctx, req)
 		llmDuration := time.Since(llmStart)
 		if endSpan != nil {
 			endSpan(err)
@@ -3030,6 +3030,35 @@ Output the MERGED plan with complete acceptance criteria that reference the skil
 	}
 
 	return combined.String()
+}
+
+// callLLMWithStreaming tries to use streaming if the executor supports it.
+// Emits EventTokenStream for each token so the renderer can display them inline.
+// Falls back to callLLMWithRetry if streaming isn't available.
+func (a *Agent) callLLMWithStreaming(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
+	// Check if the executor supports streaming via the router
+	if streamer, ok := a.executor.(interface {
+		ChatCompletionStreamForProvider(ctx context.Context, req providers.ChatRequest, sessionID, provider string, onToken providers.TokenCallback) (providers.ChatResponse, error)
+	}); ok && a.config.Streaming {
+		provider := ""
+		if len(a.config.EscalationChain) > 0 && a.providerIdx < len(a.config.EscalationChain) {
+			level := a.config.EscalationChain[a.providerIdx]
+			if len(level.Providers) > 0 {
+				provider = level.Providers[a.levelRotationIdx%len(level.Providers)]
+			}
+		}
+		if provider != "" {
+			onToken := func(token string) {
+				a.emit(EventTokenStream, provider, map[string]any{"token": token})
+			}
+			resp, err := streamer.ChatCompletionStreamForProvider(ctx, req, a.sessionID, provider, onToken)
+			if err == nil {
+				return resp, nil
+			}
+			log.Printf("[Agent] streaming failed, falling back to non-streaming: %v", err)
+		}
+	}
+	return a.callLLMWithRetry(ctx, req)
 }
 
 // callLLMWithRetry attempts the LLM call with retry and automatic escalation.

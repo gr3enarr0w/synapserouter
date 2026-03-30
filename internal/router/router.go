@@ -625,6 +625,35 @@ func (r *Router) selectPreferredProvider(ctx context.Context, preferredProvider,
 	return nil, fmt.Errorf("preferred provider %s not found", preferredProvider)
 }
 
+// ChatCompletionStreamForProvider routes a streaming request to the named provider.
+// If the provider supports StreamingProvider, uses SSE streaming.
+// Otherwise falls back to non-streaming ChatCompletion.
+func (r *Router) ChatCompletionStreamForProvider(
+	ctx context.Context,
+	req providers.ChatRequest,
+	sessionID string,
+	provider string,
+	onToken providers.TokenCallback,
+) (providers.ChatResponse, error) {
+	p, err := r.selectPreferredProvider(ctx, provider, req.Model)
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
+
+	// Check if provider supports streaming
+	if sp, ok := p.(providers.StreamingProvider); ok {
+		resp, err := sp.ChatCompletionStream(ctx, req, sessionID, onToken)
+		if err == nil {
+			r.circuitBreakers[p.Name()].RecordSuccess()
+			return resp, nil
+		}
+		log.Printf("[Router] streaming failed for %s, falling back: %v", p.Name(), err)
+	}
+
+	// Fallback to non-streaming
+	return p.ChatCompletion(ctx, req, sessionID)
+}
+
 func (r *Router) findFirstHealthyCandidate(ctx context.Context, candidates []providers.Provider) (providers.Provider, error) {
 	for _, p := range candidates {
 		// Skip if circuit breaker is open
