@@ -548,9 +548,10 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 
 		// LLM call
 		req := providers.ChatRequest{
-			Model:    a.config.Model,
-			Messages: a.buildMessages(),
-			Tools:    a.registry.OpenAIToolDefinitions(),
+			Model:      a.config.Model,
+			Messages:   a.buildMessages(),
+			Tools:      a.registry.OpenAIToolDefinitions(),
+			ToolChoice: "auto", // Required for many open-source models to use function calling
 		}
 
 		// Resolve which provider will handle this call for the event
@@ -699,6 +700,14 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 					})
 					continue // re-enter loop for one fix attempt
 				}
+			}
+			// Don't exit on first text-only turn if agent narrated tool calls in text.
+			// The text parser may have missed a format — give stall detection a chance.
+			if a.noToolTurns == 1 && a.toolCallCount > 0 && msg.Content != "" &&
+				(strings.Contains(msg.Content, "tool_call") || strings.Contains(msg.Content, "file_read") ||
+					strings.Contains(msg.Content, "Let me read") || strings.Contains(msg.Content, "Let me check")) {
+				log.Printf("[Agent] text-only turn with tool narration after %d calls — continuing", a.toolCallCount)
+				continue
 			}
 			return msg.Content, nil
 		}
