@@ -216,12 +216,8 @@ func (cr *CodeRenderer) Resize(width, height int) {
 	cr.height = height
 }
 
-// writeContent writes a line of output.
+// writeContent writes a line of output, wrapping naturally at terminal width.
 func (cr *CodeRenderer) writeContent(line string) {
-	// Truncate to terminal width if needed
-	if cr.visibleLen(line) > cr.width-1 {
-		line = cr.truncate(line, cr.width-4) + "..."
-	}
 	fmt.Fprintln(cr.out, line)
 }
 
