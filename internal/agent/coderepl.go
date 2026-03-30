@@ -259,6 +259,10 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		response, err := cr.agent.Run(reqCtx, input)
 		markDone()
 		if err != nil {
+			// Don't show context cancelled as an error — just return to prompt
+			if reqCtx.Err() != nil {
+				continue
+			}
 			cr.renderer.Error(err.Error())
 			continue
 		}
