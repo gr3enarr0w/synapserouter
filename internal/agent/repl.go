@@ -18,13 +18,14 @@ import (
 // REPL implements an interactive read-eval-print loop for the agent.
 type REPL struct {
 	agent    *Agent
-	renderer *Renderer
+	renderer TerminalRenderer
 	in       io.Reader
 	out      io.Writer
+	ctx      context.Context // parent context for phase commands
 }
 
 // NewREPL creates a new REPL for the given agent.
-func NewREPL(agent *Agent, renderer *Renderer) *REPL {
+func NewREPL(agent *Agent, renderer TerminalRenderer) *REPL {
 	return &REPL{
 		agent:    agent,
 		renderer: renderer,
@@ -35,7 +36,15 @@ func NewREPL(agent *Agent, renderer *Renderer) *REPL {
 
 // Run starts the interactive REPL loop. Blocks until exit.
 func (r *REPL) Run(ctx context.Context) error {
-	fmt.Fprintln(r.out, "synroute agent — type /help for commands, /exit to quit")
+	r.ctx = ctx
+	// Brand name — logo image planned for v1.01
+	noColor := os.Getenv("NO_COLOR") != ""
+	if noColor {
+		fmt.Fprintln(r.out, "\n  SynRoute — chat mode")
+	} else {
+		fmt.Fprintln(r.out, "\n\033[1;36m  Syn\033[1;35mRoute\033[0m\033[2m — chat mode\033[0m")
+	}
+	fmt.Fprintln(r.out, "  /help for commands, /exit to quit")
 	fmt.Fprintln(r.out)
 
 	scanner := bufio.NewScanner(r.in)
@@ -180,6 +189,59 @@ func (r *REPL) handleCommand(input string) bool {
 			fmt.Fprintln(r.out)
 		}
 
+	case "/plan":
+		msg := strings.TrimSpace(strings.TrimPrefix(input, "/plan"))
+		if msg == "" {
+			msg = "Generate a plan with acceptance criteria for the current project"
+		}
+		fmt.Fprintf(r.out, "Running plan phase...\n")
+		response, err := r.agent.RunPhase(r.ctx, "plan", msg)
+		if err != nil {
+			fmt.Fprintf(r.out, "error: %s\n", err)
+		} else if response != "" {
+			fmt.Fprintln(r.out, response)
+		}
+
+	case "/review":
+		msg := strings.TrimSpace(strings.TrimPrefix(input, "/review"))
+		if msg == "" {
+			msg = "Review the code in the current working directory. Read files, run tests, identify issues."
+		}
+		fmt.Fprintf(r.out, "Running code review...\n")
+		response, err := r.agent.RunPhase(r.ctx, "code-review", msg)
+		if err != nil {
+			fmt.Fprintf(r.out, "error: %s\n", err)
+		} else if response != "" {
+			fmt.Fprintln(r.out, response)
+		}
+
+	case "/check":
+		msg := strings.TrimSpace(strings.TrimPrefix(input, "/check"))
+		if msg == "" {
+			msg = "Run verification: build the code, run tests, check against acceptance criteria."
+		}
+		fmt.Fprintf(r.out, "Running self-check...\n")
+		response, err := r.agent.RunPhase(r.ctx, "self-check", msg)
+		if err != nil {
+			fmt.Fprintf(r.out, "error: %s\n", err)
+		} else if response != "" {
+			fmt.Fprintln(r.out, response)
+		}
+
+	case "/fix":
+		msg := strings.TrimSpace(strings.TrimPrefix(input, "/fix"))
+		if msg == "" {
+			fmt.Fprintln(r.out, "usage: /fix <description of what to fix>")
+		} else {
+			fmt.Fprintf(r.out, "Running targeted fix...\n")
+			response, err := r.agent.RunPhase(r.ctx, "implement", msg)
+			if err != nil {
+				fmt.Fprintf(r.out, "error: %s\n", err)
+			} else if response != "" {
+				fmt.Fprintln(r.out, response)
+			}
+		}
+
 	case "/help":
 		fmt.Fprintln(r.out, `Commands:
   /exit      Exit the REPL
@@ -189,6 +251,10 @@ func (r *REPL) handleCommand(input string) bool {
   /history   Show conversation history
   /agents    Show spawned sub-agents
   /budget    Show resource budget usage
+  /plan      Run plan phase (generates plan + acceptance criteria)
+  /review    Run code review phase (independent assessment)
+  /check     Run self-check phase (build, test, verify)
+  /fix <msg> Run targeted implement phase (fix specific issue)
   /help      Show this help`)
 
 	default:

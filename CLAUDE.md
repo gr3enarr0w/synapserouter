@@ -1,6 +1,6 @@
 # SynapseRouter (synroute)
 
-Go-based LLM proxy router and coding agent that distributes requests across Ollama Cloud (primary, dynamic multi-level escalation chain), subscription providers (Gemini, Codex, Claude Code), and Vertex AI. Includes interactive agent REPL with tool execution (bash, file I/O, grep, glob, git), worktree isolation, and MCP server mode. Two profiles: `personal` (Ollama Cloud + OAuth subscriptions) and `work` (Vertex AI). Supports multiple Ollama API keys for concurrent subscriptions.
+Go-based LLM proxy router and coding agent that distributes requests across Ollama Cloud (primary, dynamic multi-level escalation chain), subscription providers (Gemini, Codex, Claude Code), Vertex AI, and models.corp (OpenAI-compatible). Includes interactive agent REPL and code mode TUI with tool execution (bash, file I/O, grep, glob, git, web search/fetch, notebook edit), worktree isolation, token streaming via SSE, and MCP server mode. Two profiles: `personal` (Ollama Cloud + OAuth subscriptions) and `work` (Vertex AI with 3-tier chain). Supports multiple Ollama API keys for concurrent subscriptions.
 
 ## Key Files
 
@@ -14,8 +14,14 @@ Go-based LLM proxy router and coding agent that distributes requests across Olla
 - `internal/orchestration/skills.go` — Skill registry with trigger-based matching
 - `internal/orchestration/dispatch.go` — Auto-dispatch engine: goal → skill chain → task steps
 - `compat_handlers.go` — OpenAI-compatible `/v1/chat/completions` and `/v1/responses` endpoints
-- `internal/tools/` — Agent tool interface, registry, and implementations (bash, file_read/write/edit, grep, glob, git, permissions)
+- `internal/tools/` — Agent tool interface, registry, and implementations (bash, file_read/write/edit, grep, glob, git, web_search, web_fetch, notebook_edit, permissions)
+- `internal/tools/safeclient.go` — SSRF-safe HTTP client for web_search and web_fetch (blocks private IPs, internal networks)
 - `internal/agent/` — Agent loop, REPL, sub-agents, handoffs, guardrails, state persistence, tracing, streaming
+- `internal/agent/coderenderer.go` — Code mode TUI: status bar, scroll regions, event-driven display
+- `internal/agent/coderepl.go` — Code mode REPL with raw terminal keyboard shortcuts
+- `internal/agent/terminal.go` — Raw terminal mode utilities via golang.org/x/term
+- `internal/agent/attachment.go` — File attachment parsing (@file references)
+- `commands_code.go` — `synroute code` command (default entry point)
 - `internal/environment/` — Project environment detection, version resolution, best practices engine
 - `internal/worktree/` — Git worktree isolation with TTL, size caps, background cleanup
 - `internal/mcpserver/` — MCP server: expose tools over HTTP (tools/list, tools/call)
@@ -55,7 +61,10 @@ OLLAMA_CHAIN format: level0_models|level1_models|level2_models|...
 
 ### Profiles
 - `personal`: Ollama Cloud (primary) + optional subscription providers (gemini, codex, claude-code)
-- `work`: Vertex AI only (Claude + Gemini via native GCP auth)
+  - Default conversation tier: `frontier` (configurable via `SYNROUTE_CONVERSATION_TIER`)
+- `work`: Vertex AI with 3-tier chain (haiku→sonnet+gemini→opus+gemini), configurable via `WORK_CHAIN` env var
+  - Default conversation tier: `mid` (configurable via `SYNROUTE_CONVERSATION_TIER`)
+  - Optional: `models.corp` as OpenAI-compatible provider (`MODELS_CORP_BASE_URL`, `MODELS_CORP_USER_KEY`, `MODELS_CORP_MODEL`)
 - Controlled by `ACTIVE_PROFILE` in `.env`
 
 ### Skill Auto-Dispatch
@@ -69,9 +78,17 @@ When a task/goal is submitted to orchestration, the dispatch engine automaticall
 Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-implement`, `go-testing`, `python-testing`, `code-review`, `api-design`, `docker-expert`, `research`
 
 ### Agent Execution Layer
-- **Tool Registry** (`internal/tools/`): 7 built-in tools + 2 agent tools (delegate, handoff)
+- **Tool Registry** (`internal/tools/`): 10 built-in tools (bash, file_read, file_write, file_edit, grep, glob, git, web_search, web_fetch, notebook_edit) + 2 agent tools (delegate, handoff)
+- **Web Search** (`internal/tools/web_search.go`): DuckDuckGo (default, no key), Tavily (`TAVILY_API_KEY`), SearXNG (`SEARXNG_URL`) backends
+- **Web Fetch** (`internal/tools/web_fetch.go`): Fetch and extract content from URLs, SSRF-safe via `safeclient.go`
+- **Notebook Edit** (`internal/tools/notebook_edit.go`): Edit Jupyter notebooks by cell index; `file_read` renders `.ipynb` cells
+- **File Attachments** (`internal/agent/attachment.go`): `@file` and `@dir/` references in user input with path traversal protection
 - **Tool Categories**: `read_only` (always allowed), `write` (needs approval), `dangerous` (extra scrutiny)
+- **Text-Based Tool Call Parser** (`internal/agent/text_tool_parser.go`): Parses 5 tool call formats from Ollama models that don't support native function calling
 - **Agent Loop** (`internal/agent/`): message → LLM → tool calls → pipeline check → repeat (unlimited turns)
+- **Loop/Stall Detection**: Works in ALL modes (not just pipeline) — detects repeated patterns and completion signals to prevent infinite loops
+- **Completion Signal Detection**: Recognizes when the agent has finished its task to prevent unnecessary additional turns
+- **Response Truncation**: LLM responses truncated at 4000 chars to prevent training data leakage
 - **Sub-Agent SDK** (`internal/agent/subagent.go`): parent-child agent spawning with config inheritance
   - `SpawnChild(SpawnConfig)` — create child agent (inherits model, tools, workdir)
   - `RunChild(ctx, cfg, task)` — spawn + run + collect result
@@ -91,11 +108,12 @@ Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-impl
   - Per-agent `AgentBudget` with `BudgetTracker` enforcement
 - **Tracing** (`internal/agent/trace.go`): structured event spans (llm_call, tool_call, handoff)
 - **Metrics** (`internal/agent/metrics.go`): request/tool/sub-agent performance tracking
-- **Streaming** (`internal/agent/streaming.go`): line-by-line output via `StreamWriter`
+- **Streaming** (`internal/agent/streaming.go`): Token streaming via SSE (`StreamingProvider` interface, Ollama implements it)
 - **REPL**: `synroute chat` — interactive with `/exit`, `/clear`, `/model`, `/tools`, `/history`, `/agents`, `/budget`
 - **Worktree Isolation** (`internal/worktree/`): `synroute chat --worktree` creates managed git worktree
   - TTL-based expiry (default 24h), size caps (10GB total, 2GB per tree), background cleanup (every 5m)
-- **Permission Model**: `interactive` (prompt), `auto_approve` (allow all), `read_only` (deny writes)
+- **Permission Model**: `interactive` (y/n/a prompting via `/dev/tty`), `auto_approve` (allow all), `read_only` (deny writes)
+  - Interactive permission prompting works in chat mode; currently disabled in code mode due to raw terminal conflicts
 - **MCP Server** (`internal/mcpserver/`): `synroute mcp-serve` or `SYNROUTE_MCP_SERVER=true` on main server
   - Endpoints: `/mcp/initialize`, `/mcp/tools/list`, `/mcp/tools/call`
 - **Git Safety**: `git push --force`, `git branch -D`, `git checkout --force` blocked by git tool — use bash with explicit approval
@@ -131,7 +149,7 @@ Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-impl
 - **Escalate: true** on code-review and acceptance-test — forces bigger model than implementer
 - **Dynamic turn caps**: 15 turns (spec <5KB), 25 turns (5-20KB), 40 turns (spec >20KB)
 - **Divergence detection**: force-advance when review findings increase 2+ consecutive cycles
-- **Regression tracking**: warns when compilation errors increase, prevents destructive churn
+- **Regression tracking** (`internal/agent/regression.go`): `RegressionTracker` warns when compilation errors increase, prevents destructive churn
 - **Budget exhaustion escalation**: sub-agents trigger parent provider escalation when budget exceeded
 - Max 3 fail-back cycles before accepting result
 
@@ -167,8 +185,9 @@ go vet ./...                               # Lint
 ## CLI Commands
 
 ```bash
-./synroute                                 # Start server (default)
-./synroute serve                           # Start server (explicit)
+./synroute                                 # Start code mode TUI (default)
+./synroute code                            # Start code mode TUI (explicit)
+./synroute serve                           # Start HTTP server
 ./synroute test                            # Smoke test all providers
 ./synroute test --provider ollama-chain-1   # Test single provider
 ./synroute test --json                     # JSON output

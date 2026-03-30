@@ -6,6 +6,18 @@ import (
 	"strings"
 )
 
+// TerminalRenderer is the interface for agent output rendering.
+// Both the simple Renderer (synroute chat) and CodeRenderer (synroute code)
+// implement this interface.
+type TerminalRenderer interface {
+	Text(text string)
+	ToolCall(name string, args map[string]interface{})
+	ToolResult(name string, result string, isError bool)
+	ToolDiff(path, oldText, newText string)
+	Error(msg string)
+	Prompt()
+}
+
 // Renderer handles terminal output formatting for agent interactions.
 type Renderer struct {
 	out io.Writer

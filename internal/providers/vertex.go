@@ -35,6 +35,7 @@ type VertexProvider struct {
 	publisher   string // "anthropic" or "google"
 	saKeyFile   string // path to service account JSON (empty = use gcloud)
 	modelPrefix string // "claude" or "gemini"
+	fixedModel  string // if set, always use this model instead of auto-detecting
 
 	cacheMu          sync.Mutex
 	tokenCache       string
@@ -50,6 +51,7 @@ type VertexConfig struct {
 	Publisher string // "anthropic" or "google"
 	SAKeyFile string // service account JSON path (empty = gcloud ADC)
 	Prefix    string // model prefix for SupportsModel: "claude" or "gemini"
+	Model     string // specific model to use (e.g. "claude-sonnet-4-6"); empty = auto
 }
 
 func NewVertexProvider(cfg VertexConfig) *VertexProvider {
@@ -57,7 +59,7 @@ func NewVertexProvider(cfg VertexConfig) *VertexProvider {
 	if cfg.Prefix == "gemini" {
 		maxCtx = 1048576
 	}
-	return &VertexProvider{
+	p := &VertexProvider{
 		BaseProvider: BaseProvider{
 			name:       cfg.Name,
 			baseURL:    vertexBaseURL(cfg.Location, cfg.Project),
@@ -72,6 +74,10 @@ func NewVertexProvider(cfg VertexConfig) *VertexProvider {
 		saKeyFile:   cfg.SAKeyFile,
 		modelPrefix: cfg.Prefix,
 	}
+	if cfg.Model != "" {
+		p.fixedModel = cfg.Model
+	}
+	return p
 }
 
 func vertexBaseURL(location, project string) string {
@@ -116,8 +122,11 @@ func (p *VertexProvider) ChatCompletion(ctx context.Context, req ChatRequest, se
 }
 
 func (p *VertexProvider) defaultModel() string {
+	if p.fixedModel != "" {
+		return p.fixedModel
+	}
 	if p.publisher == "anthropic" {
-		return "claude-sonnet-4-5"
+		return "claude-sonnet-4-6"
 	}
 	return "gemini-3.1-pro-preview"
 }
@@ -230,7 +239,7 @@ func (p *VertexProvider) claudeRawPredict(ctx context.Context, req ChatRequest, 
 		return ChatResponse{}, fmt.Errorf("vertex claude read failure: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return ChatResponse{}, fmt.Errorf("vertex claude returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return ChatResponse{}, NewProviderError("vertex-claude", resp, strings.TrimSpace(string(respBody)))
 	}
 
 	var anthResp struct {
@@ -365,7 +374,7 @@ func (p *VertexProvider) geminiGenerateContent(ctx context.Context, req ChatRequ
 		return ChatResponse{}, fmt.Errorf("vertex gemini read failure: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return ChatResponse{}, fmt.Errorf("vertex gemini returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return ChatResponse{}, NewProviderError("vertex-gemini", resp, strings.TrimSpace(string(respBody)))
 	}
 
 	var gemResp struct {

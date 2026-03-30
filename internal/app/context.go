@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"fmt"
 	"log"
 	"os"
@@ -67,6 +68,13 @@ func InitLight(ctx context.Context) (*AppContext, error) {
 		return nil, err
 	}
 
+	// Run embedded migrations if registered (ensures all tables exist for code mode)
+	if hasMigrations {
+		if err := RunEmbeddedMigrations(db, registeredMigrations); err != nil {
+			log.Printf("Warning: embedded migration error: %v", err)
+		}
+	}
+
 	tracker, err := usage.NewTracker(dbPath)
 	if err != nil {
 		db.Close()
@@ -91,6 +99,43 @@ func InitLight(ctx context.Context) (*AppContext, error) {
 // InitFull extends InitLight by creating the Router. Suitable for server mode.
 func (ac *AppContext) InitFull() {
 	ac.ProxyRouter = router.NewRouter(ac.Providers, ac.UsageTracker, ac.VectorMemory, ac.DB)
+}
+
+// registeredMigrations holds the embedded migration FS, set by RegisterMigrations.
+var (
+	registeredMigrations    embed.FS
+	hasMigrations           bool
+)
+
+// RegisterMigrations stores the embedded migration FS for use by InitLight.
+// Call from main.go init() or before InitLight.
+func RegisterMigrations(fs embed.FS) {
+	registeredMigrations = fs
+	hasMigrations = true
+}
+
+// RunEmbeddedMigrations applies all .sql files from the embedded FS to the database.
+func RunEmbeddedMigrations(db *sql.DB, fs embed.FS) error {
+	files, err := fs.ReadDir("migrations")
+	if err != nil {
+		return fmt.Errorf("read migrations dir: %w", err)
+	}
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), ".sql") {
+			continue
+		}
+		data, err := fs.ReadFile("migrations/" + file.Name())
+		if err != nil {
+			return fmt.Errorf("read migration %s: %w", file.Name(), err)
+		}
+		if _, err := db.Exec(string(data)); err != nil {
+			if strings.Contains(err.Error(), "duplicate column") {
+				continue
+			}
+			return fmt.Errorf("execute migration %s: %w", file.Name(), err)
+		}
+	}
+	return nil
 }
 
 // Close releases resources.
@@ -221,15 +266,6 @@ func initializeWorkProviders() []providers.Provider {
 	if claudeRegion == "" {
 		claudeRegion = "us-east5"
 	}
-	if claudeProject != "" {
-		providerList = append(providerList, providers.NewVertexProvider(providers.VertexConfig{
-			Name:      "vertex-claude",
-			Project:   claudeProject,
-			Location:  claudeRegion,
-			Publisher: "anthropic",
-			Prefix:    "claude",
-		}))
-	}
 
 	geminiProject := envFirst("VERTEX_GEMINI_PROJECT", "GEMINI_PROJECT")
 	geminiLocation := envFirst("VERTEX_GEMINI_LOCATION", "GEMINI_LOCATION")
@@ -237,15 +273,70 @@ func initializeWorkProviders() []providers.Provider {
 		geminiLocation = "global"
 	}
 	geminiSAKey := envFirst("VERTEX_GEMINI_SA_KEY", "GOOGLE_SERVICE_ACCOUNT_JSON")
+
+	// Create tiered providers: 2 per level (Claude + Gemini)
+	// L0 cheap: haiku + flash
+	// L1 mid: sonnet + pro
+	// L2 frontier: opus + pro-preview
+	// Vertex model names per tier
+	// Claude: haiku-4.5 (cheap), sonnet-4.6 (mid), opus-4.6 (frontier)
+	// Gemini: flash (cheap), pro (mid+frontier) — only 2 distinct tiers
+	claudeModels := []struct{ name, model string }{
+		{"vertex-claude-cheap", "claude-haiku-4-5"},
+		{"vertex-claude-mid", "claude-sonnet-4-6"},
+		{"vertex-claude-frontier", "claude-opus-4-6"},
+	}
+	geminiModels := []struct{ name, model string }{
+		{"vertex-gemini-cheap", "gemini-3-flash-preview"},
+		{"vertex-gemini-mid", "gemini-3.1-pro-preview"},
+		{"vertex-gemini-frontier", "gemini-3.1-pro-preview"},
+	}
+
+	if claudeProject != "" {
+		for _, m := range claudeModels {
+			providerList = append(providerList, providers.NewVertexProvider(providers.VertexConfig{
+				Name:      m.name,
+				Project:   claudeProject,
+				Location:  claudeRegion,
+				Publisher: "anthropic",
+				Prefix:    "claude",
+				Model:     m.model,
+			}))
+		}
+		log.Printf("✓ vertex-claude: 3 tiers (haiku/sonnet/opus) on %s/%s", claudeProject, claudeRegion)
+	}
+
 	if geminiProject != "" {
-		providerList = append(providerList, providers.NewVertexProvider(providers.VertexConfig{
-			Name:      "vertex-gemini",
-			Project:   geminiProject,
-			Location:  geminiLocation,
-			Publisher: "google",
-			SAKeyFile: geminiSAKey,
-			Prefix:    "gemini",
-		}))
+		for _, m := range geminiModels {
+			providerList = append(providerList, providers.NewVertexProvider(providers.VertexConfig{
+				Name:      m.name,
+				Project:   geminiProject,
+				Location:  geminiLocation,
+				Publisher: "google",
+				SAKeyFile: geminiSAKey,
+				Prefix:    "gemini",
+				Model:     m.model,
+			}))
+		}
+		log.Printf("✓ vertex-gemini: 3 tiers (flash/pro/pro-preview) on %s/%s", geminiProject, geminiLocation)
+	}
+
+	// models.corp (Red Hat AI Inference) — OpenAI-compatible endpoint
+	// Requires VPN. Auth via user_key. Configure:
+	//   MODELS_CORP_BASE_URL=https://models.corp.redhat.com/v1
+	//   MODELS_CORP_USER_KEY=your-user-key
+	//   MODELS_CORP_MODEL=model-name (optional, default: auto)
+	modelsCorpURL := os.Getenv("MODELS_CORP_BASE_URL")
+	modelsCorpKey := os.Getenv("MODELS_CORP_USER_KEY")
+	modelsCorpModel := os.Getenv("MODELS_CORP_MODEL")
+	if modelsCorpURL != "" {
+		if modelsCorpModel == "" {
+			modelsCorpModel = "auto"
+		}
+		providerList = append(providerList, providers.NewOllamaCloudProvider(
+			modelsCorpURL, modelsCorpKey, modelsCorpModel, "models-corp",
+		))
+		log.Printf("✓ models-corp provider initialized (%s)", modelsCorpURL)
 	}
 
 	return providerList
@@ -254,10 +345,63 @@ func initializeWorkProviders() []providers.Provider {
 // buildEscalationChain creates the escalation chain from OLLAMA_CHAIN env var.
 // Format: model1,model2|model3,model4|model5 — pipe separates levels, comma separates models within a level.
 // Each level's models rotate (cross-review). Each level = 2 stages of work.
+//
+// Tier classification (three-tier model routing):
+//   - If OLLAMA_CHAIN_TIERS is set (pipe-separated: "cheap|cheap|mid|frontier"),
+//     each level gets the corresponding tier.
+//   - Otherwise, auto-classifies: bottom third = cheap, middle = mid, top third = frontier.
+//   - Subscription providers always get frontier tier.
+// buildWorkEscalationChain builds the escalation chain for the work profile.
+// Uses WORK_CHAIN env var (same format as OLLAMA_CHAIN: pipe-separated levels,
+// comma-separated providers within a level). Provider names reference the
+// tiered providers created by initializeWorkProviders.
+//
+// Example: WORK_CHAIN=vertex-claude-cheap|vertex-claude-mid,vertex-gemini-mid|vertex-claude-frontier,vertex-gemini-frontier
+//
+// If WORK_CHAIN is not set, creates a default 3-level chain from available providers.
+func buildWorkEscalationChain() []agent.EscalationLevel {
+	// User-configured chain
+	if workChain := os.Getenv("WORK_CHAIN"); workChain != "" {
+		levels := ParseOllamaChain(workChain) // same format
+		var chain []agent.EscalationLevel
+		for _, providers := range levels {
+			chain = append(chain, agent.EscalationLevel{Providers: providers})
+		}
+		// Apply explicit tiers if set
+		if tiers := parseChainTiers(os.Getenv("WORK_CHAIN_TIERS")); len(tiers) > 0 {
+			for i := range chain {
+				if i < len(tiers) {
+					chain[i].Tier = tiers[i]
+				}
+			}
+		} else {
+			autoClassifyTiers(chain, len(chain))
+		}
+		log.Printf("[Agent] work escalation chain (configured): %d levels", len(chain))
+		return chain
+	}
+
+	// Default: 3 levels from available tiered providers
+	chain := []agent.EscalationLevel{
+		{Providers: []string{"vertex-claude-cheap"}, Tier: agent.TierCheap},
+		{Providers: []string{"vertex-claude-mid", "vertex-gemini-mid"}, Tier: agent.TierMid},
+		{Providers: []string{"vertex-claude-frontier", "vertex-gemini-frontier"}, Tier: agent.TierFrontier},
+	}
+	log.Printf("[Agent] work escalation chain (default): 3 levels")
+	return chain
+}
+
 func buildEscalationChain(profile string) []agent.EscalationLevel {
 	var chain []agent.EscalationLevel
 
+	// Work profile: Vertex AI escalation chain (Claude + Gemini per level)
+	if profile == "work" {
+		return buildWorkEscalationChain()
+	}
+
 	chainLevels := ParseOllamaChain(os.Getenv("OLLAMA_CHAIN"))
+	explicitTiers := parseChainTiers(os.Getenv("OLLAMA_CHAIN_TIERS"))
+
 	modelIdx := 0
 	for _, models := range chainLevels {
 		var levelProviders []string
@@ -270,23 +414,95 @@ func buildEscalationChain(profile string) []agent.EscalationLevel {
 		}
 	}
 
+	// Apply tier classification to Ollama chain levels
+	ollamaLevelCount := len(chain)
+	if len(explicitTiers) > 0 {
+		// Explicit tiers from OLLAMA_CHAIN_TIERS
+		for i := range chain {
+			if i < len(explicitTiers) {
+				chain[i].Tier = explicitTiers[i]
+			}
+		}
+	} else {
+		// Auto-classify: bottom third = cheap, middle = mid, top third = frontier
+		autoClassifyTiers(chain, ollamaLevelCount)
+	}
+
 	// Subscription providers — disable with SUBSCRIPTIONS_DISABLED=true
+	// Subscriptions always get frontier tier (they're the strongest/most expensive).
 	if profile != "work" && os.Getenv("SUBSCRIPTIONS_DISABLED") != "true" {
 		sps, err := subscriptions.LoadRuntimeProviders(context.Background())
 		if err == nil {
 			for _, p := range sps {
-				chain = append(chain, agent.EscalationLevel{Providers: []string{p.Name()}})
+				chain = append(chain, agent.EscalationLevel{
+					Providers: []string{p.Name()},
+					Tier:      agent.TierFrontier,
+				})
 			}
 		}
 	}
 
 	var names []string
 	for _, level := range chain {
-		names = append(names, fmt.Sprintf("%v", level.Providers))
+		tier := string(level.Tier)
+		if tier == "" {
+			tier = "auto"
+		}
+		names = append(names, fmt.Sprintf("%v(%s)", level.Providers, tier))
 	}
 	log.Printf("[Agent] escalation chain (%d levels): %s", len(chain), strings.Join(names, " → "))
 
 	return chain
+}
+
+// parseChainTiers parses OLLAMA_CHAIN_TIERS env var.
+// Format: "cheap|cheap|mid|frontier" — pipe-separated tier names matching OLLAMA_CHAIN levels.
+func parseChainTiers(tiersStr string) []agent.ModelTier {
+	if tiersStr == "" {
+		return nil
+	}
+	var tiers []agent.ModelTier
+	for _, t := range strings.Split(tiersStr, "|") {
+		t = strings.TrimSpace(strings.ToLower(t))
+		switch t {
+		case "cheap":
+			tiers = append(tiers, agent.TierCheap)
+		case "mid":
+			tiers = append(tiers, agent.TierMid)
+		case "frontier":
+			tiers = append(tiers, agent.TierFrontier)
+		default:
+			// Unknown tier — default to mid
+			tiers = append(tiers, agent.TierMid)
+		}
+	}
+	return tiers
+}
+
+// autoClassifyTiers assigns tiers based on position in the chain.
+// Bottom third = cheap, middle third = mid, top third = frontier.
+// For chains with 1-2 levels, all levels get frontier (no point splitting).
+func autoClassifyTiers(chain []agent.EscalationLevel, ollamaCount int) {
+	if ollamaCount <= 2 {
+		for i := 0; i < ollamaCount && i < len(chain); i++ {
+			chain[i].Tier = agent.TierFrontier
+		}
+		return
+	}
+
+	cheapEnd := ollamaCount / 3
+	midEnd := (2 * ollamaCount) / 3
+
+	for i := 0; i < ollamaCount && i < len(chain); i++ {
+		switch {
+		case i < cheapEnd:
+			chain[i].Tier = agent.TierCheap
+		case i < midEnd:
+			chain[i].Tier = agent.TierMid
+		default:
+			chain[i].Tier = agent.TierFrontier
+		}
+	}
 }
 
 // ParseOllamaChain parses the OLLAMA_CHAIN env var format.

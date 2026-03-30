@@ -61,8 +61,8 @@ func TestHandleToolsList(t *testing.T) {
 
 	result, _ := resp.Result.(map[string]interface{})
 	toolsList, _ := result["tools"].([]interface{})
-	if len(toolsList) != 7 {
-		t.Errorf("expected 7 tools, got %d", len(toolsList))
+	if len(toolsList) != 10 {
+		t.Errorf("expected 10 tools, got %d", len(toolsList))
 	}
 }
 

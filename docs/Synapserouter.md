@@ -9,7 +9,7 @@ status: active-development
 
 A Go-based LLM proxy router and autonomous coding agent. It routes requests across multiple LLM providers using a cost-optimized escalation chain — starting with the cheapest adequate model and escalating only when needed. It includes a full coding agent that can plan, implement, test, and review code using built-in tools.
 
-> **This is an active project, not a finished product.** Core routing and agent execution work. Several major features (chat backend, CLI TUI, real embeddings) are still ahead. See [[Known Gaps]] for what's broken and [[Requirements]] for where it's going.
+> **This is an active project, not a finished product.** Core routing, agent execution, and code mode TUI work. Several major features (chat backend, real embeddings) are still ahead. See [[Known Gaps]] for what's broken and [[Requirements]] for where it's going.
 
 ---
 
@@ -70,7 +70,7 @@ The agent is a **tool builder, not a tool runner**. When given a task that invol
 
 Every substantial task runs through the **pipeline**: Plan -> Implement -> Self-Check -> Code Review -> Acceptance Test. Code review and acceptance testing use fresh sub-agents with no shared context, so they can catch mistakes the implementing agent is blind to.
 
-The agent has 7 built-in tools (bash, file read/write/edit, grep, glob, git) plus agent-to-agent delegation. See [[User Guide]] for CLI usage and [[Architecture Overview]] for internals.
+The agent has 10 built-in tools (bash, file read/write/edit, grep, glob, git, web_search, web_fetch, notebook_edit) plus agent-to-agent delegation (delegate, handoff). Web search supports DuckDuckGo, Tavily, and SearXNG backends. Web fetch is SSRF-safe. Notebook support renders `.ipynb` cells on read and edits by cell index. See [[User Guide]] for CLI usage and [[Architecture Overview]] for internals.
 
 ### Skills
 
@@ -92,23 +92,35 @@ See [[Memory System]] and [[Hallucination Detection]].
 |---|---|
 | Provider routing (Ollama Cloud dynamic chain) | Working |
 | Circuit breakers + health caching | Working |
-| Agent tool execution (bash, file ops, tests) | Working |
+| Agent tool execution (10 built-in tools + 2 agent tools) | Working |
+| Web search (DuckDuckGo, Tavily, SearXNG) + web fetch (SSRF-safe) | Working |
+| Notebook support (file_read renders cells, notebook_edit by index) | Working |
+| File attachments (@file, @dir/ with path traversal protection) | Working |
 | Agent pipeline (plan/implement/verify/review) | Working |
+| Token streaming via SSE (StreamingProvider, Ollama) | Working |
+| Text-based tool call parser (5 formats for Ollama models) | Working |
+| Loop/stall detection (all modes) + completion signal detection | Working |
+| Response truncation at 4000 chars | Working |
 | Memory system (zero-loss, unified recall) | Implemented |
 | Hallucination detection (fact tracking) | Implemented |
 | Skills (54 embedded, auto-matching) | Working |
 | Spec compliance (constraint extraction, tool protection) | Working |
 | Dynamic turn caps (15/25/40 based on spec complexity) | Working |
-| Review divergence detection | Working |
-| Regression tracking (compilation errors) | Working |
+| Review divergence detection (ReviewStabilityTracker) | Working |
+| Regression tracking (RegressionTracker, compilation errors) | Working |
 | Background health monitor (auto-recovery) | Working |
 | Sub-agent delegation + handoffs | Working |
 | Worktree isolation | Working |
 | MCP server mode | Working |
 | OpenAI-compatible API | Working |
+| Code mode TUI (status bar, scroll regions, keyboard shortcuts) | Working |
+| Permission prompting (y/n/a via /dev/tty, chat mode) | Working |
+| Work profile 3-tier chain (haiku→sonnet+gemini→opus+gemini) | Working |
+| Configurable conversation tier (SYNROUTE_CONVERSATION_TIER) | Working |
+| models.corp OpenAI-compatible provider (work profile, optional) | Working |
+| Multi-mode Ctrl-C (cancel LLM call / double-press exit) | Working |
 | Chat backend for LibreChat (Epic 7) | Not started |
-| CLI TUI (Epic 9) | Not started |
-| Real embeddings (ONNX) | Not started — using TF-IDF hash vectors |
+| Real embeddings (ONNX) | Not started -- using TF-IDF hash vectors |
 | MCP client | Not started |
 | Multi-user / Postgres | Not started |
 
@@ -120,11 +132,10 @@ See [[Known Gaps]] for specific issues found during testing.
 
 | Phase | Focus | Status |
 |---|---|---|
-| 1 | Core router + agent — route requests, build projects | **Current** |
+| 1 | Core router + agent — route requests, build projects, code mode TUI | **Current** |
 | 2 | Chat backend API — LibreChat integration, smart model selection | Next |
 | 3 | Rich content — document creation, file processing | Planned |
-| 4 | CLI TUI — polished terminal interface | Planned |
-| 5 | Scale — Postgres, multi-user, branding | Planned |
+| 4 | Scale — Postgres, multi-user, branding | Planned |
 | Beyond | Real embeddings, MCP client, wave-based parallel execution, job queue | Future |
 
 See [[Requirements]] for detailed acceptance criteria per phase.

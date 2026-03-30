@@ -167,6 +167,9 @@ func (ft *FactTracker) RecentBashFacts(n int) []BashFact {
 var testCommandPrefixes = []string{
 	"go test", "pytest", "npm test", "npx jest", "cargo test",
 	"python -m pytest", "python3 -m pytest", "make test",
+	"gradle test", "gradlew test", "./gradlew test",
+	"mvn test", "mvnw test", "./mvnw test",
+	"jest", "npx vitest", "npm run test",
 }
 
 func isTestCommand(cmd string) bool {

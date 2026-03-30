@@ -1,6 +1,8 @@
 # Synapserouter Documentation
 
-Go-based LLM proxy router and coding agent that distributes requests across multiple providers with automatic escalation, skill-based dispatch, and an interactive agent REPL.
+Go-based LLM proxy router and coding agent that distributes requests across multiple providers with automatic escalation, skill-based dispatch, and an interactive coding agent.
+
+**New here?** Start with the [User Guide](./guides/User%20Guide.md) for installation and first-run instructions, or the [README](../README.md) for a quick start in 5 steps.
 
 **Status: Early development (Phase 1)**
 
@@ -9,13 +11,25 @@ The core router and agent are functional. Most of the roadmap -- chat backend, t
 ## What Works Today
 
 - Provider routing with dynamic multi-level escalation chain
-- Interactive agent with tool execution (bash, files, grep, glob, git)
+- Code mode TUI with status bar, scroll regions, keyboard shortcuts (^P pipeline, ^T tools, ^L verbosity, ^E escalate, ^/ help)
+- Interactive agent with 10 built-in tools (bash, file read/write/edit, grep, glob, git, web_search, web_fetch, notebook_edit) + 2 agent tools (delegate, handoff)
+- Web search (DuckDuckGo, Tavily, SearXNG backends) and web fetch (SSRF-safe)
+- File attachments via `@file` and `@dir/` references with path traversal protection
+- Token streaming via SSE (StreamingProvider interface, Ollama implements it)
+- Text-based tool call parser (5 formats for Ollama models without native function calling)
+- Loop/stall detection in all modes, completion signal detection, response truncation at 4000 chars
+- Regression tracking (RegressionTracker) and review stability/divergence detection
+- Notebook support: file_read renders .ipynb cells, notebook_edit edits by cell index
 - 54 embedded skills with trigger-based matching and language-field routing
 - Spec compliance system with constraint extraction and tool-layer protection
 - Worktree isolation for safe code changes
 - MCP server mode
 - Eval framework with 11 benchmark sources
-- Two profiles: personal (Ollama Cloud) and work (Vertex AI)
+- Two profiles: personal (Ollama Cloud, frontier tier) and work (Vertex AI, 3-tier chain: haiku→sonnet+gemini→opus+gemini)
+- Configurable conversation tier via `SYNROUTE_CONVERSATION_TIER` env var
+- Work profile: optional models.corp OpenAI-compatible provider
+- Multi-mode Ctrl-C handling (cancel LLM call during generation, double-press to exit at idle)
+- Permission prompting (y/n/a via /dev/tty) in chat mode
 
 ## What's Being Built
 

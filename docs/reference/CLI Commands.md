@@ -14,15 +14,44 @@ aliases:
 
 Complete reference for all `synroute` CLI commands. For a guided introduction, see [[User Guide]].
 
+All examples below assume `synroute` is on your PATH. If not, replace `synroute` with `./synroute` (run from the project directory) or the full path to the binary. See the [[User Guide#Add to your PATH]] section for setup.
+
+---
+
+## synroute (code mode)
+
+The default command starts the code mode TUI -- a full terminal interface with status bar, scroll regions, and keyboard shortcuts.
+
+```bash
+synroute              # Start code mode TUI (default)
+synroute code         # Start code mode TUI (explicit)
+```
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `^P` | Show pipeline status |
+| `^T` | Show recent tool calls |
+| `^L` | Cycle verbosity level |
+| `^E` | Force provider escalation |
+| `^/` | Show help and shortcuts |
+| `Ctrl-C` | Multi-mode: cancels LLM call during generation; at idle, press twice to exit |
+
+### Environment Variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `SYNROUTE_CONVERSATION_TIER` | `frontier` (personal) / `mid` (work) | Starting conversation tier for the parent agent |
+
 ---
 
 ## synroute serve
 
-Start the HTTP server. This is the default command when no subcommand is given.
+Start the HTTP server.
 
 ```bash
-synroute              # Start server (default)
-synroute serve        # Start server (explicit)
+synroute serve        # Start HTTP server
 ```
 
 The server listens on `:8090` by default and exposes:
@@ -52,7 +81,7 @@ When `SYNROUTE_MCP_SERVER=true` is set, the server also exposes MCP endpoints:
 
 ## synroute chat
 
-Interactive agent REPL or one-shot message execution. The agent has access to tools: bash, file_read, file_write, file_edit, grep, glob, git, delegate, and handoff.
+Interactive agent REPL or one-shot message execution. The agent has access to 10 built-in tools (bash, file_read, file_write, file_edit, grep, glob, git, web_search, web_fetch, notebook_edit) plus 2 agent tools (delegate, handoff). Supports file attachments via `@file` and `@dir/` references.
 
 ### Flags
 
@@ -113,6 +142,11 @@ When running interactively, these slash commands are available:
 | `/history` | Show conversation history |
 | `/agents` | Show sub-agent status |
 | `/budget` | Show token budget usage |
+| `/plan` | Enter plan mode |
+| `/review` | Enter review mode |
+| `/check` | Run self-check |
+| `/fix` | Enter fix mode |
+| `/help` | Show help and keyboard shortcuts |
 
 ---
 

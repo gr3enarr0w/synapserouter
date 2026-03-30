@@ -47,6 +47,33 @@ var (
 //go:embed migrations/*.sql
 var embeddedMigrations embed.FS
 
+
+func makeHTTPRequestWithTimeout(urlStr string, timeout time.Duration) (*http.Response, error) {
+	url, err := http.NewRequest("GET", urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{
+		Timeout: timeout,
+	}
+	return client.Do(url)
+}
+
+func init() {
+	// Register embedded migrations so InitLight can apply them for all modes (not just serve)
+	app.RegisterMigrations(embeddedMigrations)
+}
+
+func printLogo() {
+	if os.Getenv("NO_COLOR") != "" {
+		fmt.Println("\n  SynRoute")
+		fmt.Println()
+		return
+	}
+	fmt.Println("\n\033[1;36m  Syn\033[1;35mRoute\033[0m")
+	fmt.Println()
+}
+
 func main() {
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
@@ -64,6 +91,11 @@ func main() {
 			cmdEval(os.Args[2:])
 		case "chat":
 			cmdChat(os.Args[2:])
+		case "code":
+			cmdCode(os.Args[2:])
+			return
+		case "mcp":
+			cmdMCP(os.Args[2:])
 		case "mcp-serve":
 			cmdMCPServe(os.Args[2:])
 		case "version":
@@ -76,7 +108,9 @@ func main() {
 		}
 		return
 	}
-	startServer()
+
+	// No command given — default to code mode (interactive TUI)
+	cmdCode(nil)
 }
 
 func startServer() {
@@ -327,6 +361,7 @@ func startServer() {
 		log.Println("🔓 No SYNROUTE_ADMIN_TOKEN set — admin endpoints restricted to localhost")
 	}
 	logStartupCheck(startupCheck)
+	printLogo()
 
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal(err)

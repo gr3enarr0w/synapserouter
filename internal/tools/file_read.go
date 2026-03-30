@@ -3,8 +3,10 @@ package tools
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -40,6 +42,11 @@ func (t *FileReadTool) Execute(ctx context.Context, args map[string]interface{},
 	const defaultLineLimit = 2000
 
 	path := resolveToolPath(stringArg(args, "path"), workDir)
+
+	// Jupyter notebook: parse JSON and render cells readably (#313)
+	if strings.HasSuffix(strings.ToLower(filepath.Base(path)), ".ipynb") {
+		return t.readNotebook(path)
+	}
 	offset := intArg(args, "offset", 1)
 	limit := intArg(args, "limit", 0)
 	userSetLimit := limit > 0
@@ -96,4 +103,56 @@ func (t *FileReadTool) Execute(ctx context.Context, args map[string]interface{},
 	}
 
 	return &ToolResult{Output: b.String()}, nil
+}
+
+// readNotebook parses a .ipynb file and renders cells in a readable format.
+func (t *FileReadTool) readNotebook(path string) (*ToolResult, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return &ToolResult{Error: err.Error()}, nil
+	}
+
+	var nb struct {
+		Cells []struct {
+			CellType string          `json:"cell_type"`
+			Source   json.RawMessage `json:"source"`
+			Outputs json.RawMessage `json:"outputs,omitempty"`
+		} `json:"cells"`
+	}
+	if err := json.Unmarshal(data, &nb); err != nil {
+		return &ToolResult{Error: fmt.Sprintf("invalid notebook JSON: %v", err)}, nil
+	}
+
+	var b strings.Builder
+	for i, cell := range nb.Cells {
+		source := notebookCellSource(cell.Source)
+		hasOutput := len(cell.Outputs) > 2 // "[]" = empty
+		label := fmt.Sprintf("--- Cell %d [%s]", i+1, cell.CellType)
+		if hasOutput {
+			label += " (has output)"
+		}
+		label += " ---"
+		fmt.Fprintf(&b, "%s\n%s\n\n", label, source)
+	}
+
+	if len(nb.Cells) == 0 {
+		return &ToolResult{Output: "(empty notebook — no cells)"}, nil
+	}
+	return &ToolResult{Output: b.String()}, nil
+}
+
+// notebookCellSource extracts the source text from an ipynb cell.
+// Source can be a string or []string in the ipynb spec.
+func notebookCellSource(raw json.RawMessage) string {
+	// Try as []string first (most common in ipynb)
+	var lines []string
+	if err := json.Unmarshal(raw, &lines); err == nil {
+		return strings.Join(lines, "")
+	}
+	// Try as single string
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	return string(raw)
 }

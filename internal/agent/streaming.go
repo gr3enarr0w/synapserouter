@@ -2,12 +2,64 @@ package agent
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"sync"
+
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
 )
 
 // StreamCallback is called for each line of streaming output.
 type StreamCallback func(line string)
+
+// TokenCallback is called for each streamed token chunk from the LLM.
+type TokenCallback func(token string)
+
+// StreamingChatExecutor extends ChatExecutor with streaming support.
+type StreamingChatExecutor interface {
+	ChatExecutor
+	ChatCompletionStream(ctx context.Context, req providers.ChatRequest, sessionID string, onToken TokenCallback) (providers.ChatResponse, error)
+}
+
+// StreamingTokenCollector collects tokens and emits them via a TokenCallback,
+// also accumulating the full response for the agent loop.
+type StreamingTokenCollector struct {
+	mu       sync.Mutex
+	tokens   []string
+	callback TokenCallback
+}
+
+// NewStreamingTokenCollector creates a collector that forwards tokens to the callback.
+func NewStreamingTokenCollector(callback TokenCallback) *StreamingTokenCollector {
+	return &StreamingTokenCollector{callback: callback}
+}
+
+// OnToken handles an incoming token from the LLM stream.
+func (c *StreamingTokenCollector) OnToken(token string) {
+	c.mu.Lock()
+	c.tokens = append(c.tokens, token)
+	c.mu.Unlock()
+
+	if c.callback != nil {
+		c.callback(token)
+	}
+}
+
+// FullText returns the accumulated tokens as a single string.
+func (c *StreamingTokenCollector) FullText() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	total := 0
+	for _, t := range c.tokens {
+		total += len(t)
+	}
+	buf := make([]byte, 0, total)
+	for _, t := range c.tokens {
+		buf = append(buf, t...)
+	}
+	return string(buf)
+}
 
 // StreamWriter wraps an io.Writer and calls a callback for each line written.
 type StreamWriter struct {

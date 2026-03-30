@@ -1,7 +1,7 @@
 # Synapserouter Product Specification
 
-**Version:** 1.1
-**Date:** 2026-03-27
+**Version:** 1.0
+**Date:** 2026-03-30
 **Status:** Living document -- updated as features ship
 
 ---
@@ -60,7 +60,8 @@ Synapserouter (binary: `synroute`) is a Go-based LLM platform with four capabili
 
 | Mode | Command | What It Does | Status |
 |------|---------|-------------|--------|
-| **Chat** | `synroute chat` | Conversational AI + coding agent | Implemented |
+| **Code** | `synroute` or `synroute code` | Pipeline-aware code mode TUI with status bar, keyboard shortcuts, event-driven display (default) | Implemented |
+| **Chat** | `synroute chat` | Lightweight conversational REPL | Implemented |
 | **Proxy** | `synroute serve` | OpenAI-compatible API router | Implemented |
 | **Agent Backend** | `synroute serve` (agent-aware routing) | Model provider for coding tools | Implemented |
 | **MCP Server** | `synroute mcp-serve` | Model Context Protocol -- exposes tools over HTTP | Implemented |
@@ -109,15 +110,16 @@ Two independent database backends. User picks based on environment.
 ### Design Principles
 
 1. **The router IS the escalation.** One system routes requests. No parallel escalation mechanisms.
-2. **Frontier talks, cheap models work.** The best available model handles conversation with the user. Smaller models handle parallel coding and builds.
-3. **Pipeline is a tool, not a mode.** The coding pipeline is triggered when the agent decides work is needed. Conversational messages don't trigger it.
-4. **Intent-based routing.** The LLM reads the user's message and knows what to do. No slash commands or mode flags needed.
+2. **Frontier talks, cheap models work.** Three model tiers (cheap/mid/frontier) auto-classified from OLLAMA_CHAIN position. The frontier model handles user conversation and planning. Mid-tier handles reviews and complex fixes. Cheap models handle code generation and builds via sub-agents.
+3. **Pipeline is a tool, not a mode.** Pipeline phases (plan, implement, verify, review, test) are LLM-callable tools the frontier model invokes when work is needed. Conversational messages get direct answers without triggering any pipeline.
+4. **Intent-based routing.** The frontier model reads the user's message and decides which phase-tools to invoke. No keyword matching or forced pipelines. Users can also invoke phases explicitly via REPL slash commands (`/plan`, `/review`, `/check`, `/fix`).
 5. **Multi-model verification.** Code written by Model A is reviewed by Model B. Architectural diversity for quality.
 6. **Spec is a contract.** When a spec is provided, it's binding. Skills are suggestions; spec directives are mandatory.
 7. **Provider-agnostic.** Any LLM provider can be added. The product doesn't prefer any vendor.
 8. **Runtime-agnostic isolation.** Docker and Podman are equal, independent container runtimes. Neither is primary.
 9. **Database-agnostic.** SQLite and PostgreSQL are equal, independent database backends.
 10. **Skills are self-contained.** Adding a skill means dropping one `.md` file and rebuilding. No Go code changes.
+11. **Skills are the trigger layer for MCPs.** MCP servers provide tools (GitHub, document creation, web search, etc.). Skills define WHEN those tools are invoked via trigger matching and `mcp_tools` bindings. The agent never discovers or calls MCP tools directly — skills mediate all MCP access. This means any MCP server added to synroute must have a corresponding skill that defines its triggers and usage context.
 
 ### Agent Intents
 
@@ -418,67 +420,80 @@ Automatic language and toolchain detection from project files:
 
 Detection sets `ProjectLanguage`, resolves build commands, checks for missing tools, and injects setup instructions into the system prompt.
 
-### 2.12 Chat Architecture
+### 2.12 Chat and Code Architecture
 
-*(Core implemented in `internal/agent/repl.go`; rich UI planned -- #229, #231)*
+The agent operates in two CLI modes:
 
-The chat mode operates as a conversational interface where the frontier model responds directly to the user. No pipeline is triggered unless the user's intent requires work.
+**Code mode** (`synroute` or `synroute code`) — the default. Pipeline-aware TUI with:
+- Status bar (project name, current phase, active model, elapsed time)
+- ANSI scroll region layout (status bar + content area + footer)
+- Keyboard shortcuts: `^P` pipeline status, `^T` recent tools, `^L` cycle verbosity, `^E` force escalation, `^/` help
+- Raw terminal mode via `golang.org/x/term` with cooked-mode fallback for input
+- EventBus-driven real-time updates from agent loop
+- Implemented in `internal/agent/coderenderer.go`, `coderepl.go`, `terminal.go`
+
+**Chat mode** (`synroute chat`) — lightweight REPL for simple conversations.
+
+Both modes share the same agent loop and conversation flow:
 
 ```
 User Input
   -> Frontier model reads message
   -> Intent detection (LLM-native, not keyword matching)
   -> If conversational (chat/explain/research): respond directly
-  -> If work needed (build/fix/review/deploy): trigger pipeline
+  -> If work needed (build/fix/review/deploy): invoke pipeline phase tools
   -> Stream response to terminal
   -> Persist to session (database)
 ```
 
 **Session persistence:** Each conversation is a session with a unique ID. Messages, tool outputs, and agent state persist to the database. Sessions can be resumed (`--resume`) or listed.
 
-**Streaming:** Responses stream token-by-token to the terminal. Tool calls render inline with semantic colors. *(Rich rendering planned -- #231)*
+**File attachments:** `@filename` references in messages are parsed, file content read and injected into the conversation. Supports absolute paths, relative paths, `~/` expansion, binary file detection, and 10KB truncation with file_read fallback. Implemented in `internal/agent/attachment.go`.
 
-**REPL commands (current):** `/exit`, `/clear`, `/model`, `/tools`, `/history`, `/agents`, `/budget`
+**REPL slash commands:** `/exit`, `/clear`, `/model`, `/tools`, `/history`, `/agents`, `/budget`, `/help`
 
-**Planned:**
-- File attachment via `@filename` references (#228)
+**Phase slash commands:** `/plan`, `/review`, `/check`, `/fix` — invoke individual pipeline phases within the current session without restarting the full pipeline.
+
+**Remaining work:**
 - Semantic color system with accessibility presets (#231)
 - Session list/switch/delete (#84)
 - Stateful per-message phase routing (#235)
 
 ### 2.13 Three-Tier Model Routing
 
-*(Planned -- #233)*
+*(Design complete -- #233, Epic #303)*
 
-Three distinct routing tiers within a single session:
+Three model tiers auto-classified from OLLAMA_CHAIN position:
 
-| Tier | Purpose | Model Selection | When |
-|------|---------|----------------|------|
-| **Frontier** | Talk to user, understand intent, explain, ask questions | Best available (most capable) | Every user-facing turn |
-| **Mid** | Code review, complex fixes, architecture decisions | Large coders at mid-range levels | When independent review is needed |
-| **Cheap** | Write code, run builds, file ops, parallel sub-agents | Cheapest adequate (escalation chain) | When pipeline is triggered |
+| Tier | Purpose | Model Selection | OLLAMA_CHAIN Position |
+|------|---------|----------------|----------------------|
+| **Frontier** | Talk to user, plan, review, orchestrate | Best available (most capable) | Top third of levels + subscription providers |
+| **Mid** | Self-check, complex fixes, architecture | Large coders at mid-range levels | Middle third of levels |
+| **Cheap** | Write code, run builds, file ops, sub-agents | Cheapest adequate | Bottom third of levels |
 
-The user always talks to the frontier model. When work is needed, the frontier model delegates to the appropriate tier based on task complexity.
+The parent REPL agent starts at the configured conversation tier. Default: frontier (personal profile), mid (work profile). Override with `SYNROUTE_CONVERSATION_TIER` env var (`cheap`, `mid`, `frontier`). Coding sub-agents are spawned at cheap tier. `providerIdx` remains monotonic — tier selection never decreases the floor.
 
-**Current state:** Not yet implemented. All turns use the same provider selection. See Section 3.3 for the full three-tier design.
+**Pipeline phase defaults:** plan=frontier, implement=cheap, self-check=mid, code-review=frontier, acceptance-test=frontier, deploy=cheap.
+
+**Configuration:** Auto-detected from chain position. Override with `OLLAMA_CHAIN_TIERS` env var (pipe-separated, matching OLLAMA_CHAIN levels). See design doc in `docs/designs/` for full details.
 
 ### 2.14 Intent Detection
 
-*(Planned -- #232, #235; partial implementation in `internal/agent/intent.go`)*
+*(Design complete -- #232, #235, Epic #303; heuristic implementation in `internal/agent/intent.go`)*
 
-The agent uses the LLM itself to determine what phase to run -- not keyword matching. The frontier model reads the user's message and naturally decides what to do.
+The frontier model determines what to do — pipeline phases are tools it can invoke, not a forced mode. The model reads the user's message and decides whether to answer directly, invoke a single phase tool, or trigger the full pipeline.
 
-**Heuristic fallbacks** (when LLM intent isn't clear):
+**Heuristic fallbacks** (when pipeline is forced via `--pipeline` flag):
 - Project has spec.md + no code -> full pipeline (build from spec)
 - Project has existing code + tests -> start at review/implement, skip plan
 - Project has existing code, no tests -> implement tests
 - Empty project, no spec -> conversational (ask what to build)
 
-These heuristics are in `DetectPipelineEntry()`, used as a starting point. The LLM overrides them naturally.
+These heuristics are in `DetectPipelineEntry()`, used when `AutoOrchestrate=true`. In the default conversation mode, the frontier model decides naturally via tool calling.
 
 ### 2.15 Pipeline System
 
-The 6-phase pipeline is triggered when the agent decides work is needed. Not every message runs the pipeline.
+Pipeline phases are LLM-callable tools the frontier model invokes when work is needed. In conversation mode (default), the model decides which phases to run. In forced pipeline mode (`--pipeline` flag), the full 6-phase sequence runs automatically. Phase slash commands (`/plan`, `/review`, `/check`, `/fix`) let users invoke individual phases explicitly.
 
 #### Software Pipeline
 
@@ -503,6 +518,23 @@ The 6-phase pipeline is triggered when the agent decides work is needed. Not eve
 | 6 | **verify** | Production verification | bash (inference tests), grep (log analysis) |
 
 **Pipeline customization (planned):** Both pipelines are defaults. Users should be able to define custom pipelines with their own phases, tool restrictions, and quality gates. *(No issue filed yet)*
+
+#### Speed Optimizations (Epic #289)
+
+Target: reduce pipeline runtime from ~110 minutes to ~30 minutes. Design doc: `docs/specs/speed-optimization-design.md`.
+
+| Optimization | Issue | Impact | Effort |
+|-------------|-------|--------|--------|
+| Parallel verification (review + acceptance simultaneously) | #290 | ~20min saved | 1-2 days |
+| Prompt caching (system prompt, specs, tool defs) | #291 | 60-80% cost savings | 2-3 days |
+| Adaptive pipeline (skip phases for trivial tasks) | #292 | ~10min saved | 3-5 days |
+| Phase summaries (drop raw context after phase) | #293 | Token reduction | 2-3 days |
+| Dynamic tool definitions (search_tools pattern) | #294 | Prompt size reduction | 2-3 days |
+| Diff-based re-review (only examine changes) | #295 | ~5min saved | 2-3 days |
+| Early termination (objective completion criteria) | #296 | Variable | 3-5 days |
+| Speculative phase overlap | #297 | ~15-45s total | 5-7 days |
+| ACON context compression | #298 | 26-54% token reduction | 5-7 days |
+| Intra-agent smart model routing | #299 | Variable | 3-5 days |
 
 #### Phase Transitions
 
@@ -595,7 +627,7 @@ No layer silently fails. Every fallback is logged.
 
 ### 3.1 Tool Registry
 
-9 built-in tools plus 2 agent tools:
+10 built-in tools plus 2 agent tools:
 
 | Tool | Category | Arguments | Purpose |
 |------|----------|-----------|---------|
@@ -607,8 +639,9 @@ No layer silently fails. Every fallback is logged.
 | `glob` | read_only | `pattern` (string), `path` (string, optional) | File pattern matching |
 | `git` | write | `args` (string) | Git operations. Safety: blocks `push --force`, `branch -D`, `checkout --force`. Use bash for explicit dangerous git ops. |
 | `recall` | read_only | `id` (int, optional), `query` (string, optional), `tool_name` (string, optional) | Retrieve from memory. Three modes: by ID, semantic search, tool output search. |
-| `web_search` | read_only | `query` (string) | *Planned (#227).* Search external information. |
-| `web_fetch` | read_only | `url` (string) | *Planned (#227).* Read URL content. |
+| `web_search` | read_only | `query` (string), `max_results` (int, optional) | Search the web via DuckDuckGo (default), Tavily (`TAVILY_API_KEY`), or SearXNG (`SEARXNG_URL`). SSRF-safe. |
+| `web_fetch` | read_only | `url` (string) | Fetch URL content as plain text (HTML stripped). 5MB limit, SSRF-safe client. |
+| `notebook_edit` | write | `path` (string), `cell` (int), `source` (string), `cell_type` (string, optional) | Edit a Jupyter notebook (.ipynb) cell by index. `file_read` auto-renders .ipynb as readable cells. |
 | `delegate` | agent | `task` (string), `model` (string, optional) | Spawn sub-agent for parallel work |
 | `handoff` | agent | `target` (string), `context` (string) | Transfer context to specialist agent (Swarm-style) |
 
@@ -708,19 +741,37 @@ Concurrency-limited agent management:
 - Rate limited at 3 corrections per session
 - All corrective messages pass through `scrubSecrets()`
 
-### 3.6 Loop Detection
+### 3.6 Loop and Stall Detection
 
-Intent-based fingerprinting detects when the agent is stuck:
-- Fingerprints built from tool calls + arguments
-- Warning counter increments on repeated fingerprints
-- After threshold: force phase advance or terminate
+Intent-based fingerprinting detects when the agent is stuck in ALL modes (pipeline and direct conversation):
+- Fingerprints built from tool calls + arguments (path-only for file ops, normalized bash)
+- Sliding window of 40 fingerprints with cumulative warning counter
+- Tiered response: 3+ repeats → warning injected; 3+ warnings or 4+ repeats → provider escalation; 6+ warnings or 6+ repeats → force phase advance (pipeline) or exit loop (direct mode)
+- Stall detection: 2 consecutive turns without tool calls → provider escalation (active in all modes)
+- Review stability tracking: detects when review findings increase 2+ consecutive cycles → force-advances pipeline to prevent infinite cost growth
 
-### 3.7 Regression Detection (Planned, #201)
+### 3.7 Regression Detection
 
-Currently no detection when changes make things worse (e.g., compilation errors go from 2 to 332). Planned:
-- Track build/test metrics between iterations
-- Flag when metrics regress beyond threshold
-- Revert or escalate on regression
+`RegressionTracker` monitors compilation error counts across build attempts:
+- Counts error lines using regex pattern matching
+- Compares current error count to previous build
+- After 2+ consecutive worsenings: warns agent to stop creating files and fix existing ones
+- Resets counter when errors decrease or build succeeds
+- Implemented in `internal/agent/regression.go`
+
+### 3.8 Text-Based Tool Call Parsing
+
+When models (especially open-source via Ollama Cloud) output tool calls as text markers instead of structured JSON `tool_calls`, the agent parses 5 known formats:
+
+1. Dash-separated blocks (`---\ntool_call\n---\nname\n---\n{args}\n---`)
+2. Markdown code blocks (`` ```tool_call\nname({args})\n``` ``)
+3. XML-like tags (`[tool_calls][{...}][/tool_calls]`)
+4. Narrated JSON (`tool_call\n```json\n{args}\n```) with tool name inferred from argument keys
+5. Key-value format (`tool_call_name=X\ntool_call_arguments={...}`)
+
+Also includes completion signal detection (`isCompletionSignal`) — exits the agent loop when the model signals task completion ("task complete", "successfully completed", etc.) to prevent infinite re-confirmation loops.
+
+Implemented in `internal/agent/text_tool_parser.go`.
 
 ### 3.8 Session Continuity (Planned, Epic #220)
 
@@ -758,7 +809,7 @@ Per-agent resource limits:
 
 - **Tracing** (`internal/agent/trace.go`): structured event spans for llm_call, tool_call, handoff
 - **Metrics** (`internal/agent/metrics.go`): request/tool/sub-agent performance tracking
-- **Streaming** (`internal/agent/streaming.go`): line-by-line output via `StreamWriter`
+- **Streaming**: Token-level SSE streaming via `StreamingProvider` interface. Providers implementing `ChatCompletionStream` (Ollama Cloud, Vertex AI) deliver token deltas via `TokenCallback`. Agent loop emits `EventTokenStream` for each token; `CodeRenderer` prints tokens inline as they arrive. `StreamWriter` provides line-buffered output for tool results. Both wired into the agent loop (`callLLMWithStreaming` tries streaming first, falls back to non-streaming).
 
 ### 3.12 State Persistence
 
@@ -894,7 +945,7 @@ How agent intents (from Section 1) map to pipeline behavior. Intents are NOT sin
 |--------|-------------|:-:|-------|
 | **Chat** | respond directly | Yes | No tools, no pipeline |
 | **Explain** | read code -> explain | Yes | Uses file_read/grep but no pipeline phases |
-| **Research** | search -> analyze -> report | Yes | Web search + local analysis. *(Needs #227)* |
+| **Research** | search -> analyze -> report | Yes | Web search + local analysis via `web_search` and `web_fetch` tools. |
 | **Plan** | perceive spec -> decompose -> criteria -> output | Yes | Generates plan + acceptance criteria |
 | **Generate Spec** | converse -> clarify -> draft -> refine -> output | Yes | Back-and-forth with user. *(Implemented)* |
 | **Build** | plan -> implement -> self-check -> code-review -> acceptance-test -> deploy | Plan=frontier, code=cheap | Full 6-phase pipeline |
@@ -979,6 +1030,10 @@ Tool categories and approval:
 | `dangerous` (bash) | Prompt + confirm | Auto | Deny |
 | `agent` (delegate, handoff) | Auto | Auto | Auto |
 
+**Interactive prompt implementation:** In code mode, permission prompts read from `/dev/tty` directly (bypassing terminal ownership conflicts with the input layer). Single-byte responses: `y` (approve), `n` (deny), `a` (approve all remaining). 30-second timeout with auto-approve fallback. Piped input (`echo | synroute code`) auto-detects non-TTY stdin and uses `auto_approve` mode. Implemented in `internal/agent/permission_prompt.go`.
+
+**Note:** Permission prompting is temporarily disabled in code mode for v1 due to terminal state conflicts. Active in chat mode. Will be restored in v1.01 with Bubble Tea textinput integration.
+
 ### 3.20 MCP Server Mode
 
 *(Implemented -- `internal/mcpserver/`)*
@@ -1018,18 +1073,20 @@ Best practices injected as warnings. Agent fixes violations before proceeding.
 ### 4.1 Commands
 
 ```bash
-synroute                                    # Start HTTP server (default)
-synroute serve                              # Start HTTP server (explicit)
-synroute chat                               # Interactive agent REPL
-synroute chat --model claude-sonnet-4-6     # Specific model
-synroute chat --message "fix the bug"       # One-shot (non-interactive)
-synroute chat --system "You are a Go expert" # Custom system prompt
-synroute chat --worktree                    # Run in isolated git worktree
-synroute chat --max-agents 3               # Limit concurrent sub-agents
-synroute chat --budget 10000               # Max total tokens
-synroute chat --project my-app             # Create ~/Development/my-app/ and work there
-synroute chat --resume                     # Resume most recent session
-synroute chat --session <id>               # Resume specific session
+synroute                                    # Start code mode TUI (default)
+synroute code                               # Start code mode TUI (explicit)
+synroute code --model claude-sonnet-4-6     # Specific model
+synroute code --message "fix the bug"       # One-shot (non-interactive)
+synroute code --spec-file spec.md           # Build from spec
+synroute code --worktree                    # Run in isolated git worktree
+synroute code --max-agents 3               # Limit concurrent sub-agents
+synroute code --budget 10000               # Max total tokens
+synroute code --project my-app             # Create ~/Development/my-app/ and work there
+synroute code --resume                     # Resume most recent session
+synroute code --session <id>               # Resume specific session
+synroute chat                               # Lightweight conversational REPL
+synroute chat --message "explain this code" # One-shot chat
+synroute serve                              # Start HTTP server
 synroute test                              # Smoke test all providers
 synroute test --provider ollama-chain-1    # Test single provider
 synroute test --json                       # JSON output
@@ -1100,14 +1157,17 @@ Each command persists state via project_continuity so the next command picks up 
 | `auto_approve` | Allow all tool executions without prompting |
 | `read_only` | Deny all write operations |
 
-### 4.5 File Attachment (Planned, #228)
+### 4.5 File Attachment
 
-Accept file paths or URLs in messages. The agent reads them and includes content in conversation context.
+`@filename` and `@dir/` references in messages are parsed, file content read and injected into conversation context. Implemented in `internal/agent/attachment.go`.
 
-- Images: base64 encode for multimodal models
-- PDFs: extract text
-- Large files: chunk and summarize
-- Syntax: `@file` references in messages
+- `@file` — reads file content (10KB max, truncated with file_read fallback)
+- `@dir/` — expands directory to list of files (up to 50), each attached individually
+- Path resolution: absolute, relative (confined to workDir), `~/` expansion
+- Path traversal protection: relative paths cannot escape workDir
+- MIME type detection for 30+ file types
+- Binary file detection (null bytes, non-printable characters)
+- Remaining (planned): image base64 encoding, PDF text extraction, URL attachment
 
 ### 4.6 CLI Color System (Planned, #231)
 
@@ -1134,13 +1194,22 @@ Semantic color mapping for REPL elements:
 - Respects `NO_COLOR` env var (https://no-color.org/)
 - Per-element overrides via env vars (`CLI_COLOR_AGENT=cyan`)
 
-### 4.7 CLI Terminal UI (Planned, Epic 9)
+### 4.7 CLI Terminal UI (Epic #304)
 
-Polished terminal interface beyond basic REPL:
+**Code mode** (implemented, `synroute code`):
+- Status bar: project name, current pipeline phase, active model, elapsed time
+- ANSI scroll region layout (fixed status bar + scrolling content + fixed footer)
+- Keyboard shortcuts: `^P` pipeline, `^T` tools, `^L` verbosity, `^E` escalate, `^/` help
+- Raw terminal mode via `golang.org/x/term` with cooked-mode fallback for prompt input
+- EventBus-driven updates — tool calls, phase transitions, escalation displayed in real-time
+- `NO_COLOR` env var support
+- Implemented in `internal/agent/coderenderer.go`, `coderepl.go`, `terminal.go`, `commands_code.go`
 
-- **Chat mode** (Story 9.1): status bar, keyboard shortcuts (Ctrl-H history, Ctrl-S sessions, Ctrl-N new, Ctrl-F files), raw ANSI + Go stdlib
-- **Code mode** (Story 9.2): pipeline phase display, tool call visualization, Ctrl-P pipeline status, Ctrl-R recall, Ctrl-E escalate
-- **Session management** (Story 9.3): inline session browser, auto-naming, list/search/archive
+**Remaining work:**
+- Semantic color system with accessibility presets (#266)
+- Streaming output with tool call visualization (#267)
+- Session management commands (#268)
+- Phase progress indicators (#269)
 
 ---
 
@@ -1448,6 +1517,11 @@ User-configured. Set based on your subscription limits. No built-in defaults -- 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `STALL_TIMEOUT_SECONDS` | `180` | Stall detection timeout |
+| `SYNROUTE_CONVERSATION_TIER` | `frontier` (personal), `mid` (work) | Conversation tier for parent agent |
+| `WORK_CHAIN` | (default 3-level) | Work profile escalation chain (pipe\|comma format like OLLAMA_CHAIN) |
+| `WORK_CHAIN_TIERS` | (auto) | Tier classification for work chain levels |
+| `MODELS_CORP_BASE_URL` | -- | Red Hat AI Inference endpoint (OpenAI-compatible, VPN required) |
+| `MODELS_CORP_USER_KEY` | -- | models.corp user_key credential |
 
 **Planned:** `--cost-limit <dollars>` flag for API cost budgets on pay-per-token providers (see Section 3.10). Sets a dollar ceiling instead of token count. Requires per-provider cost tracking based on model pricing. *(No issue filed yet)*
 
@@ -1563,7 +1637,7 @@ synroute setup
 - [ ] **AC-T4:** `recall` tool returns results from current session and all parent sessions
 - [ ] **AC-T5:** Tool outputs >2KB stored in DB and summarized in conversation with back-reference
 - [ ] **AC-T6:** All tool outputs pass through `scrubSecrets()` before DB storage
-- [ ] **AC-T7 (planned):** `web_search` and `web_fetch` tools available for external research (#227)
+- [x] **AC-T7:** `web_search` (DuckDuckGo/Tavily/SearXNG) and `web_fetch` (SSRF-safe) tools implemented
 
 ### 9.4 Memory System
 
@@ -1650,7 +1724,7 @@ synroute setup
 ### 9.13 Quality and Safety
 
 - [ ] **AC-Q1:** Agent MUST run build command before declaring implement phase complete (#236)
-- [ ] **AC-Q2:** Regression detection flags when build/test metrics worsen between iterations (#201)
+- [x] **AC-Q2:** Regression detection implemented — `RegressionTracker` flags when compilation errors increase
 - [ ] **AC-Q3:** Secrets scrubbed from tool output storage (Story 0.4)
 - [ ] **AC-Q4:** `SecretPatternGuardrail` detects Bearer tokens, API keys, passwords
 - [ ] **AC-Q5:** Agent does not create duplicate project structures (#200)
@@ -1680,7 +1754,7 @@ Summary of key open bugs from GitHub issues:
 | #204 | Sub-agents cannot resolve ~/ paths from temp dirs | Medium |
 | #203 | No research-only pipeline mode | Medium |
 | #202 | Verification gates never execute (phases 3-6 never reached) | High |
-| #201 | No regression detection | High |
+| #201 | ~~No regression detection~~ | ~~High~~ (Fixed — `RegressionTracker`) |
 | #200 | Agent creates 26 duplicate Java classes | Medium |
 | #199 | Sub-agent TargetProvider has no fallback on circuit-open | Medium |
 | #198 | Skill matching is language-agnostic (go-testing on Java) | Medium |

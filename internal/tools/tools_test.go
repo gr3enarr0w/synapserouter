@@ -21,8 +21,8 @@ func TestDefaultRegistry(t *testing.T) {
 func TestRegistryOpenAIToolDefinitions(t *testing.T) {
 	r := DefaultRegistry()
 	defs := r.OpenAIToolDefinitions()
-	if len(defs) != 7 {
-		t.Errorf("expected 7 tool definitions, got %d", len(defs))
+	if len(defs) != 10 {
+		t.Errorf("expected 10 tool definitions, got %d", len(defs))
 	}
 	for _, d := range defs {
 		if d["type"] != "function" {

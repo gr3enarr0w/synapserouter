@@ -8,6 +8,19 @@ triggers:
   - "outlier"
   - "correlation"
   - "statistical"
+  - "csv"
+  - "data.csv"
+  - "notebook"
+  - "jupyter"
+  - "ipynb"
+  - "classify"
+  - "predict"
+  - "train"
+  - "knn"
+  - "classifier"
+  - "dataset"
+  - "data analysis"
+  - "machine learning"
 role: analyst
 phase: analyze
 language: python
@@ -79,6 +92,21 @@ df['date'] = pd.to_datetime(df['date_col'])
 daily = df.groupby(df['date'].dt.date).size()
 print(f"Trend: {daily.rolling(7).mean().iloc[-1]:.1f} per day (7-day avg)")
 ```
+
+---
+
+## Jupyter Notebook Workflow
+
+When creating or editing .ipynb files, use `notebook_edit` tool to write code into cells by index. Use `file_read` to view current cell contents (renders cells readably).
+
+**Workflow for notebook-based EDA:**
+1. Read the data file to understand structure (file_read or bash `head`)
+2. Create a Python script with the analysis code (file_write)
+3. Run the script to verify it works (bash `python3 script.py`)
+4. If notebook format requested: use notebook_edit to write code into cells
+5. **STOP after each major section** — return to user for feedback before continuing
+
+**IMPORTANT:** Do not loop on analysis. Complete one pass through the data, report findings, then STOP. The user will ask for more if needed.
 
 ---
 

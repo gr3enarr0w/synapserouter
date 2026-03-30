@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -54,14 +55,23 @@ func NewVectorMemory(db *sql.DB) *VectorMemory {
 
 func NewVectorMemoryWithEmbedder(db *sql.DB, embedder EmbeddingProvider) *VectorMemory {
 	if embedder == nil {
-		// Try OpenAI embeddings if API key is available
-		if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
-			embedder = NewOpenAIEmbedding(apiKey)
-			log.Println("[Memory] Using OpenAI embeddings for semantic search")
-		} else {
-			// Fallback to local hash-based embeddings
-			embedder = NewLocalHashEmbedding(384)
-			log.Println("[Memory] Using local hash embeddings (set OPENAI_API_KEY for better semantic search)")
+		// Priority: ONNX (bundled, high quality) > OpenAI (API) > local hash (fallback)
+		if ONNXAvailable() {
+			home, _ := os.UserHomeDir()
+			modelPath := filepath.Join(home, ".synroute", "models", "all-MiniLM-L6-v2.onnx")
+			if onnx := NewONNXEmbedding(modelPath); onnx != nil {
+				embedder = onnx
+				log.Println("[Memory] Using ONNX embeddings (all-MiniLM-L6-v2) for semantic search")
+			}
+		}
+		if embedder == nil {
+			if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
+				embedder = NewOpenAIEmbedding(apiKey)
+				log.Println("[Memory] Using OpenAI embeddings for semantic search")
+			} else {
+				embedder = NewLocalHashEmbedding(384)
+				log.Println("[Memory] Using local hash embeddings (build with -tags=onnx for better semantic search)")
+			}
 		}
 	}
 

@@ -14,6 +14,7 @@ type SpawnConfig struct {
 	Role        string       // agent role (e.g., "tester", "researcher")
 	Model       string       // model override (empty = inherit parent)
 	Provider    string       // target specific provider by name (empty = default routing)
+	Tier        ModelTier    // preferred model tier (cheap, mid, frontier) — sets initial provider level
 	Tools       *tools.Registry // tool registry (nil = inherit parent)
 	Budget      *AgentBudget // resource limits for child
 	WorkDir     string       // working directory (empty = inherit parent)
@@ -90,11 +91,18 @@ func (a *Agent) SpawnChild(cfg SpawnConfig) *Agent {
 	child := New(a.executor, registry, a.renderer, childConfig)
 	child.parentID = a.sessionID
 
-	// Sub-agents start at the parent's current escalation level (or higher).
-	// This prevents reviewers from using Level 0 small models when the parent
-	// has already escalated past them.
-	if len(escalationChain) > 0 && a.providerIdx > 0 {
-		child.setMinProviderLevel(a.providerIdx)
+	// Set initial provider level based on tier preference first, then parent level.
+	// Tier-based routing: cheap=bottom third, mid=middle third, frontier=top third.
+	// Parent's current level is the floor — never go below it (monotonic).
+	if len(escalationChain) > 0 {
+		tierLevel := a.ProviderLevelForTier(cfg.Tier)
+		if tierLevel > 0 {
+			child.SetMinProviderLevel(tierLevel)
+		}
+		// Parent's current level is the absolute minimum
+		if a.providerIdx > 0 {
+			child.SetMinProviderLevel(a.providerIdx)
+		}
 	}
 
 	if cfg.Budget != nil {

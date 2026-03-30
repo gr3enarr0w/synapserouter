@@ -296,39 +296,85 @@ func (r *Runner) runExercise(ctx context.Context, ex Exercise, config EvalRunCon
 		}
 	}
 
-	// Pass 2 (if enabled and pass 1 failed)
+	// Multi-pass escalation: keep trying bigger models until the exercise passes.
+	// Each retry gets the test error feedback from the previous attempt.
 	if config.TwoPass && !result.Pass1 && testResult.Error == "" {
 		result.ErrorFeedback = testResult.Output
 
-		pass2Prompt := buildPass2Prompt(ex, code, testResult.Output)
-		start2 := time.Now()
-		resp2, _, _, err2 := r.sendToProvider(ctx, pass2Prompt, config)
-		result.LatencyMs2 = time.Since(start2).Milliseconds()
+		currentCode := code
+		currentOutput := testResult.Output
+		currentProvider := result.Provider
+		passed := false
 
-		if err2 == nil {
-			code2 := extractCode(resp2)
-			result.GeneratedCode2 = code2
-			result.TotalTokens += resp2.Usage.TotalTokens
+		// Build escalation chain: try progressively bigger models
+		escalationProviders := r.escalationChainFrom(currentProvider)
+		maxRetries := len(escalationProviders)
+		if maxRetries > 5 {
+			maxRetries = 5 // cap retries to avoid burning too much quota
+		}
 
-			var testResult2 DockerTestResult
+		for attempt := 0; attempt < maxRetries && !passed; attempt++ {
+			retryProvider := escalationProviders[attempt]
+			retryConfig := config
+			retryConfig.Provider = retryProvider
+			retryConfig.Mode = "direct"
+
+			log.Printf("[Eval] %s | escalation attempt %d/%d: %s → %s",
+				ex.ID, attempt+1, maxRetries, currentProvider, retryProvider)
+
+			retryPrompt := buildPass2Prompt(ex, currentCode, currentOutput)
+			startRetry := time.Now()
+			retryResp, _, _, retryErr := r.sendToProvider(ctx, retryPrompt, retryConfig)
+			retryLatency := time.Since(startRetry).Milliseconds()
+
+			if retryErr != nil {
+				log.Printf("[Eval] %s | escalation attempt %d failed: %v", ex.ID, attempt+1, retryErr)
+				continue
+			}
+
+			retryCode := extractCode(retryResp)
+			result.TotalTokens += retryResp.Usage.TotalTokens
+
+			var retryTestResult DockerTestResult
 			if IsDockerAvailable() {
-				testResult2 = RunTestInDocker(ctx, ex, code2, timeout)
+				retryTestResult = RunTestInDocker(ctx, ex, retryCode, timeout)
+			} else if NativeTestSupported(ex.Language) {
+				retryTestResult = RunTestNative(ctx, ex, retryCode, timeout)
 			} else {
-				testResult2 = RunTestNative(ctx, ex, code2, timeout)
-			}
-			result.Pass2 = testResult2.Passed
-			result.TestOutput2 = testResult2.Output
-			if testResult2.ExitCode != 0 {
-				result.DockerExitCode = testResult2.ExitCode
+				break
 			}
 
-			if evalMode == "metric-compare" {
-				score2 := extractMetricScore(testResult2.Output)
-				if score2 > result.MetricScore {
-					result.MetricScore = score2
+			// Track pass@2 as first successful escalation attempt
+			if retryTestResult.Passed {
+				passed = true
+				result.Pass2 = true
+				result.GeneratedCode2 = retryCode
+				result.TestOutput2 = retryTestResult.Output
+				result.LatencyMs2 = retryLatency
+				if len(escalationProviders[:attempt+1]) > 0 {
+					result.FallbackUsed = true
+					chain := []string{result.Provider}
+					chain = append(chain, escalationProviders[:attempt+1]...)
+					result.FallbackChain = chain
 				}
-				if score2 > 0 {
-					result.Pass2 = true
+				log.Printf("[Eval] %s | PASSED on escalation attempt %d with %s",
+					ex.ID, attempt+1, retryProvider)
+			} else {
+				// Update for next attempt
+				currentCode = retryCode
+				currentOutput = retryTestResult.Output
+				currentProvider = retryProvider
+				result.LatencyMs2 += retryLatency
+
+				if evalMode == "metric-compare" {
+					score := extractMetricScore(retryTestResult.Output)
+					if score > result.MetricScore {
+						result.MetricScore = score
+					}
+					if score > 0 {
+						result.Pass2 = true
+						passed = true
+					}
 				}
 			}
 		}
@@ -493,7 +539,28 @@ func (r *Runner) sendToProvider(ctx context.Context, prompt string, config EvalR
 	sessionID := fmt.Sprintf("eval-%d", time.Now().UnixNano())
 
 	if config.Mode == "routing" || config.Provider == "" {
-		// Routing mode: let the router decide
+		// Routing mode: use chain providers (not planners).
+		// Planners are dedicated to the agent's plan phase — eval exercises
+		// should route through the coding chain for fair benchmarking.
+		chainProvider := r.firstChainProvider()
+		if chainProvider != "" {
+			resp, err := r.proxyRouter.ChatCompletionForProvider(ctx, req, sessionID, chainProvider, false)
+			if err != nil {
+				// Chain provider failed — fall back to full routing
+				log.Printf("[Eval] chain provider %s failed: %v, falling back to router", chainProvider, err)
+				resp, err = r.proxyRouter.ChatCompletion(ctx, req, sessionID)
+				if err != nil {
+					return providers.ChatResponse{}, "", nil, err
+				}
+			}
+			provider := chainProvider
+			if resp.XProxyMetadata != nil && resp.XProxyMetadata.Provider != "" {
+				provider = resp.XProxyMetadata.Provider
+			}
+			return resp, provider, nil, nil
+		}
+
+		// No chain providers found — fall back to router
 		resp, err := r.proxyRouter.ChatCompletion(ctx, req, sessionID)
 		if err != nil {
 			return providers.ChatResponse{}, "", nil, err
@@ -515,6 +582,118 @@ func (r *Runner) sendToProvider(ctx context.Context, prompt string, config EvalR
 		provider = resp.XProxyMetadata.Provider
 	}
 	return resp, provider, nil, nil
+}
+
+// escalationChainFrom returns a list of progressively bigger providers to try
+// after the given provider fails. Spreads attempts across tiers:
+// cheap → mid → frontier, skipping intermediate models within the same tier.
+func (r *Runner) escalationChainFrom(current string) []string {
+	var allChain []string
+	currentIdx := -1
+	for _, p := range r.providerList {
+		name := p.Name()
+		if !strings.HasPrefix(name, "ollama-chain-") && !strings.Contains(name, "planner") {
+			// Include non-ollama providers (gemini, codex, etc.) at the end
+			allChain = append(allChain, name)
+			continue
+		}
+		if strings.Contains(name, "planner") {
+			continue // skip planners
+		}
+		if name == current {
+			currentIdx = len(allChain)
+		}
+		allChain = append(allChain, name)
+	}
+
+	if currentIdx < 0 || len(allChain) <= 1 {
+		return nil
+	}
+
+	// Select ~5 escalation points spread across the remaining chain
+	remaining := allChain[currentIdx+1:]
+	if len(remaining) == 0 {
+		return nil
+	}
+	if len(remaining) <= 5 {
+		return remaining
+	}
+
+	// Pick evenly spaced providers from remaining chain
+	var picks []string
+	step := float64(len(remaining)) / 5.0
+	for i := 0; i < 5; i++ {
+		idx := int(float64(i) * step)
+		if idx >= len(remaining) {
+			idx = len(remaining) - 1
+		}
+		// Avoid duplicates
+		pick := remaining[idx]
+		if len(picks) == 0 || picks[len(picks)-1] != pick {
+			picks = append(picks, pick)
+		}
+	}
+	// Always include the last (biggest) provider
+	last := remaining[len(remaining)-1]
+	if picks[len(picks)-1] != last {
+		picks = append(picks, last)
+	}
+	return picks
+}
+
+// nextChainProvider returns a significantly bigger chain provider for escalation.
+// Skips to ~midpoint of the chain (not just the next one) so the retry uses
+// a meaningfully larger model.
+func (r *Runner) nextChainProvider(current string) string {
+	var chainProviders []string
+	currentIdx := -1
+	for _, p := range r.providerList {
+		name := p.Name()
+		if !strings.HasPrefix(name, "ollama-chain-") {
+			continue
+		}
+		if name == current {
+			currentIdx = len(chainProviders)
+		}
+		chainProviders = append(chainProviders, name)
+	}
+
+	if currentIdx < 0 || len(chainProviders) <= 1 {
+		return ""
+	}
+
+	// Jump to ~2/3 of the way through the chain (mid-to-frontier tier)
+	targetIdx := len(chainProviders) * 2 / 3
+	if targetIdx <= currentIdx {
+		targetIdx = currentIdx + 1
+	}
+	if targetIdx >= len(chainProviders) {
+		targetIdx = len(chainProviders) - 1
+	}
+	if targetIdx == currentIdx {
+		return ""
+	}
+
+	return chainProviders[targetIdx]
+}
+
+// firstChainProvider returns the name of the first chain provider (not a planner).
+// Chain providers are named "ollama-chain-N", planners are "ollama-planner-N".
+func (r *Runner) firstChainProvider() string {
+	for _, p := range r.providerList {
+		name := p.Name()
+		if strings.HasPrefix(name, "ollama-chain-") {
+			return name
+		}
+	}
+	// No chain providers — try any non-planner provider
+	for _, p := range r.providerList {
+		name := p.Name()
+		if !strings.Contains(name, "planner") {
+			return name
+		}
+	}
+	return ""
 }
 
 func buildPrompt(ex Exercise) string {

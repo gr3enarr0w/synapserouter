@@ -6,13 +6,14 @@ import (
 
 // PipelinePhase represents a stage in the project lifecycle.
 type PipelinePhase struct {
-	Name         string // phase identifier
-	Prompt       string // injected prompt for this phase (use %s for acceptance criteria)
-	Escalate     bool   // whether to escalate to next provider for this phase
-	StoreAs      string // if non-empty, store the LLM's response in this field ("criteria", "subtasks")
-	FailAction   string // "retry" = stay in current phase, "back:N" = go back N phases
-	MinToolCalls int    // minimum tool calls required before phase can advance (0 = no requirement)
-	UseSubAgent  bool   // spawn a fresh sub-agent for this phase (no shared conversation context)
+	Name         string    // phase identifier
+	Prompt       string    // injected prompt for this phase (use %s for acceptance criteria)
+	Escalate     bool      // whether to escalate to next provider for this phase
+	StoreAs      string    // if non-empty, store the LLM's response in this field ("criteria", "subtasks")
+	FailAction   string    // "retry" = stay in current phase, "back:N" = go back N phases
+	MinToolCalls int       // minimum tool calls required before phase can advance (0 = no requirement)
+	UseSubAgent  bool      // spawn a fresh sub-agent for this phase (no shared conversation context)
+	Tier         ModelTier // preferred model tier for this phase (cheap, mid, frontier)
 
 	// Parallel execution: spawn N sub-agents working concurrently on split tasks.
 	// CoderProviders lists which providers to target (one per sub-agent).
@@ -38,6 +39,7 @@ var DefaultPipeline = Pipeline{
 	Phases: []PipelinePhase{
 		{
 			Name:              "plan",
+			Tier:              TierFrontier,
 			StoreAs:           "criteria",
 			MinToolCalls:      1,
 			ParallelSubAgents: 2,
@@ -77,6 +79,7 @@ Output your plan, criteria, unknowns, and assumptions, then say PLAN_COMPLETE.`,
 		},
 		{
 			Name:         "implement",
+			Tier:         TierCheap,
 			MinToolCalls: 1,
 			// ParallelSubAgents and CoderProviders populated at runtime
 			// from EscalationChain[0] via initializeImplementPhase()
@@ -89,6 +92,7 @@ When all subtasks are complete and code compiles/runs, say IMPLEMENT_COMPLETE.`,
 		},
 		{
 			Name:         "self-check",
+			Tier:         TierMid,
 			MinToolCalls: 2,
 			Prompt: `PHASE: SELF-CHECK
 Check your work against YOUR OWN acceptance criteria:
@@ -121,6 +125,7 @@ If anything fails and you can't fix it, say SELF_CHECK_FAIL.`,
 		},
 		{
 			Name:         "code-review",
+			Tier:         TierFrontier,
 			Escalate:     true, // force escalation — reviewer must be a DIFFERENT (bigger) model than implementer
 			MinToolCalls: 2,
 			UseSubAgent:  true,
@@ -148,6 +153,7 @@ ORIGINAL SPEC/REQUEST:
 		},
 		{
 			Name:         "acceptance-test",
+			Tier:         TierFrontier,
 			Escalate:     true, // force escalation — acceptance tester must be bigger model
 			MinToolCalls: 1,
 			UseSubAgent:  true,
@@ -172,6 +178,7 @@ ORIGINAL SPEC/REQUEST:
 		},
 		{
 			Name: "deploy",
+			Tier: TierCheap,
 			Prompt: `PHASE: DEPLOY/DELIVER
 Final cleanup and delivery:
 1. Remove any temp files, test artifacts, stale resources
@@ -188,6 +195,7 @@ var DataSciencePipeline = Pipeline{
 	Phases: []PipelinePhase{
 		{
 			Name:         "eda",
+			Tier:         TierFrontier,
 			StoreAs:      "criteria",
 			MinToolCalls: 2,
 			Prompt: `PHASE: EXPLORATORY DATA ANALYSIS
@@ -200,6 +208,7 @@ Say EDA_COMPLETE with your findings and criteria.`,
 		},
 		{
 			Name:         "data-prep",
+			Tier:         TierCheap,
 			MinToolCalls: 1,
 			Prompt: `PHASE: DATA PREPARATION
 1. Clean data issues found in EDA
@@ -210,6 +219,7 @@ Say DATA_PREP_COMPLETE.`,
 		},
 		{
 			Name:         "model",
+			Tier:         TierCheap,
 			MinToolCalls: 1,
 			Prompt: `PHASE: MODELING
 1. Build models per the plan
@@ -220,6 +230,7 @@ Say MODEL_COMPLETE with results.`,
 		},
 		{
 			Name:         "review",
+			Tier:         TierFrontier,
 			Escalate:     true,
 			MinToolCalls: 2,
 			UseSubAgent:  true,
@@ -235,6 +246,7 @@ Say MODEL_REVIEW_PASS or MODEL_REVIEW_FAIL.`,
 		},
 		{
 			Name: "deploy",
+			Tier: TierCheap,
 			Prompt: `PHASE: DEPLOY
 1. Deploy model/results
 2. Verify deployment works end-to-end
@@ -243,6 +255,7 @@ Say DEPLOY_COMPLETE.`,
 		},
 		{
 			Name: "verify",
+			Tier: TierMid,
 			Prompt: `PHASE: VERIFY RESULTS
 1. Run deployed model/output
 2. Can a human still interpret the results?
@@ -265,6 +278,15 @@ var phasePassSignals = []string{
 var phaseFailSignals = []string{
 	"self_check_fail", "code_review_fail", "acceptance_fail",
 	"model_review_fail", "verify_fail", "needs_fix",
+}
+
+// SinglePhase creates a pipeline with just one phase. Used for targeted operations
+// like "review my code" where running the full pipeline would be wrong.
+func SinglePhase(phase PipelinePhase) *Pipeline {
+	return &Pipeline{
+		Name:   "single-" + phase.Name,
+		Phases: []PipelinePhase{phase},
+	}
 }
 
 // PhasePrompt returns the prompt for a phase, with acceptance criteria and

@@ -186,10 +186,22 @@ type limitWriter struct {
 func (lw *limitWriter) Write(p []byte) (int, error) {
 	remaining := lw.max - lw.written
 	if remaining <= 0 {
-		return len(p), nil // discard but don't error
+		// Drain the pipe by accepting bytes but discarding them.
+		// Must consume ALL input to prevent pipe deadlock — if we return
+		// less than len(p), the child process blocks in write().
+		lw.written += len(p)
+		return len(p), nil
 	}
 	if len(p) > remaining {
-		p = p[:remaining]
+		// Write only what fits, but report full len(p) consumed to prevent
+		// the child from blocking. The excess is silently discarded.
+		n, err := lw.w.Write(p[:remaining])
+		lw.written += n + (len(p) - remaining)
+		if !lw.truncated && err == nil {
+			lw.truncated = true
+			lw.w.WriteString("...\n[output truncated at 1MB]")
+		}
+		return len(p), err
 	}
 	n, err := lw.w.Write(p)
 	lw.written += n

@@ -40,9 +40,10 @@ type ProviderAwareExecutor interface {
 type Agent struct {
 	executor     ChatExecutor
 	registry     *tools.Registry
-	permissions  *tools.PermissionChecker
+	permissions       *tools.PermissionChecker
+	permissionPrompt tools.PermissionPromptFunc
 	conversation *Conversation
-	renderer     *Renderer
+	renderer     TerminalRenderer
 	config       Config
 	sessionID    string
 
@@ -70,6 +71,8 @@ type Agent struct {
 	// Pipeline state
 	originalRequest    string // first user message
 	toolCallCount      int    // total tool calls this session
+	wroteCodeFiles     bool   // true if file_write or file_edit was used on code files
+	completionVerifyDone bool // true after completion verification ran (prevents retry loops)
 	pipeline           *Pipeline
 	pipelinePhase      int    // current phase index
 	phaseToolCalls     int    // tool calls in current phase
@@ -79,6 +82,8 @@ type Agent struct {
 	cachedSkillContext string // computed once from originalRequest, injected into all sub-agents
 	skillContextOnce   sync.Once
 	noToolTurns        int // consecutive turns without tool calls (stall detection)
+	textContinuations  int  // how many times we've continued past text-only turns (cap at 2)
+	testsPassedClean   bool // true after a test command exits 0 — suppresses continuations (#340)
 	reviewTracker      *ReviewCycleTracker // detects stable review cycles (no progress)
 	phaseRetries       int // consecutive quality gate rejections in current phase
 	phaseTurns         int // turns spent in current phase (hard cap at maxPhaseTurns)
@@ -109,12 +114,15 @@ type Agent struct {
 	// Regression detection
 	regressionTracker *RegressionTracker
 
+	// Intent-based pipeline routing
+	intentPromptAdjustment string // mode-specific system prompt addition (review, implement, etc.)
+
 	// Event bus for real-time observability
 	bus *EventBus
 }
 
 // New creates an agent with the given executor, tool registry, and config.
-func New(executor ChatExecutor, registry *tools.Registry, renderer *Renderer, config Config) *Agent {
+func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRenderer, config Config) *Agent {
 	return &Agent{
 		executor:          executor,
 		registry:          registry,
@@ -132,6 +140,11 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer *Renderer, co
 // SetPermissions sets the permission checker for tool execution.
 func (a *Agent) SetPermissions(pc *tools.PermissionChecker) {
 	a.permissions = pc
+}
+
+// SetPermissionPrompt sets the callback for interactive permission prompting.
+func (a *Agent) SetPermissionPrompt(fn tools.PermissionPromptFunc) {
+	a.permissionPrompt = fn
 }
 
 // SetPool sets the agent pool for concurrency management.
@@ -282,10 +295,20 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		}
 	}
 
+	// Parse file attachments from @references and absolute paths in the message
+	cleanedMessage, attachments := ParseAttachments(userMessage, a.config.WorkDir)
+	if len(attachments) > 0 {
+		userMessage = cleanedMessage + FormatAttachments(attachments)
+		log.Printf("[Agent] attached %d file(s) to message", len(attachments))
+	}
+
 	a.conversation.Add(providers.Message{
 		Role:    "user",
 		Content: userMessage,
 	})
+
+	// Reset per-message state
+	a.completionVerifyDone = false
 
 	// Capture original request for domain-specific review
 	if a.originalRequest == "" {
@@ -321,58 +344,87 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 	if a.config.AutoOrchestrate && a.pipeline == nil {
 		matched := orchestration.MatchSkillsForLanguage(a.originalRequest, a.config.Skills, a.config.ProjectLanguage)
 		a.pipeline = DetectPipelineType(matched, a.config.ProjectLanguage)
-		a.pipelinePhase = 0
-		a.initializeImplementPhase()
 
-		skillNames := make([]string, len(matched))
-		for i, s := range matched {
-			skillNames[i] = s.Name
+		// Adaptive pipeline: assess task complexity and reduce pipeline for trivial/simple tasks.
+		// Must run before intent detection and phase initialization since it may nil out the pipeline.
+		complexity := AssessComplexity(userMessage, a.config.SpecFilePath != "")
+		a.pipeline = AdaptPipeline(a.pipeline, complexity)
+		log.Printf("[Agent] adaptive pipeline: complexity=%s", complexity)
+
+		if a.pipeline == nil {
+			// Trivial task — no pipeline needed, just answer directly.
+			log.Printf("[Agent] skipping pipeline for trivial task")
 		}
-		log.Printf("[Agent] pipeline: %s (%d phases) | language: %s | skills: %v",
-			a.pipeline.Name, len(a.pipeline.Phases), a.config.ProjectLanguage, skillNames)
 
-		a.emit(EventPipelineStart, "", map[string]any{
-			"pipeline_name":  a.pipeline.Name,
-			"phase_count":    len(a.pipeline.Phases),
-			"matched_skills": skillNames,
-		})
-		a.emit(EventSkillMatch, "", map[string]any{
-			"skill_names":   skillNames,
-			"trigger_count": len(matched),
-		})
+		if a.pipeline != nil {
+			a.pipelinePhase = 0
+			a.initializeImplementPhase()
 
-		// Fire parallel plan phase immediately if configured
-		firstPhase := a.pipeline.Phases[0]
-		if firstPhase.ParallelSubAgents > 0 && len(firstPhase.CoderProviders) > 0 && a.hasProviders(firstPhase.CoderProviders) {
-			log.Printf("[Agent] pipeline: firing parallel %s phase immediately", firstPhase.Name)
-			parallelResult := a.runParallelPhase(firstPhase)
-			if firstPhase.StoreAs == "criteria" {
-				a.acceptanceCriteria = parallelResult
+			// Intent-based phase routing: determine starting phase from project state.
+			// The pipeline becomes a menu of capabilities, not a forced sequence.
+			intentEntry := DetectPipelineEntry(userMessage, a.config.WorkDir, a.pipeline, false)
+			a.ApplyIntentEntry(intentEntry)
+
+			skillNames := make([]string, len(matched))
+			for i, s := range matched {
+				skillNames[i] = s.Name
 			}
-			// Advance past the plan phase
-			a.pipelinePhase = 1
-			a.phaseToolCalls = 0
-			// Inject the plan result + next phase prompt into conversation
-			a.conversation.Add(providers.Message{
-				Role:    "user",
-				Content: fmt.Sprintf("The planning phase is complete. Here is the merged plan and acceptance criteria:\n\n%s\n\nNow proceed to implement. %s",
-					parallelResult, a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)),
+			log.Printf("[Agent] pipeline: %s (%d phases, entry: %d/%s) | language: %s | skills: %v",
+				a.pipeline.Name, len(a.pipeline.Phases), intentEntry.Phase, intentEntry.Mode,
+				a.config.ProjectLanguage, skillNames)
+
+			a.emit(EventPipelineStart, "", map[string]any{
+				"pipeline_name":  a.pipeline.Name,
+				"phase_count":    len(a.pipeline.Phases),
+				"matched_skills": skillNames,
+				"intent_phase":   intentEntry.Phase,
+				"intent_mode":    intentEntry.Mode,
+				"intent_reason":  intentEntry.Reason,
 			})
-		} else {
-			// No parallel plan phase — inject the first phase prompt so the
-			// pipeline actively steers the agent from turn 1, not just when
-			// the agent stops making tool calls.
-			phasePrompt := a.pipeline.PhasePrompt(0, a.acceptanceCriteria, a.originalRequest)
-			if phasePrompt != "" {
-				log.Printf("[Agent] pipeline: injecting phase 1/%d prompt: %s",
-					len(a.pipeline.Phases), firstPhase.Name)
+			a.emit(EventSkillMatch, "", map[string]any{
+				"skill_names":   skillNames,
+				"trigger_count": len(matched),
+			})
+
+			// Fire parallel plan phase immediately if configured AND intent didn't skip past it
+			firstPhase := a.pipeline.Phases[a.pipelinePhase]
+			if a.pipelinePhase == 0 && firstPhase.Name == "plan" &&
+				firstPhase.ParallelSubAgents > 0 && len(firstPhase.CoderProviders) > 0 && a.hasProviders(firstPhase.CoderProviders) {
+				log.Printf("[Agent] pipeline: firing parallel %s phase immediately", firstPhase.Name)
+				parallelResult := a.runParallelPhase(firstPhase)
+				if firstPhase.StoreAs == "criteria" {
+					a.acceptanceCriteria = parallelResult
+				}
+				// Advance past the plan phase
+				a.pipelinePhase = 1
+				a.phaseToolCalls = 0
+				// Inject the plan result + next phase prompt into conversation
 				a.conversation.Add(providers.Message{
 					Role:    "user",
-					Content: fmt.Sprintf("You are working in phases. Current phase: %s\n\n%s\n\nComplete this phase using tools, then say %s_COMPLETE before moving on.",
-						firstPhase.Name, phasePrompt, strings.ToUpper(strings.ReplaceAll(firstPhase.Name, "-", "_"))),
+					Content: fmt.Sprintf("The planning phase is complete. Here is the merged plan and acceptance criteria:\n\n%s\n\nNow proceed to implement. %s",
+						parallelResult, a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)),
 				})
+			} else {
+				// No parallel plan phase (or intent skipped it) — inject the current
+				// phase prompt so the pipeline actively steers the agent from turn 1.
+				var phasePrompt string
+				if intentEntry.Phase > 0 {
+					phasePrompt = phasePromptForEntry(a.pipeline, intentEntry, a.acceptanceCriteria)
+				} else {
+					phasePrompt = a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)
+				}
+				if phasePrompt != "" {
+					currentPhase := a.pipeline.Phases[a.pipelinePhase]
+					log.Printf("[Agent] pipeline: injecting phase %d/%d prompt: %s",
+						a.pipelinePhase+1, len(a.pipeline.Phases), currentPhase.Name)
+					a.conversation.Add(providers.Message{
+						Role:    "user",
+						Content: fmt.Sprintf("You are working in phases. Current phase: %s\n\n%s\n\nComplete this phase using tools, then say %s_COMPLETE before moving on.",
+							currentPhase.Name, phasePrompt, strings.ToUpper(strings.ReplaceAll(currentPhase.Name, "-", "_"))),
+					})
+				}
 			}
-		}
+		} // end if a.pipeline != nil (adaptive pipeline)
 	}
 
 	start := time.Now()
@@ -412,6 +464,68 @@ func (a *Agent) SessionID() string {
 	return a.sessionID
 }
 
+// GetAcceptanceCriteria returns the stored acceptance criteria.
+func (a *Agent) GetAcceptanceCriteria() string {
+	return a.acceptanceCriteria
+}
+
+// SetAcceptanceCriteria stores acceptance criteria for pipeline tools.
+func (a *Agent) SetAcceptanceCriteria(criteria string) {
+	a.acceptanceCriteria = criteria
+}
+
+// GetOriginalRequest returns the original user request.
+func (a *Agent) GetOriginalRequest() string {
+	return a.originalRequest
+}
+
+// GetConfig returns the agent's config.
+func (a *Agent) GetConfig() Config {
+	return a.config
+}
+
+// Emit publishes an event to the bus (exported wrapper for pipeline tools).
+func (a *Agent) Emit(eventType EventType, provider string, data map[string]any) {
+	a.emit(eventType, provider, data)
+}
+
+// RunPhase runs the agent with a single pipeline phase. Used by REPL slash
+// commands (/plan, /review, /check, /fix). The message is composed with
+// phase-appropriate context.
+func (a *Agent) RunPhase(ctx context.Context, phaseName string, userMessage string) (string, error) {
+	// If no pipeline exists (e.g., trivial task skipped it), create a default
+	// pipeline so we can extract the requested phase from it.
+	sourcePipeline := a.pipeline
+	if sourcePipeline == nil {
+		sourcePipeline = &DefaultPipeline
+	}
+
+	idx := findPhaseByName(sourcePipeline, phaseName)
+	if idx < 0 {
+		return "", fmt.Errorf("unknown phase: %s", phaseName)
+	}
+
+	// Save and restore pipeline state
+	origPipeline := a.pipeline
+	origPhase := a.pipelinePhase
+	origPrompt := a.intentPromptAdjustment
+	defer func() {
+		a.pipeline = origPipeline
+		a.pipelinePhase = origPhase
+		a.intentPromptAdjustment = origPrompt
+	}()
+
+	// Set up single-phase mode
+	a.ApplyIntentEntry(IntentEntry{
+		Phase:       0,
+		Mode:        "single",
+		SinglePhase: phaseName,
+		Reason:      fmt.Sprintf("user invoked /%s command", phaseName),
+	})
+
+	return a.Run(ctx, userMessage)
+}
+
 func (a *Agent) loop(ctx context.Context) (string, error) {
 	for turn := 0; a.config.MaxTurns <= 0 || turn < a.config.MaxTurns; turn++ {
 		// Budget check
@@ -442,9 +556,10 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 
 		// LLM call
 		req := providers.ChatRequest{
-			Model:    a.config.Model,
-			Messages: a.buildMessages(),
-			Tools:    a.registry.OpenAIToolDefinitions(),
+			Model:      a.config.Model,
+			Messages:   a.buildMessages(),
+			Tools:      a.registry.OpenAIToolDefinitions(),
+			ToolChoice: "auto", // Required for many open-source models to use function calling
 		}
 
 		// Resolve which provider will handle this call for the event
@@ -467,12 +582,16 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			endSpan = a.trace.StartSpan("llm_call", "llm_call", map[string]interface{}{"turn": turn})
 		}
 		llmStart := time.Now()
-		resp, err := a.callLLMWithRetry(ctx, req)
+		resp, err := a.callLLMWithStreaming(ctx, req)
 		llmDuration := time.Since(llmStart)
 		if endSpan != nil {
 			endSpan(err)
 		}
 		if err != nil {
+			// Context cancelled (Ctrl-C) — return empty, don't show error
+			if ctx != nil && ctx.Err() != nil {
+				return "", ctx.Err()
+			}
 			a.emit(EventError, a.config.TargetProvider, map[string]any{
 				"source":  "llm_call",
 				"message": err.Error(),
@@ -501,6 +620,22 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		if strings.TrimSpace(msg.Role) == "" {
 			msg.Role = "assistant"
 		}
+		// Text-based tool call fallback: some models (especially open-source via Ollama)
+		// output tool calls as text markers instead of structured JSON. Parse them.
+		if len(msg.ToolCalls) == 0 && msg.Content != "" {
+			if textToolCalls, cleanedContent := extractTextToolCalls(msg.Content); len(textToolCalls) > 0 {
+				msg.ToolCalls = textToolCalls
+				msg.Content = cleanedContent
+			}
+		}
+		// Truncate excessively long responses — some models output training data
+		// (Erlang blog posts, Java docs, etc.) when confused. Cap at 4000 chars
+		// for text-only responses (tool call responses can be longer).
+		if len(msg.ToolCalls) == 0 && len(msg.Content) > 4000 {
+			log.Printf("[Agent] truncating excessive response: %d chars → 4000", len(msg.Content))
+			msg.Content = msg.Content[:4000] + "\n\n[response truncated — model output exceeded limit]"
+		}
+
 		// Skip empty assistant messages (no content, no tool calls).
 		// Some models return these when confused or context is too large.
 		// Adding them to conversation causes 400 errors on strict models.
@@ -538,21 +673,22 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		// No tool calls → stall detection + pipeline advancement
 		if len(msg.ToolCalls) == 0 {
 			a.noToolTurns++
-			if a.config.AutoOrchestrate {
-				// Stall detection: if model hasn't made tool calls in 3 consecutive turns,
-				// escalate to a bigger model regardless of prior tool call history.
-				if a.noToolTurns >= 3 {
-					phaseName := "unknown"
-					if a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
-						phaseName = a.pipeline.Phases[a.pipelinePhase].Name
-					}
-					log.Printf("[Agent] stall detected in phase %s: %d turns without tools at level %d",
-						phaseName, a.noToolTurns, a.providerIdx)
-					a.escalateProvider()
-					a.noToolTurns = 0
-					a.conversation.Add(forceToolsMessage(phaseName))
-					continue
+			// Stall detection: if model hasn't made tool calls in 2 consecutive turns,
+			// escalate to a bigger model regardless of mode (pipeline or direct).
+			if a.noToolTurns >= 2 {
+				phaseName := "direct"
+				if a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
+					phaseName = a.pipeline.Phases[a.pipelinePhase].Name
 				}
+				log.Printf("[Agent] stall detected: %d turns without tools at level %d (phase: %s)",
+					a.noToolTurns, a.providerIdx, phaseName)
+				a.escalateProvider()
+				a.noToolTurns = 0
+				a.conversation.Add(forceToolsMessage(phaseName))
+				continue
+			}
+			// Pipeline-specific advancement stays inside AutoOrchestrate guard
+			if a.config.AutoOrchestrate {
 				// Try to advance pipeline (plan phase may produce text-only output)
 				if a.advancePipeline(msg.Content) {
 					continue
@@ -568,52 +704,105 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 					continue
 				}
 			}
+			// Final compile verification: if the agent wrote code files,
+			// check that the project still builds before declaring success.
+			// Only runs once to prevent destructive retry loops, and only when
+			// the written files match the project's detected language.
+			if a.toolCallCount > 0 && a.hasWrittenCode() && !a.completionVerifyDone {
+				a.completionVerifyDone = true
+				passed, results := a.RunVerificationGate("deploy")
+				if !passed {
+					failMsg := FormatVerifyFailures(results)
+					log.Printf("[Agent] compile verification failed at completion — sending back for fixes (one attempt)")
+					a.conversation.Add(providers.Message{
+						Role:    "user",
+						Content: failMsg + "\n\nFix these issues before completing. Only fix files you created or modified — do NOT modify other project files.",
+					})
+					continue // re-enter loop for one fix attempt
+				}
+			}
+			// Bug #340: If tests passed cleanly, exit immediately on text-only turn.
+			// The task is done — continuing risks overwriting working code.
+			if a.testsPassedClean {
+				log.Printf("[Agent] tests passed cleanly — exiting promptly (#340)")
+				return msg.Content, nil
+			}
+			// Detect completion signals — if the model says the task is done, exit
+			if isCompletionSignal(msg.Content) {
+				log.Printf("[Agent] completion signal detected — exiting")
+				return msg.Content, nil
+			}
+			// Don't exit on first text-only turn if:
+			// 1. Agent was mid-work (toolCallCount > 0), OR
+			// 2. Agent is in non-interactive mode (must try harder, no user fallback)
+			// Only continue if escalation chain exists (not tests). Cap at 2.
+			shouldContinue := a.noToolTurns == 1 && len(a.config.EscalationChain) > 1 && a.textContinuations < 2 &&
+				(a.toolCallCount > 0 || a.config.NonInteractive)
+			if shouldContinue {
+				a.textContinuations++
+				log.Printf("[Agent] text-only turn — continuing (%d/2 chances, tools=%d)", a.textContinuations, a.toolCallCount)
+				continue
+			}
 			return msg.Content, nil
 		}
 
-		// Execute tool calls — reset stall counter on success
+		// Execute tool calls — reset stall counter only.
+		// Do NOT reset textContinuations — that allows tool→text→tool cycles
+		// to bypass the cap indefinitely (#339).
 		a.noToolTurns = 0
 		a.toolCallCount += len(msg.ToolCalls)
 		a.phaseToolCalls += len(msg.ToolCalls)
+
+		// Global turn cap for non-pipeline mode (#339).
+		// In pipeline mode, phases handle turn limits. In direct mode,
+		// MaxTurns defaults to 0 (unlimited) — cap at 30 to prevent runaway.
+		if !a.config.AutoOrchestrate && a.config.MaxTurns <= 0 && turn > 30 {
+			log.Printf("[Agent] direct mode exceeded 30 turns — exiting (#339)")
+			return msg.Content, nil
+		}
+
 		a.executeToolCalls(ctx, msg.ToolCalls)
 
 		// Action repetition detection: fingerprint each tool call and detect loops.
 		// Uses intent-based fingerprinting (path-only for file ops, normalized bash)
 		// plus a cumulative warning counter that escalates even when per-window
 		// repeat counts stay low (e.g., 7-file rotation keeps repeats at 3).
-		if a.config.AutoOrchestrate {
-			for _, tc := range msg.ToolCalls {
-				name, args := extractToolCallNameArgs(tc)
-				a.toolFingerprints = append(a.toolFingerprints, toolCallFingerprint(name, args))
-			}
-			if len(a.toolFingerprints) > 40 {
-				a.toolFingerprints = a.toolFingerprints[len(a.toolFingerprints)-40:]
-			}
+		// Always active regardless of pipeline mode.
+		for _, tc := range msg.ToolCalls {
+			name, args := extractToolCallNameArgs(tc)
+			a.toolFingerprints = append(a.toolFingerprints, toolCallFingerprint(name, args))
+		}
+		if len(a.toolFingerprints) > 40 {
+			a.toolFingerprints = a.toolFingerprints[len(a.toolFingerprints)-40:]
+		}
 
-			repeats := maxRepeatCount(a.toolFingerprints)
-			if repeats >= 3 {
-				a.loopWarningCount++
-				log.Printf("[Agent] loop warning #%d: same tool call %d times in window",
+		repeats := maxRepeatCount(a.toolFingerprints)
+		if repeats >= 3 {
+			a.loopWarningCount++
+			log.Printf("[Agent] loop warning #%d: same tool call %d times in window",
+				a.loopWarningCount, repeats)
+
+			if a.loopWarningCount >= 6 || repeats >= 6 {
+				log.Printf("[Agent] action loop: %d warnings, %d repeats — breaking",
 					a.loopWarningCount, repeats)
-
-				if a.loopWarningCount >= 10 || repeats >= 8 {
-					log.Printf("[Agent] action loop: %d warnings, %d repeats — skipping phase",
-						a.loopWarningCount, repeats)
-					a.toolFingerprints = nil
-					a.loopWarningCount = 0
-					a.advancePipeline("PHASE_SKIPPED_LOOP")
-				} else if a.loopWarningCount >= 5 || repeats >= 5 {
-					log.Printf("[Agent] action loop: %d warnings, %d repeats — escalating",
-						a.loopWarningCount, repeats)
-					a.escalateProvider()
-					a.toolFingerprints = nil
-					a.conversation.Add(loopDetectedMessage(repeats))
-				} else {
-					a.conversation.Add(loopDetectedMessage(repeats))
-				}
-			} else {
+				a.toolFingerprints = nil
 				a.loopWarningCount = 0
+				if a.config.AutoOrchestrate {
+					a.advancePipeline("PHASE_SKIPPED_LOOP")
+				} else {
+					break // exit loop in direct mode
+				}
+			} else if a.loopWarningCount >= 3 || repeats >= 4 {
+				log.Printf("[Agent] action loop: %d warnings, %d repeats — escalating",
+					a.loopWarningCount, repeats)
+				a.escalateProvider()
+				a.toolFingerprints = nil
+				a.conversation.Add(loopDetectedMessage(repeats))
+			} else {
+				a.conversation.Add(loopDetectedMessage(repeats))
 			}
+		} else {
+			a.loopWarningCount = 0
 		}
 
 		// Check for phase signals in the LLM's text content even when tool calls
@@ -634,6 +823,11 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 	for _, toolCall := range toolCalls {
 		callID := extractToolCallID(toolCall)
 		name, args := extractToolCallNameArgs(toolCall)
+
+		// Track code file writes for compile verification
+		if (name == "file_write" || name == "file_edit") && isCodeFilePath(args) {
+			a.wroteCodeFiles = true
+		}
 
 		if a.renderer != nil {
 			a.renderer.ToolCall(name, args)
@@ -664,7 +858,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		// timeout fails, the agent won't hang forever on a single tool call.
 		toolCtx, toolCancel := context.WithTimeout(ctx, 5*time.Minute)
 		toolStart := time.Now()
-		result, execErr := a.registry.ExecuteChecked(toolCtx, name, args, a.config.WorkDir, a.permissions)
+		result, execErr := a.registry.ExecuteWithPrompt(toolCtx, name, args, a.config.WorkDir, a.permissions, a.permissionPrompt)
 		toolCancel()
 		toolDuration := time.Since(toolStart)
 
@@ -766,6 +960,13 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		// Record ground-truth facts for hallucination detection
 		if a.factTracker != nil {
 			a.factTracker.RecordToolOutput(name, args, resultContent, exitCode, storedOutputID)
+			// Bug #340: track when tests pass so we exit promptly
+			if tr := a.factTracker.LastTestResult(); tr != nil {
+				a.testsPassedClean = tr.Passed
+				if tr.Passed {
+					log.Printf("[Agent] tests passed (exit 0) — will exit on next text-only turn")
+				}
+			}
 		}
 
 		a.conversation.Add(providers.Message{
@@ -845,6 +1046,16 @@ func (a *Agent) buildMessages() []providers.Message {
 			sysPrompt += "\n\n# Resolved Build Commands\n" + a.resolvedBuildCmds
 		}
 
+		// Inject intent-based mode adjustment (review, implement, single)
+		if a.intentPromptAdjustment != "" {
+			sysPrompt += "\n\n" + a.intentPromptAdjustment
+		}
+
+		// Non-interactive mode: suppress follow-up questions (#315)
+		if a.config.NonInteractive {
+			sysPrompt += "\n\nNON-INTERACTIVE MODE: Complete the full task. Do not ask follow-up questions — there is no user to answer them. If requirements are ambiguous, make reasonable assumptions and document them."
+		}
+
 		a.cachedSystemPrompt = sysPrompt
 		a.cachedPromptLevel = a.providerIdx
 	}
@@ -895,7 +1106,22 @@ func (a *Agent) matchedSkillContext() string {
 	return a.cachedSkillContext
 }
 
+// skillContextBudget returns the max bytes allowed for skill injection
+// based on the current provider level (smaller models get less context).
+func (a *Agent) skillContextBudget() int {
+	switch {
+	case a.providerIdx == 0:
+		return 4096 // ~1K tokens for small models (14-30B)
+	case a.providerIdx <= 2:
+		return 16384 // ~4K tokens for mid models (120B)
+	default:
+		return 65536 // ~16K tokens for frontier models (480B+)
+	}
+}
+
 // computeSkillContext does the actual skill matching and formatting.
+// Respects a size budget based on the current provider level — small models
+// get abbreviated skill context to avoid overwhelming their context window.
 func (a *Agent) computeSkillContext() string {
 	if len(a.config.Skills) == 0 {
 		return ""
@@ -918,17 +1144,37 @@ func (a *Agent) computeSkillContext() string {
 	}
 
 	chain := orchestration.BuildSkillChain(matched)
+	budget := a.skillContextBudget()
 
 	var b strings.Builder
 	b.WriteString("=== Active Skills ===\n")
+	used := b.Len()
+
 	for _, skill := range chain {
-		b.WriteString("\n## " + skill.Name + "\n")
-		if skill.Instructions != "" {
-			b.WriteString(skill.Instructions)
-		} else {
-			b.WriteString(skill.Description)
+		content := skill.Description
+		if skill.Instructions != "" && a.providerIdx > 0 {
+			// Only inject full instructions for mid+ models
+			content = skill.Instructions
 		}
-		b.WriteString("\n")
+
+		entry := "\n## " + skill.Name + "\n" + content + "\n"
+		if used+len(entry) > budget {
+			// Over budget — add abbreviated entry
+			abbreviated := "\n## " + skill.Name + " (abbreviated)\n" + skill.Description + "\n"
+			if used+len(abbreviated) <= budget {
+				b.WriteString(abbreviated)
+				used += len(abbreviated)
+			}
+			// Skip remaining skills if we're out of budget
+			if used >= budget {
+				b.WriteString(fmt.Sprintf("\n[%d more skills truncated for model capacity]\n",
+					len(chain)-countBefore(chain, skill.Name)))
+				break
+			}
+			continue
+		}
+		b.WriteString(entry)
+		used += len(entry)
 	}
 	b.WriteString("=== End Skills ===")
 
@@ -938,6 +1184,16 @@ func (a *Agent) computeSkillContext() string {
 	}
 
 	return b.String()
+}
+
+// countBefore returns the index of skill with given name in the chain.
+func countBefore(chain []orchestration.Skill, name string) int {
+	for i, s := range chain {
+		if s.Name == name {
+			return i
+		}
+	}
+	return len(chain)
 }
 
 // invokeMCPToolsForSkills calls MCP tools bound to the matched skill chain
@@ -1144,58 +1400,12 @@ func forceToolsMessage(phaseName string) providers.Message {
 	}
 }
 
-// writeSynrouteMD writes the agent's project state to synroute.md in the working
-// directory. This is the agent's equivalent of CLAUDE.md — created and updated
-// each run so subsequent runs know what was built, what passed, and what to fix.
+// writeSynrouteMD writes the agent's project state to synroute.md with YAML
+// frontmatter for cross-session continuity. Uses the continuity system so
+// the format is consistent between in-session writes and session-end saves.
 func (a *Agent) writeSynrouteMD() {
-	if a.config.WorkDir == "" {
-		return
-	}
-
-	path := filepath.Join(a.config.WorkDir, "synroute.md")
-
-	var buf strings.Builder
-	buf.WriteString("# synroute.md — Project State\n\n")
-
-	// Status
-	buf.WriteString("## Status\n")
-	if a.pipeline != nil {
-		phaseName := "complete"
-		phaseNum := a.pipelinePhase + 1
-		total := len(a.pipeline.Phases)
-		if a.pipelinePhase < total {
-			phaseName = a.pipeline.Phases[a.pipelinePhase].Name
-		}
-		buf.WriteString(fmt.Sprintf("- Pipeline: %s\n", a.pipeline.Name))
-		buf.WriteString(fmt.Sprintf("- Phase: %s (%d/%d)\n", phaseName, phaseNum, total))
-	}
-	if a.config.ProjectLanguage != "" {
-		buf.WriteString(fmt.Sprintf("- Language: %s\n", a.config.ProjectLanguage))
-	}
-	buf.WriteString(fmt.Sprintf("- Last run: %s\n", time.Now().Format("2006-01-02 15:04")))
-	buf.WriteString(fmt.Sprintf("- Tool calls: %d\n", a.toolCallCount))
-	buf.WriteString(fmt.Sprintf("- Provider level: %d\n", a.providerIdx))
-	buf.WriteString(fmt.Sprintf("- Escalation cycles: %d\n\n", a.pipelineCycles))
-
-	// Acceptance criteria (if generated during plan/EDA phase)
-	if a.acceptanceCriteria != "" {
-		buf.WriteString("## Acceptance Criteria\n")
-		buf.WriteString(a.acceptanceCriteria)
-		buf.WriteString("\n\n")
-	}
-
-	// Original request (truncated for readability)
-	if a.originalRequest != "" {
-		req := a.originalRequest
-		if len(req) > 500 {
-			req = req[:500] + "\n...(truncated)"
-		}
-		buf.WriteString("## Original Request\n")
-		buf.WriteString(req)
-		buf.WriteString("\n")
-	}
-
-	if err := os.WriteFile(path, []byte(buf.String()), 0644); err != nil {
+	c := BuildContinuityFromAgent(a)
+	if err := writeSynrouteMD(c); err != nil {
 		log.Printf("[Agent] warning: could not write synroute.md: %v", err)
 	}
 }
@@ -1397,10 +1607,20 @@ func (a *Agent) advancePipeline(content string) bool {
 
 		nextPhase := a.pipeline.Phases[a.pipelinePhase]
 
-		// After implement phase passes, advance providerIdx past Level 0 (coders)
-		// to Level 1 (first review level). This ensures reviews use bigger models.
-		if currentPhase.Name == "implement" && a.providerIdx == 0 && len(a.config.EscalationChain) > 1 {
-			a.setMinProviderLevel(1)
+		// Tier-based provider routing: set provider level to match the next phase's
+		// preferred tier. providerIdx is monotonically increasing, so this only
+		// escalates UP, never back down to cheaper models.
+		if nextPhase.Tier != "" && len(a.config.EscalationChain) > 1 {
+			tierLevel := a.ProviderLevelForTier(nextPhase.Tier)
+			if tierLevel > a.providerIdx {
+				a.SetMinProviderLevel(tierLevel)
+				log.Printf("[Agent] tier routing: phase %s wants %s tier → level %d: %v",
+					nextPhase.Name, nextPhase.Tier, a.providerIdx,
+					a.config.EscalationChain[a.providerIdx].Providers)
+			}
+		} else if currentPhase.Name == "implement" && a.providerIdx == 0 && len(a.config.EscalationChain) > 1 {
+			// Legacy fallback: advance past Level 0 coders after implement
+			a.SetMinProviderLevel(1)
 			log.Printf("[Agent] advanced past coder level to review level %d: %v",
 				a.providerIdx, a.config.EscalationChain[a.providerIdx].Providers)
 		}
@@ -1444,6 +1664,103 @@ func (a *Agent) advancePipeline(content string) bool {
 
 		// Sub-agent phases: spawn a fresh agent with NO shared conversation
 		if nextPhase.UseSubAgent {
+			// Parallel verification: if the next phase after this one is ALSO
+			// UseSubAgent, run both simultaneously. Both are independent (fresh
+			// agents, no shared context) so they can safely execute in parallel.
+			// This cuts wall-clock time for code-review + acceptance-test in half.
+			followingIdx := a.pipelinePhase + 1
+			canParallelVerify := followingIdx < len(a.pipeline.Phases) &&
+				a.pipeline.Phases[followingIdx].UseSubAgent
+
+			if canParallelVerify {
+				followingPhase := a.pipeline.Phases[followingIdx]
+				log.Printf("[Agent] parallel verification: running %s + %s simultaneously",
+					nextPhase.Name, followingPhase.Name)
+
+				// Escalate for the following phase too if needed
+				if followingPhase.Escalate {
+					a.escalateProvider()
+				}
+
+				reviewResult, acceptResult := a.runParallelSubAgentPhases(nextPhase, followingPhase)
+
+				bothPassed := IsPassSignal(reviewResult) && IsPassSignal(acceptResult)
+				if bothPassed {
+					// Both passed — advance past both phases
+					a.pipelinePhase++ // skip past the following phase too
+					a.conversation.Add(providers.Message{
+						Role: "user",
+						Content: fmt.Sprintf("Parallel verification complete — both passed:\n\n--- %s ---\n%s\n\n--- %s ---\n%s",
+							nextPhase.Name, reviewResult, followingPhase.Name, acceptResult),
+					})
+					return a.advancePipeline("PHASE_PASSED")
+				}
+
+				// At least one failed — combine failures for the fix cycle
+				var failures []string
+				if !IsPassSignal(reviewResult) {
+					failures = append(failures, fmt.Sprintf("=== %s FAILED ===\n%s", nextPhase.Name, reviewResult))
+				}
+				if !IsPassSignal(acceptResult) {
+					failures = append(failures, fmt.Sprintf("=== %s FAILED ===\n%s", followingPhase.Name, acceptResult))
+				}
+				combinedFailures := strings.Join(failures, "\n\n")
+
+				a.pipelineCycles++
+
+				if a.reviewTracker.CheckDivergence(combinedFailures) {
+					log.Printf("[Agent] pipeline: parallel review findings INCREASING — force-advancing after %d cycles", a.pipelineCycles)
+					a.pipelinePhase++ // skip past following phase
+					a.conversation.Add(providers.Message{
+						Role:    "user",
+						Content: fmt.Sprintf("Review findings are increasing each cycle (diverging). Accepting current state to stop cost growth:\n%s", combinedFailures),
+					})
+					return a.advancePipeline("PHASE_PASSED")
+				}
+
+				if a.reviewTracker.CheckStability(a.config.WorkDir, combinedFailures) {
+					log.Printf("[Agent] pipeline: parallel review stable — accepting after %d cycles", a.pipelineCycles)
+					a.pipelinePhase++ // skip past following phase
+					a.conversation.Add(providers.Message{
+						Role:    "user",
+						Content: fmt.Sprintf("Review found issues but no improvement detected across cycles. Accepting current state:\n%s", combinedFailures),
+					})
+					return a.advancePipeline("PHASE_PASSED")
+				}
+
+				if a.pipelineCycles > maxPipelineCycles {
+					log.Printf("[Agent] pipeline: max review cycles reached (%d), accepting result", a.pipelineCycles)
+					a.pipelineCycles = 0
+					a.pipelinePhase++ // skip past following phase
+					a.conversation.Add(providers.Message{
+						Role:    "user",
+						Content: fmt.Sprintf("Review found issues but max cycles reached. Delivering current state:\n%s", combinedFailures),
+					})
+					return a.advancePipeline("PHASE_PASSED")
+				}
+
+				escalated := a.escalateProvider()
+				providerName := "default"
+				if a.providerIdx < len(a.config.EscalationChain) {
+					level := a.config.EscalationChain[a.providerIdx]
+					if len(level.Providers) > 0 {
+						providerName = level.Providers[0]
+					}
+				}
+				log.Printf("[Agent] pipeline: parallel review cycle %d/%d — fixing on %s (provider idx %d, escalated=%v)",
+					a.pipelineCycles, maxPipelineCycles, providerName, a.providerIdx, escalated)
+				a.conversation.Add(providers.Message{
+					Role: "user",
+					Content: fmt.Sprintf("Parallel verification found issues (cycle %d/%d). Fix ALL these issues using tools, then say IMPLEMENT_COMPLETE:\n---\n%s",
+						a.pipelineCycles, maxPipelineCycles, combinedFailures),
+				})
+				a.pipelinePhase = a.findPhaseIndex("self-check", a.pipelinePhase-1)
+				a.phaseToolCalls = 0
+				a.phaseTurns = 0
+				return true
+			}
+
+			// Single sub-agent phase (no parallel peer follows)
 			reviewResult := a.runSubAgentPhase(nextPhase)
 			if IsPassSignal(reviewResult) {
 				// Sub-agent approved — advance to next phase recursively
@@ -1825,6 +2142,7 @@ Say VERIFIED_CORRECT if everything passes, or NEEDS_FIX with remaining issues.`,
 			Role:     fmt.Sprintf("%s-step-%d", phase.Name, step+1),
 			Model:    model,
 			Provider: provider,
+			Tier:     phase.Tier,
 			Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
 		}, task)
 
@@ -1841,6 +2159,7 @@ Say VERIFIED_CORRECT if everything passes, or NEEDS_FIX with remaining issues.`,
 					Role:     fmt.Sprintf("%s-step-%d-retry", phase.Name, step+1),
 					Model:    model,
 					Provider: retryProvider,
+					Tier:     phase.Tier,
 					Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
 				}, task)
 				if err != nil {
@@ -1871,6 +2190,65 @@ Say VERIFIED_CORRECT if everything passes, or NEEDS_FIX with remaining issues.`,
 
 	a.levelRotationIdx += n // advance rotation for next cycle
 	return lastResult
+}
+
+// cloneForSubAgent creates a lightweight clone of the agent with its own
+// copy of mutable escalation state (providerIdx, levelRotationIdx).
+// Shared immutable state (config, executor, registry, tools) is referenced,
+// not copied. This prevents data races in runParallelSubAgentPhases.
+func (a *Agent) cloneForSubAgent() *Agent {
+	clone := &Agent{
+		executor:           a.executor,
+		registry:           a.registry,
+		permissions:        a.permissions,
+		conversation:       a.conversation,
+		renderer:           a.renderer,
+		config:             a.config,
+		sessionID:          a.sessionID,
+		pool:               a.pool,
+		trace:              a.trace,
+		metrics:            a.metrics,
+		bus:                a.bus,
+		providerIdx:        a.providerIdx,
+		levelRotationIdx:   a.levelRotationIdx,
+		originalRequest:    a.originalRequest,
+		acceptanceCriteria: a.acceptanceCriteria,
+		cachedSkillContext: a.cachedSkillContext,
+		cachedPromptLevel:  a.cachedPromptLevel,
+		specConstraints:    a.specConstraints,
+		reviewTracker:      &ReviewCycleTracker{},
+	}
+	return clone
+}
+
+// runParallelSubAgentPhases runs two UseSubAgent phases simultaneously.
+// Both phases spawn independent sub-agents with no shared context, so they
+// can safely execute in parallel. Each goroutine gets a snapshot of the
+// provider state to avoid racing on providerIdx and levelRotationIdx.
+func (a *Agent) runParallelSubAgentPhases(phase1, phase2 PipelinePhase) (string, string) {
+	// Snapshot mutable escalation state before spawning goroutines.
+	// Each sub-agent clone gets its own copy so concurrent escalation
+	// calls don't race on the parent's fields.
+	snapshot1 := a.cloneForSubAgent()
+	snapshot2 := a.cloneForSubAgent()
+
+	var result1, result2 string
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		result1 = snapshot1.runSubAgentPhase(phase1)
+	}()
+	go func() {
+		defer wg.Done()
+		result2 = snapshot2.runSubAgentPhase(phase2)
+	}()
+
+	wg.Wait()
+	log.Printf("[Agent] parallel verification complete: %s=%v, %s=%v",
+		phase1.Name, IsPassSignal(result1), phase2.Name, IsPassSignal(result2))
+	return result1, result2
 }
 
 // runSingleReviewer runs one independent reviewer sub-agent (used when level has 1 provider).
@@ -1911,6 +2289,7 @@ Your job:
 		Role:     phase.Name,
 		Model:    model,
 		Provider: provider,
+		Tier:     phase.Tier,
 		Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
 	}, task)
 
@@ -1927,9 +2306,9 @@ Your job:
 	return result, nil
 }
 
-// setMinProviderLevel enforces monotonic escalation. The provider level can
+// SetMinProviderLevel enforces monotonic escalation. The provider level can
 // only go UP, never down. This is the ONLY way to change providerIdx.
-func (a *Agent) setMinProviderLevel(level int) {
+func (a *Agent) SetMinProviderLevel(level int) {
 	if level <= a.providerIdx {
 		return // already at or above this level
 	}
@@ -1945,11 +2324,29 @@ func (a *Agent) setMinProviderLevel(level int) {
 	providers := a.config.EscalationChain[a.providerIdx].Providers
 	log.Printf("[Agent] escalating to level %d/%d: %v",
 		a.providerIdx+1, len(a.config.EscalationChain), providers)
+	tier := ""
+	if a.providerIdx < len(a.config.EscalationChain) {
+		tier = string(a.config.EscalationChain[a.providerIdx].Tier)
+	}
 	a.emit(EventEscalation, "", map[string]any{
-		"from_level": fromLevel,
-		"to_level":   a.providerIdx,
-		"providers":  fmt.Sprintf("%v", providers),
+		"from_level":  fromLevel,
+		"to_level":    a.providerIdx,
+		"total_levels": len(a.config.EscalationChain),
+		"tier":        tier,
+		"providers":   fmt.Sprintf("%v", providers),
 	})
+}
+
+// SetNonInteractive marks the agent as running in one-shot mode (--message).
+// The system prompt will instruct the agent not to ask follow-up questions.
+func (a *Agent) SetNonInteractive(v bool) {
+	a.config.NonInteractive = v
+}
+
+// ForceEscalate is the public API for manually triggering provider escalation
+// (e.g., from the code mode ^E shortcut).
+func (a *Agent) ForceEscalate() bool {
+	return a.escalateProvider()
 }
 
 // escalateProvider moves to the next provider level. Returns true if escalated.
@@ -1961,7 +2358,7 @@ func (a *Agent) escalateProvider() bool {
 		log.Printf("[Agent] escalation chain exhausted — staying on level %d", a.providerIdx)
 		return false
 	}
-	a.setMinProviderLevel(a.providerIdx + 1)
+	a.SetMinProviderLevel(a.providerIdx + 1)
 	return true
 }
 
@@ -1977,6 +2374,36 @@ func (a *Agent) currentLevelProviders() []string {
 		idx = len(a.config.EscalationChain) - 1
 	}
 	return a.config.EscalationChain[idx].Providers
+}
+
+// ProviderLevelForTier returns the first escalation chain index that matches
+// the given tier. Returns 0 if no tier is set or no matching level is found.
+// Tier classification: cheap = bottom third, mid = middle third, frontier = top third.
+// If OLLAMA_CHAIN_TIERS was parsed, uses explicit tier assignments.
+// Otherwise auto-classifies from chain position.
+func (a *Agent) ProviderLevelForTier(tier ModelTier) int {
+	if tier == "" || len(a.config.EscalationChain) == 0 {
+		return 0
+	}
+
+	// First pass: look for an explicit tier assignment on a chain level.
+	for i, level := range a.config.EscalationChain {
+		if level.Tier == tier {
+			return i
+		}
+	}
+
+	// Second pass: auto-classify by position (bottom=cheap, middle=mid, top=frontier).
+	n := len(a.config.EscalationChain)
+	switch tier {
+	case TierCheap:
+		return 0 // bottom of chain
+	case TierMid:
+		return n / 3 // start of middle third
+	case TierFrontier:
+		return (2 * n) / 3 // start of top third
+	}
+	return 0
 }
 
 // initializeImplementPhase sets the initial parallel agent count from Level 0.
@@ -2051,6 +2478,34 @@ func (a *Agent) shouldContinue(content string) bool {
 	}
 	for _, signal := range continuationSignals {
 		if strings.Contains(lower, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasWrittenCode returns true if the agent has written code files in this session.
+func (a *Agent) hasWrittenCode() bool {
+	return a.wroteCodeFiles
+}
+
+// isCodeFilePath checks if a tool call's args reference a code file.
+func isCodeFilePath(args map[string]interface{}) bool {
+	path, _ := args["path"].(string)
+	if path == "" {
+		path, _ = args["file_path"].(string)
+	}
+	if path == "" {
+		return false
+	}
+	codeExtensions := []string{
+		".go", ".py", ".js", ".ts", ".java", ".rs", ".rb",
+		".cpp", ".c", ".cs", ".swift", ".kt", ".scala",
+		".sh", ".bash", ".sql",
+	}
+	lower := strings.ToLower(path)
+	for _, ext := range codeExtensions {
+		if strings.HasSuffix(lower, ext) {
 			return true
 		}
 	}
@@ -2621,6 +3076,38 @@ Output the MERGED plan with complete acceptance criteria that reference the skil
 	return combined.String()
 }
 
+// callLLMWithStreaming tries to use streaming if the executor supports it.
+// Emits EventTokenStream for each token so the renderer can display them inline.
+// Falls back to callLLMWithRetry if streaming isn't available.
+func (a *Agent) callLLMWithStreaming(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
+	// Check if the executor supports streaming via the router
+	if streamer, ok := a.executor.(interface {
+		ChatCompletionStreamForProvider(ctx context.Context, req providers.ChatRequest, sessionID, provider string, onToken providers.TokenCallback) (providers.ChatResponse, error)
+	}); ok && a.config.Streaming {
+		provider := ""
+		if len(a.config.EscalationChain) > 0 && a.providerIdx < len(a.config.EscalationChain) {
+			level := a.config.EscalationChain[a.providerIdx]
+			if len(level.Providers) > 0 {
+				provider = level.Providers[a.levelRotationIdx%len(level.Providers)]
+			}
+		}
+		if provider != "" {
+			onToken := func(token string) {
+				a.emit(EventTokenStream, provider, map[string]any{"token": token})
+			}
+			resp, err := streamer.ChatCompletionStreamForProvider(ctx, req, a.sessionID, provider, onToken)
+			if err == nil {
+				return resp, nil
+			}
+			// Don't log circuit-open errors — they're expected during rate limiting
+			if !strings.Contains(err.Error(), "circuit open") && !strings.Contains(err.Error(), "unavailable") {
+				log.Printf("[Agent] streaming failed, falling back to non-streaming: %v", err)
+			}
+		}
+	}
+	return a.callLLMWithRetry(ctx, req)
+}
+
 // callLLMWithRetry attempts the LLM call with retry and automatic escalation.
 // If all providers at the current level fail, escalates to the next level and retries.
 // Only returns error if all levels are exhausted or a non-retryable error occurs.
@@ -2629,14 +3116,37 @@ func (a *Agent) callLLMWithRetry(ctx context.Context, req providers.ChatRequest)
 	var lastErr error
 
 	for attempt := 0; attempt <= len(backoffs); attempt++ {
+		// Check for context cancellation (Ctrl-C) — return immediately, don't retry
+		if ctx != nil && ctx.Err() != nil {
+			return providers.ChatResponse{}, ctx.Err()
+		}
+
 		resp, err := a.executeForCurrentProvider(ctx, req)
 		if err == nil {
 			return resp, nil
 		}
 		lastErr = err
 
-		// All providers at current level failed — escalate instead of retrying same level
+		// Context cancelled during call — return immediately
+		if ctx != nil && ctx.Err() != nil {
+			return providers.ChatResponse{}, ctx.Err()
+		}
+
+		// All providers at current level failed
 		if strings.Contains(err.Error(), "all providers at level") {
+			// Rate limit (429) — wait and retry same level instead of escalating.
+			// Vertex AI Claude has 3-5 RPM default; waiting 30s usually clears it.
+			if isRateLimitErr(err) && attempt < 2 {
+				waitDur := 30 * time.Second
+				log.Printf("[Agent] rate limited at level %d — waiting %v before retry (attempt %d)",
+					a.providerIdx, waitDur, attempt+1)
+				select {
+				case <-time.After(waitDur):
+				case <-ctx.Done():
+					return providers.ChatResponse{}, ctx.Err()
+				}
+				continue
+			}
 			if a.escalateProvider() {
 				log.Printf("[Agent] all providers at level %d failed — escalated to level %d",
 					a.providerIdx-1, a.providerIdx)
@@ -2712,6 +3222,16 @@ func (a *Agent) storeMessagesToDB(msgs []providers.Message, source string) {
 
 // isContextOverflowError returns true if the error indicates the request exceeds
 // the model's context window. Previously dead code — now wired into callLLMWithRetry.
+// isRateLimitErr detects 429/rate-limit/quota errors in the error chain.
+func isRateLimitErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "429") || strings.Contains(s, "rate limit") ||
+		strings.Contains(s, "resource_exhausted") || strings.Contains(s, "quota")
+}
+
 func isContextOverflowError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "too long") ||

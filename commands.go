@@ -17,6 +17,7 @@ import (
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/agent"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/app"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/environment"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcpserver"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/worktree"
@@ -30,6 +31,7 @@ var (
 )
 
 func cmdVersion() {
+	printLogo()
 	profile := app.GetActiveProfile()
 	fmt.Printf("synroute %s (%s) built %s | profile: %s | %s\n",
 		version, commit, buildDate, profile, runtime.Version())
@@ -42,8 +44,10 @@ Usage:
   synroute [command]
 
 Commands:
-  serve       Start the HTTP server (default if no command given)
+  serve       Start the HTTP server
   chat        Interactive agent REPL or one-shot message
+  code        Pipeline-aware code mode with TUI (default if no command given)
+  mcp         Manage MCP server registrations (add, list, remove, status)
   mcp-serve   Start standalone MCP tool server
   test        Smoke test providers
   eval        Multi-language eval framework
@@ -344,6 +348,7 @@ func cmdChat(args []string) {
 	sessionID := fs.String("session", "", "Resume specific session ID")
 	verbose := fs.Int("verbose", 0, "Verbosity level: 0=compact, 1=normal, 2=verbose (also -v/-vv)")
 	jsonEvents := fs.Bool("json-events", false, "Emit events as JSON lines to stderr")
+	usePipeline := fs.Bool("pipeline", false, "Force legacy 6-phase pipeline (default: frontier model with pipeline tools)")
 	fs.Parse(args)
 
 	// Support -v / -vv shorthand via remaining args
@@ -418,7 +423,19 @@ func cmdChat(args []string) {
 		providerNames[i] = p.Name()
 	}
 	config.Providers = providerNames
-	config.AutoOrchestrate = true
+	config.AutoOrchestrate = *usePipeline
+
+	// MCP client — load config and connect to registered servers
+	mcpCfg, mcpErr := mcp.LoadConfig(mcp.DefaultConfigPath())
+	if mcpErr != nil {
+		log.Printf("Warning: failed to load MCP config: %v", mcpErr)
+	} else if len(mcpCfg.Servers) > 0 {
+		mcpClient := mcp.NewClientFromConfig(mcpCfg)
+		mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		mcpClient.ConnectAll(mcpCtx, 2)
+		mcpCancel()
+		config.MCPClient = mcpClient
+	}
 
 	// Event bus for real-time observability
 	bus := agent.NewEventBus()
@@ -495,6 +512,7 @@ func cmdChat(args []string) {
 	}
 
 	if *message != "" {
+		config.NonInteractive = true
 		// If --spec-file provided with --message, prepend spec content to message
 		if *specFile != "" {
 			specContent, err := os.ReadFile(*specFile)
@@ -554,14 +572,35 @@ func cmdChat(args []string) {
 
 	ag.SetPool(pool)
 
+	// Conversation tier — configurable via SYNROUTE_CONVERSATION_TIER
+	convTier := agent.TierFrontier
+	if tierEnv := os.Getenv("SYNROUTE_CONVERSATION_TIER"); tierEnv != "" {
+		switch strings.ToLower(tierEnv) {
+		case "cheap":
+			convTier = agent.TierCheap
+		case "mid":
+			convTier = agent.TierMid
+		case "frontier":
+			convTier = agent.TierFrontier
+		}
+	}
+	ag.SetMinProviderLevel(ag.ProviderLevelForTier(convTier))
+
 	// Register delegation tools
 	registry.Register(agent.NewDelegateTool(ag))
 	registry.Register(agent.NewHandoffTool(ag))
+	if !config.AutoOrchestrate {
+		agent.RegisterPipelineTools(registry, ag)
+	}
 
 	// Set budget tracker if configured
 	if config.Budget != nil {
 		ag.SetInputGuardrails(agent.NewGuardrailChain(&agent.SecretPatternGuardrail{}))
 	}
+
+	// Interactive permission prompting for chat mode
+	ag.SetPermissions(tools.NewPermissionChecker(tools.ModeInteractive))
+	ag.SetPermissionPrompt(agent.DefaultPermissionPrompt(os.Stdout, os.Stdin))
 
 	repl := agent.NewREPL(ag, renderer)
 	if err := repl.Run(ctx); err != nil {

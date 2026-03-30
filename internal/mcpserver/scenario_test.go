@@ -56,8 +56,8 @@ func TestScenarioFullMCPWorkflow(t *testing.T) {
 		}
 		result, _ := resp.Result.(map[string]interface{})
 		toolsList, _ := result["tools"].([]interface{})
-		if len(toolsList) != 7 {
-			t.Fatalf("expected 7 tools, got %d", len(toolsList))
+		if len(toolsList) != 10 {
+			t.Fatalf("expected 10 tools, got %d", len(toolsList))
 		}
 		for _, td := range toolsList {
 			toolDef, _ := td.(map[string]interface{})
@@ -71,6 +71,7 @@ func TestScenarioFullMCPWorkflow(t *testing.T) {
 		expected := map[string]bool{
 			"bash": false, "file_read": false, "file_write": false,
 			"file_edit": false, "grep": false, "glob": false, "git": false,
+			"web_search": false, "web_fetch": false, "notebook_edit": false,
 		}
 		for _, name := range toolNames {
 			expected[name] = true
