@@ -233,9 +233,13 @@ func cmdCode(args []string) {
 	ag.SetInputGuardrails(agent.NewGuardrailChain(&agent.SecretPatternGuardrail{}))
 
 	// Interactive mode: prompt user for write/dangerous tool calls
-	// One-shot mode: auto-approve (no user to prompt)
-	ag.SetPermissions(tools.NewPermissionChecker(tools.ModeInteractive))
-	ag.SetPermissionPrompt(agent.DefaultPermissionPrompt(os.Stdout, os.Stdin))
+	// Piped input or one-shot: auto-approve (no interactive user)
+	stdinInfo, _ := os.Stdin.Stat()
+	isInteractive := stdinInfo != nil && stdinInfo.Mode()&os.ModeCharDevice != 0
+	if isInteractive {
+		ag.SetPermissions(tools.NewPermissionChecker(tools.ModeInteractive))
+		ag.SetPermissionPrompt(agent.DefaultPermissionPrompt(os.Stdout, os.Stdin))
+	}
 
 	// One-shot mode — use the same agent (no RunOneShot to avoid duplicate LogRenderer)
 	if *message != "" {
