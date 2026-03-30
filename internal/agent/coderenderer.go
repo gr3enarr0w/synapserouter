@@ -277,7 +277,7 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		cr.model = str(e.Data, "model")
 		cr.provider = e.Provider
 
-		if cr.verbosity >= VerbosityNormal {
+		if cr.verbosity >= VerbosityVerbose {
 			provider := e.Provider
 			if provider == "" {
 				provider = "router"
@@ -288,7 +288,7 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 	case EventLLMComplete:
 		cr.model = ""
 
-		if cr.verbosity >= VerbosityNormal {
+		if cr.verbosity >= VerbosityVerbose {
 			duration := str(e.Data, "duration")
 			tokens := intVal(e.Data, "tokens_used")
 			cr.writeContent(cr.color("\033[34m", fmt.Sprintf("  llm <- %s | %d tokens", duration, tokens)))
