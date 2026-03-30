@@ -746,11 +746,21 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			return msg.Content, nil
 		}
 
-		// Execute tool calls — reset stall and continuation counters
+		// Execute tool calls — reset stall counter only.
+		// Do NOT reset textContinuations — that allows tool→text→tool cycles
+		// to bypass the cap indefinitely (#339).
 		a.noToolTurns = 0
-		a.textContinuations = 0
 		a.toolCallCount += len(msg.ToolCalls)
 		a.phaseToolCalls += len(msg.ToolCalls)
+
+		// Global turn cap for non-pipeline mode (#339).
+		// In pipeline mode, phases handle turn limits. In direct mode,
+		// MaxTurns defaults to 0 (unlimited) — cap at 30 to prevent runaway.
+		if !a.config.AutoOrchestrate && a.config.MaxTurns <= 0 && turn > 30 {
+			log.Printf("[Agent] direct mode exceeded 30 turns — exiting (#339)")
+			return msg.Content, nil
+		}
+
 		a.executeToolCalls(ctx, msg.ToolCalls)
 
 		// Action repetition detection: fingerprint each tool call and detect loops.

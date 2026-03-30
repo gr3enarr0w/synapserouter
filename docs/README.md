@@ -1,6 +1,8 @@
 # Synapserouter Documentation
 
-Go-based LLM proxy router and coding agent that distributes requests across multiple providers with automatic escalation, skill-based dispatch, and an interactive agent REPL.
+Go-based LLM proxy router and coding agent that distributes requests across multiple providers with automatic escalation, skill-based dispatch, and an interactive coding agent.
+
+**New here?** Start with the [User Guide](./guides/User%20Guide.md) for installation and first-run instructions, or the [README](../README.md) for a quick start in 5 steps.
 
 **Status: Early development (Phase 1)**
 

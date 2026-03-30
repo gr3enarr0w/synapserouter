@@ -1,47 +1,113 @@
 # Synapse Router
 
-`synroute` is the unified Go runtime for local LLM routing and orchestration inside this repo.
-
-It combines:
-- multi-provider LLM routing and fallback
-- embedded subscription-backed providers
-- OpenAI-compatible chat and responses APIs
-- in-process orchestration rewritten from `ruflo`
-
-## Subscription Status
-
-`synroute` can route to Claude, Codex/OpenAI, and Gemini using direct API keys, pre-obtained session-token/cookie credentials, or the built-in OAuth/browser login flow.
-
-Current boundary:
-- supported: embedded provider routing with API keys
-- supported: embedded provider routing with supplied session-token credentials
-- supported: built-in OAuth/browser login acquisition and refresh flow from archived `CLIProxyAPI`
+SynapseRouter (`synroute`) is a Go-based LLM proxy router and coding agent. It routes requests across multiple LLM providers with automatic fallback and escalation, and includes an interactive coding agent with tool execution (bash, file I/O, grep, glob, git, web search).
 
 ## What It Does
 
-- Routes requests across Ollama Cloud (6-level escalation, 19+ models), subscription providers (Gemini, Codex, Claude Code), and Vertex AI
-- Exposes `/v1/chat/completions`, `/v1/responses`, `/v1/models`, and provider-specific compatibility routes
-- Stores usage, tool outputs, and orchestration state in SQLite
-- 54 embedded skills with trigger-based matching and language-field routing
-- Spec compliance system with constraint extraction and tool-layer protection
-- 6-phase pipeline: Plan → Implement → Self-Check → Code Review → Acceptance Test → Deploy
-- Provides orchestration APIs for tasks, swarms, agents, workflows, load balancing, work stealing, and workflow execution state
+- **Code mode TUI** -- the default interface. Type `synroute code` (or just `synroute`) and start prompting. The agent reads, writes, and edits files, runs commands, and manages git on your behalf.
+- **Provider routing** -- distributes requests across Ollama Cloud, subscription providers (Gemini, Codex, Claude Code), and Vertex AI with automatic escalation when a provider fails or rate-limits.
+- **54 embedded skills** that fire automatically based on what you ask (Go patterns, testing, security review, etc.).
+- **OpenAI-compatible API** at `/v1/chat/completions` for use with other tools.
+
+## Prerequisites
+
+- **Go 1.22 or later** -- [install instructions](https://go.dev/doc/install). On macOS with Homebrew: `brew install go`.
+- **Git** -- required for worktree isolation and the git tool.
+- **An LLM provider account** -- at minimum, one of:
+  - [Ollama Cloud](https://ollama.com) subscription (personal profile)
+  - Google Cloud project with Vertex AI enabled (work profile)
+  - Gemini, OpenAI, or Anthropic API key (subscription providers)
 
 ## Quick Start
 
+### 1. Clone and build
+
 ```bash
-cd src/services/synapse-router
+git clone https://github.com/gr3enarr0w/mcp-ecosystem.git
+cd mcp-ecosystem/synapse-router
+go build -o synroute .
+```
+
+This produces a `synroute` binary in the current directory.
+
+### 2. Make it available system-wide (optional)
+
+Pick one of these approaches so you can run `synroute` from any directory:
+
+```bash
+# Option A: symlink into a directory already on your PATH
+ln -s "$(pwd)/synroute" /usr/local/bin/synroute
+
+# Option B: symlink into ~/bin (create it if needed, then add to PATH)
+mkdir -p ~/bin
+ln -s "$(pwd)/synroute" ~/bin/synroute
+# Add to your shell profile (~/.zshrc or ~/.bashrc) if not already there:
+#   export PATH="$HOME/bin:$PATH"
+
+# Option C: use `make install` (copies to /usr/local/bin, may need sudo)
+make install
+```
+
+### 3. Configure your `.env` file
+
+Copy the example and fill in your credentials:
+
+```bash
 cp .env.example .env
-# Edit .env with your provider credentials
-./start.sh
 ```
 
-Or using make:
+Open `.env` in your editor. The two most important settings are the **profile** and at least one **provider key**.
+
+**Personal profile** (Ollama Cloud as the primary provider):
+
+```env
+ACTIVE_PROFILE=personal
+
+# Required: your Ollama Cloud API key
+OLLAMA_API_KEY=your-ollama-api-key
+
+# Optional: model escalation chain (pipe-separated levels, comma-separated models within a level)
+# OLLAMA_CHAIN=ministral-3:14b,gpt-oss:20b|qwen3-8b|gemma3-27b
+
+# Optional: disable subscription fallback providers
+# SUBSCRIPTIONS_DISABLED=true
+```
+
+**Work profile** (Vertex AI with Google Cloud):
+
+```env
+ACTIVE_PROFILE=work
+
+# Required: your GCP project and region
+GCP_PROJECT_ID=your-gcp-project
+GCP_REGION=us-central1
+# Authentication: run `gcloud auth application-default login` first
+```
+
+See `.env.example` for all available settings including subscription provider keys (Gemini, OpenAI, Anthropic).
+
+### 4. Verify your setup
+
 ```bash
-make start
+./synroute doctor    # Check configuration and provider health
+./synroute test      # Smoke test all configured providers
 ```
 
-See [API_EXAMPLES.md](./API_EXAMPLES.md) for detailed usage examples.
+### 5. Start using it
+
+```bash
+./synroute           # Opens the code mode TUI (default command)
+```
+
+Type a prompt and press Enter. The agent will read files, run commands, and write code. Type `/help` for keyboard shortcuts, or `/exit` to quit.
+
+### Alternative: start the HTTP server
+
+```bash
+./synroute serve     # Starts the API server on port 8090
+```
+
+See [docs/guides/User Guide.md](./docs/guides/User%20Guide.md) for the full user guide and [docs/reference/CLI Commands.md](./docs/reference/CLI%20Commands.md) for every command and flag.
 
 ## Primary Endpoints
 
@@ -95,54 +161,44 @@ Orchestration:
 - `GET /v1/orchestration/executions/{workflow_id}/metrics`
 - `GET /v1/orchestration/executions/{workflow_id}/debug`
 
-## Current Rewrite Status
+## Profiles
 
-`CLIProxyAPI`:
-- embedded and operational inside `synroute`
-- targeted compatibility bucket is implemented
-- direct API-key, supplied session-token, and built-in OAuth/browser login routing are present
-- full repo-to-repo parity is not yet proven by a formal audit
+Synroute has two profiles that control which LLM providers are available.
 
-`ruflo`:
-- substantial runtime behavior is now embedded
-- task/swarm/agent/workflow APIs, event streaming, load balancing, stealing, contests, and workflow state are present
-- deeper coordinator semantics, nested/dependency workflow semantics, plugin hooks, and final parity audit still remain
+| Profile | Primary Provider | Fallback | When to use |
+| --- | --- | --- | --- |
+| `personal` | Ollama Cloud (multi-level escalation) | Gemini, OpenAI, Anthropic (optional) | Personal development, home use |
+| `work` | Vertex AI (Claude + Gemini via GCP) | models.corp (optional) | Corporate environment with GCP |
+
+Switch profiles by editing `ACTIVE_PROFILE` in `.env`, or override per-run:
+
+```bash
+ACTIVE_PROFILE=work ./synroute code
+```
 
 ## Testing and Verification
 
-Run all tests:
-```bash
-make test
-```
-
-Run integration tests:
-```bash
-./run_integration_tests.sh
-```
-
-Or manually:
 ```bash
 go test ./...                          # Unit tests
-go test -tags=integration ./...        # Integration tests
-go build ./...                         # Build verification
+go test -race ./...                    # Tests with race detection
+go vet ./...                           # Lint
+go build -o synroute .                 # Build verification
+./synroute test                        # E2E provider smoke test
+```
+
+Or with make:
+
+```bash
+make build      # Build binary
+make test       # Run tests with race detection
+make start      # Build and start server
+make install    # Install to /usr/local/bin
+make help       # Show all available commands
 ```
 
 ## Documentation
 
-- **[API_EXAMPLES.md](./API_EXAMPLES.md)** - Practical API usage examples with curl, Python, and JavaScript
-- **[COMPLETION_REPORT.md](./COMPLETION_REPORT.md)** - Complete feature status and gap analysis
-- **[STATUS.md](./STATUS.md)** - Current implementation status
-- **[.env.example](./.env.example)** - Environment configuration template
-
-## Development
-
-Common commands:
-```bash
-make build      # Build binary
-make test       # Run tests
-make start      # Start server
-make clean      # Clean build artifacts
-make fmt        # Format code
-make check      # Run linters
-make help       # Show all commands
-```
+- **[User Guide](./docs/guides/User%20Guide.md)** -- Getting started, daily usage, tips
+- **[CLI Commands](./docs/reference/CLI%20Commands.md)** -- Every command, flag, and example
+- **[API_EXAMPLES.md](./API_EXAMPLES.md)** -- Curl, Python, and JavaScript API examples
+- **[.env.example](./.env.example)** -- All environment variables with descriptions

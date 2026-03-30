@@ -20,6 +20,23 @@ This guide covers daily usage. For the full CLI reference, see [[CLI Commands]].
 
 ## Getting Started
 
+### Prerequisites
+
+Before you begin, make sure you have the following installed:
+
+1. **Go 1.22 or later** -- check with `go version`. If not installed:
+   - macOS: `brew install go`
+   - Linux: download from [go.dev/dl](https://go.dev/dl/) and follow the instructions
+   - Windows: download the MSI from [go.dev/dl](https://go.dev/dl/)
+   - After installing, verify: `go version` should print something like `go version go1.24.1 darwin/arm64`
+
+2. **Git** -- check with `git --version`. Usually pre-installed on macOS and Linux.
+
+3. **An LLM provider account** -- you need at least one:
+   - [Ollama Cloud](https://ollama.com) for the personal profile
+   - A Google Cloud project with Vertex AI for the work profile
+   - Or any combination of Gemini, OpenAI, or Anthropic API keys
+
 ### Build
 
 ```bash
@@ -27,20 +44,59 @@ cd ~/Development/synapserouter
 go build -o synroute .
 ```
 
+This compiles the Go source code and produces a `synroute` binary in the current directory. The first build may take a minute while Go downloads dependencies.
+
+### Add to your PATH (optional but recommended)
+
+To run `synroute` from any directory without typing the full path:
+
+```bash
+# Option A: symlink into a directory on your PATH
+ln -s "$(pwd)/synroute" /usr/local/bin/synroute
+
+# Option B: use ~/bin (create it first if needed)
+mkdir -p ~/bin
+ln -s "$(pwd)/synroute" ~/bin/synroute
+```
+
+If you use Option B, add `~/bin` to your PATH by adding this line to `~/.zshrc` (macOS) or `~/.bashrc` (Linux):
+
+```bash
+export PATH="$HOME/bin:$PATH"
+```
+
+Then restart your terminal or run `source ~/.zshrc`.
+
+After this, you can type `synroute` instead of `./synroute` from anywhere.
+
 ### Configure
 
-Create a `.env` file in the project root. The minimum configuration requires a profile and at least one provider.
+Create a `.env` file in the project root by copying the example:
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` in your text editor and set your profile and provider credentials.
 
 **Personal profile** (Ollama Cloud primary):
 
 ```env
 ACTIVE_PROFILE=personal
+
+# Required: your Ollama Cloud API key (get one at https://ollama.com)
 OLLAMA_API_KEY=your-ollama-key
-# Multiple keys for concurrent subscriptions (round-robin):
+
+# Optional: multiple keys for concurrent requests (round-robin)
 # OLLAMA_API_KEYS=key1,key2,key3
 
-# Optional subscription providers (disable with SUBSCRIPTIONS_DISABLED=true):
-# GEMINI_API_KEY=your-gemini-key
+# Optional: model escalation chain
+# Format: level0_models|level1_models|level2_models
+# Models within a level are comma-separated (round-robin)
+# Levels are pipe-separated (escalate on failure)
+# OLLAMA_CHAIN=ministral-3:14b,gpt-oss:20b|qwen3-8b|gemma3-27b
+
+# Optional: disable subscription fallback providers entirely
 # SUBSCRIPTIONS_DISABLED=true
 ```
 
@@ -48,31 +104,42 @@ OLLAMA_API_KEY=your-ollama-key
 
 ```env
 ACTIVE_PROFILE=work
-GCP_PROJECT_ID=your-project
+GCP_PROJECT_ID=your-gcp-project
 GCP_REGION=us-central1
+# Run: gcloud auth application-default login
+```
+
+You can also switch profiles without editing the file:
+
+```bash
+ACTIVE_PROFILE=work synroute code
 ```
 
 ### Verify Setup
 
 ```bash
-./synroute doctor         # Check configuration and provider health
-./synroute test           # Smoke test all providers
-./synroute models         # List available models
+synroute doctor         # Check configuration and provider health
+synroute test           # Smoke test all providers
+synroute models         # List available models
 ```
+
+If `doctor` reports problems, check that your `.env` file has valid API keys and that your provider accounts are active.
 
 ### Start Code Mode (Default)
 
 ```bash
-./synroute                # Starts code mode TUI (default)
-./synroute code           # Same, explicit command
+synroute                # Starts code mode TUI (default)
+synroute code           # Same, explicit command
 ```
 
-Code mode is the primary interface -- a full terminal UI with status bar, keyboard shortcuts, and token streaming. See the "Using synroute code" section below.
+Code mode is the primary interface -- a full terminal UI with status bar, keyboard shortcuts, and token streaming. Type a prompt and press Enter. The agent will read your project files, run commands, and write code.
+
+Press `Ctrl-/` (or type `/help`) to see all keyboard shortcuts. Press `Ctrl-C` twice to exit.
 
 ### Start the HTTP Server
 
 ```bash
-./synroute serve          # Start HTTP server on :8090
+synroute serve          # Start HTTP server on :8090
 ```
 
 The server exposes the OpenAI-compatible API at `/v1/chat/completions` and diagnostic endpoints. See [[CLI Commands#synroute serve]] for details.
@@ -246,13 +313,27 @@ Synroute supports two profiles that control which providers are available.
 
 ### Switching Profiles
 
+There are three ways to switch profiles:
+
 ```bash
-./synroute profile show                # Show active profile and providers
-./synroute profile list                # List available profiles
-./synroute profile switch work         # Switch to work profile
+# 1. Edit ACTIVE_PROFILE in your .env file (persistent)
+#    Open .env and change: ACTIVE_PROFILE=work
+
+# 2. Use the profile command (updates .env for you)
+synroute profile switch work
+
+# 3. Override for a single run (temporary, does not change .env)
+ACTIVE_PROFILE=work synroute code
 ```
 
-After switching, restart the server for changes to take effect.
+To check your current profile:
+
+```bash
+synroute profile show                # Show active profile and providers
+synroute profile list                # List available profiles
+```
+
+After switching via command or `.env` edit, restart the server if it is running.
 
 ---
 

@@ -14,6 +14,8 @@ aliases:
 
 Complete reference for all `synroute` CLI commands. For a guided introduction, see [[User Guide]].
 
+All examples below assume `synroute` is on your PATH. If not, replace `synroute` with `./synroute` (run from the project directory) or the full path to the binary. See the [[User Guide#Add to your PATH]] section for setup.
+
 ---
 
 ## synroute (code mode)
