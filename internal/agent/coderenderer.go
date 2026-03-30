@@ -173,14 +173,12 @@ func (cr *CodeRenderer) Init() {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 
-	// Brain-circuit logo — cyan to magenta gradient
-	fmt.Fprintln(cr.out)
-	fmt.Fprintln(cr.out, cr.color("\033[36m", "      ╭──╮")+cr.color("\033[35m", "  ╭─╮"))
-	fmt.Fprintln(cr.out, cr.color("\033[36m", "   ╭──╯")+cr.color("\033[96m", "◈◈")+cr.color("\033[36m", "╰──")+cr.color("\033[35m", "╯")+cr.color("\033[95m", "◈")+cr.color("\033[35m", "╰╮"))
-	fmt.Fprintln(cr.out, cr.color("\033[36m", "  ╭╯")+cr.color("\033[96m", "─◈──◈─")+cr.color("\033[35m", "──")+cr.color("\033[95m", "◈──")+cr.color("\033[35m", "╮"))
-	fmt.Fprintln(cr.out, cr.color("\033[36m", "  ╰╮")+cr.color("\033[96m", " ◈")+cr.color("\033[34m", "──")+cr.color("\033[95m", "◈")+cr.color("\033[35m", "──")+cr.color("\033[95m", "◈─")+cr.color("\033[35m", "╯"))
-	fmt.Fprintln(cr.out, cr.color("\033[36m", "   ╰──")+cr.color("\033[96m", "◈")+cr.color("\033[34m", "─╯")+cr.color("\033[95m", " ╰──╯"))
-	fmt.Fprintln(cr.out, cr.color("\033[1;36m", "  Syn")+cr.color("\033[1;35m", "Route"))
+	// Brand name — logo image planned for v1.01
+	if cr.noColor {
+		fmt.Fprintln(cr.out, "\n  SynRoute")
+	} else {
+		fmt.Fprintln(cr.out, "\n\033[1;36m  Syn\033[1;35mRoute\033[0m")
+	}
 
 	// Version + mode
 	ver := cr.version

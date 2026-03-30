@@ -46,6 +46,9 @@ func extractTextToolCalls(content string) ([]map[string]interface{}, string) {
 	// Format 4: tool_call\n```json\n{"command":"ls"}\n``` — narrated tool call with JSON block
 	remaining = parseNarratedJSONFormat(remaining, &toolCalls)
 
+	// Format 5: tool_call_name=file_read\ntool_call_arguments={...} — key=value format
+	remaining = parseKeyValueFormat(remaining, &toolCalls)
+
 	if len(toolCalls) == 0 {
 		return nil, content
 	}
@@ -213,4 +216,36 @@ func parseNarratedJSONFormat(content string, toolCalls *[]map[string]interface{}
 	}
 
 	return narratedJSONRe.ReplaceAllString(content, "")
+}
+
+// parseKeyValueFormat handles tool_call_name=NAME\ntool_call_arguments={...} format.
+var keyValueToolCallRe = regexp.MustCompile(`(?s)tool_call_name\s*=\s*(\w+)\s*\ntool_call_arguments\s*=\s*(\{.+?\})`)
+
+func parseKeyValueFormat(content string, toolCalls *[]map[string]interface{}) string {
+	matches := keyValueToolCallRe.FindAllStringSubmatchIndex(content, -1)
+	if len(matches) == 0 {
+		return content
+	}
+
+	for _, match := range matches {
+		toolName := content[match[2]:match[3]]
+		argsStr := content[match[4]:match[5]]
+
+		var args map[string]interface{}
+		if err := json.Unmarshal([]byte(argsStr), &args); err != nil {
+			log.Printf("[Agent] text tool call parse error (key-value): %v", err)
+			continue
+		}
+
+		*toolCalls = append(*toolCalls, map[string]interface{}{
+			"id":   fmt.Sprintf("text-tc-%s-%d", toolName, len(*toolCalls)),
+			"type": "function",
+			"function": map[string]interface{}{
+				"name":      toolName,
+				"arguments": argsStr,
+			},
+		})
+	}
+
+	return keyValueToolCallRe.ReplaceAllString(content, "")
 }

@@ -47,6 +47,7 @@ var (
 //go:embed migrations/*.sql
 var embeddedMigrations embed.FS
 
+
 func makeHTTPRequestWithTimeout(urlStr string, timeout time.Duration) (*http.Response, error) {
 	url, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
@@ -63,22 +64,13 @@ func init() {
 	app.RegisterMigrations(embeddedMigrations)
 }
 
-// printLogo prints the SynRoute brain-circuit logo to stdout.
 func printLogo() {
-	noColor := os.Getenv("NO_COLOR") != ""
-	c := func(code, text string) string {
-		if noColor {
-			return text
-		}
-		return code + text + "\033[0m"
+	if os.Getenv("NO_COLOR") != "" {
+		fmt.Println("\n  SynRoute")
+		fmt.Println()
+		return
 	}
-	fmt.Println()
-	fmt.Println(c("\033[36m", "      ╭──╮") + c("\033[35m", "  ╭─╮"))
-	fmt.Println(c("\033[36m", "   ╭──╯") + c("\033[96m", "◈◈") + c("\033[36m", "╰──") + c("\033[35m", "╯") + c("\033[95m", "◈") + c("\033[35m", "╰╮"))
-	fmt.Println(c("\033[36m", "  ╭╯") + c("\033[96m", "─◈──◈─") + c("\033[35m", "──") + c("\033[95m", "◈──") + c("\033[35m", "╮"))
-	fmt.Println(c("\033[36m", "  ╰╮") + c("\033[96m", " ◈") + c("\033[34m", "──") + c("\033[95m", "◈") + c("\033[35m", "──") + c("\033[95m", "◈─") + c("\033[35m", "╯"))
-	fmt.Println(c("\033[36m", "   ╰──") + c("\033[96m", "◈") + c("\033[34m", "─╯") + c("\033[95m", " ╰──╯"))
-	fmt.Println(c("\033[1;36m", "  Syn") + c("\033[1;35m", "Route"))
+	fmt.Println("\n\033[1;36m  Syn\033[1;35mRoute\033[0m")
 	fmt.Println()
 }
 

@@ -81,6 +81,7 @@ type Agent struct {
 	cachedSkillContext string // computed once from originalRequest, injected into all sub-agents
 	skillContextOnce   sync.Once
 	noToolTurns        int // consecutive turns without tool calls (stall detection)
+	textContinuations  int // how many times we've continued past text-only turns (cap at 2)
 	reviewTracker      *ReviewCycleTracker // detects stable review cycles (no progress)
 	phaseRetries       int // consecutive quality gate rejections in current phase
 	phaseTurns         int // turns spent in current phase (hard cap at maxPhaseTurns)
@@ -701,21 +702,20 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 					continue // re-enter loop for one fix attempt
 				}
 			}
-			// Don't exit on first text-only turn if agent narrated tool calls in text.
-			// The text parser may have missed a format — give stall detection a chance.
-			// Only check for tool name keywords (language-independent).
-			if a.noToolTurns == 1 && a.toolCallCount > 0 && msg.Content != "" &&
-				(strings.Contains(msg.Content, "tool_call") || strings.Contains(msg.Content, "file_read") ||
-					strings.Contains(msg.Content, "file_write") || strings.Contains(msg.Content, "notebook_edit") ||
-					strings.Contains(msg.Content, "```json")) {
-				log.Printf("[Agent] text-only turn with tool narration after %d calls — continuing", a.toolCallCount)
+			// Don't exit on first text-only turn if agent was mid-work AND has an
+			// escalation chain to try bigger models. Without an escalation chain
+			// (e.g., tests), exit normally. Cap at 2 continuations to prevent loops.
+			if a.noToolTurns == 1 && a.toolCallCount > 0 && len(a.config.EscalationChain) > 1 && a.textContinuations < 2 {
+				a.textContinuations++
+				log.Printf("[Agent] text-only turn after %d tool calls — continuing (%d/2 chances)", a.toolCallCount, a.textContinuations)
 				continue
 			}
 			return msg.Content, nil
 		}
 
-		// Execute tool calls — reset stall counter on success
+		// Execute tool calls — reset stall and continuation counters
 		a.noToolTurns = 0
+		a.textContinuations = 0
 		a.toolCallCount += len(msg.ToolCalls)
 		a.phaseToolCalls += len(msg.ToolCalls)
 		a.executeToolCalls(ctx, msg.ToolCalls)
