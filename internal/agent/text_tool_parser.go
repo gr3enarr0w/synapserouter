@@ -218,6 +218,29 @@ func parseNarratedJSONFormat(content string, toolCalls *[]map[string]interface{}
 	return narratedJSONRe.ReplaceAllString(content, "")
 }
 
+// isCompletionSignal detects when the model signals task completion.
+// Used to exit the agent loop when the model says the task is done,
+// preventing infinite re-confirmation loops (#333).
+func isCompletionSignal(content string) bool {
+	lower := strings.ToLower(content)
+	signals := []string{
+		"task complete",
+		"task is complete",
+		"task has been completed",
+		"successfully completed",
+		"all done",
+		"the fix is complete",
+		"changes are complete",
+		"implementation is complete",
+	}
+	for _, sig := range signals {
+		if strings.Contains(lower, sig) {
+			return true
+		}
+	}
+	return false
+}
+
 // parseKeyValueFormat handles tool_call_name=NAME\ntool_call_arguments={...} format.
 var keyValueToolCallRe = regexp.MustCompile(`(?s)tool_call_name\s*=\s*(\w+)\s*\ntool_call_arguments\s*=\s*(\{.+?\})`)
 

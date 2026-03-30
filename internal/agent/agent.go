@@ -708,6 +708,11 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 					continue // re-enter loop for one fix attempt
 				}
 			}
+			// Detect completion signals — if the model says the task is done, exit
+			if isCompletionSignal(msg.Content) {
+				log.Printf("[Agent] completion signal detected — exiting")
+				return msg.Content, nil
+			}
 			// Don't exit on first text-only turn if:
 			// 1. Agent was mid-work (toolCallCount > 0), OR
 			// 2. Agent is in non-interactive mode (must try harder, no user fallback)
