@@ -239,7 +239,7 @@ func (p *VertexProvider) claudeRawPredict(ctx context.Context, req ChatRequest, 
 		return ChatResponse{}, fmt.Errorf("vertex claude read failure: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return ChatResponse{}, fmt.Errorf("vertex claude returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return ChatResponse{}, NewProviderError("vertex-claude", resp, strings.TrimSpace(string(respBody)))
 	}
 
 	var anthResp struct {
@@ -374,7 +374,7 @@ func (p *VertexProvider) geminiGenerateContent(ctx context.Context, req ChatRequ
 		return ChatResponse{}, fmt.Errorf("vertex gemini read failure: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return ChatResponse{}, fmt.Errorf("vertex gemini returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return ChatResponse{}, NewProviderError("vertex-gemini", resp, strings.TrimSpace(string(respBody)))
 	}
 
 	var gemResp struct {

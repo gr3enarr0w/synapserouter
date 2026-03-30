@@ -24,6 +24,7 @@ type Router struct {
 	sessionTracker  *memory.SessionTracker
 	db              *sql.DB
 	circuitBreakers map[string]*CircuitBreaker
+	rateLimiter     *ProviderRateLimiter
 	healthMu        sync.RWMutex
 	healthCache     map[string]*cachedHealth
 }
@@ -87,6 +88,7 @@ func NewRouter(
 		vectorMemory:    vm,
 		db:              db,
 		circuitBreakers: breakers,
+		rateLimiter:     NewProviderRateLimiter(db),
 		healthCache:     make(map[string]*cachedHealth),
 	}
 }
@@ -772,23 +774,40 @@ func (r *Router) tryProvider(
 		}
 	}
 
+	// Rate limit: wait for token before calling provider
+	if err := r.rateLimiter.Wait(ctx, provider.Name()); err != nil {
+		return providers.ChatResponse{}, fmt.Errorf("rate limiter cancelled for %s: %w", provider.Name(), err)
+	}
+
 	resp, err := provider.ChatCompletion(ctx, req, sessionID)
 	if err != nil {
-		// Record failure
+		// Check if this is a rate limit error (429)
+		var provErr *providers.ProviderError
+		if errors.As(err, &provErr) && provErr.IsRateLimit() {
+			// Rate limit — adapt limiter, do NOT open circuit breaker
+			r.rateLimiter.RecordRateLimitHit(provider.Name(), provErr.RetryAfterSecs)
+			log.Printf("[Router] %s rate limited (Retry-After: %ds) — NOT opening circuit",
+				provider.Name(), provErr.RetryAfterSecs)
+			return providers.ChatResponse{}, err
+		}
+
+		// Non-rate-limit failure — record in circuit breaker
 		r.circuitBreakers[provider.Name()].RecordFailure()
 
-		// Check if rate limit error — use shorter cooldown for providers with fast resets
+		// Legacy rate limit detection for providers not using ProviderError
 		if isRateLimitError(err) {
+			r.rateLimiter.RecordRateLimitHit(provider.Name(), 0)
 			cooldown := rateLimitCooldown(provider.Name(), err)
-			log.Printf("[Router] %s rate limited, opening circuit for %s", provider.Name(), cooldown)
+			log.Printf("[Router] %s rate limited (legacy), circuit cooldown %s", provider.Name(), cooldown)
 			r.circuitBreakers[provider.Name()].Open(cooldown)
 		}
 
 		return providers.ChatResponse{}, err
 	}
 
-	// Record success and update health cache
+	// Record success — circuit breaker AND rate limiter
 	r.circuitBreakers[provider.Name()].RecordSuccess()
+	r.rateLimiter.RecordSuccess(provider.Name())
 	r.healthMu.Lock()
 	r.healthCache[provider.Name()] = &cachedHealth{healthy: true, checkedAt: time.Now()}
 	r.healthMu.Unlock()

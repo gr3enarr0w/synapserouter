@@ -92,7 +92,7 @@ func (p *OllamaCloudProvider) ChatCompletion(ctx context.Context, req ChatReques
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return ChatResponse{}, fmt.Errorf("ollama error %d: %s", resp.StatusCode, string(respBody))
+		return ChatResponse{}, NewProviderError(p.name, resp, string(respBody))
 	}
 
 	var chatResp ChatResponse
@@ -151,7 +151,7 @@ func (p *OllamaCloudProvider) ChatCompletionStream(ctx context.Context, req Chat
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return ChatResponse{}, fmt.Errorf("ollama stream error %d: %s", resp.StatusCode, string(respBody))
+		return ChatResponse{}, NewProviderError(p.name, resp, string(respBody))
 	}
 
 	// Parse SSE stream: each line is "data: {json}\n" or "data: [DONE]\n"
