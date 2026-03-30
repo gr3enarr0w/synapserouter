@@ -173,20 +173,45 @@ func (cr *CodeRenderer) Init() {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 
+	// ASCII art logo
+	logo := []string{
+		`  ╭─────────────────────────╮`,
+		`  │  ⚡ synroute            │`,
+		`  ╰─────────────────────────╯`,
+	}
 	fmt.Fprintln(cr.out)
-	fmt.Fprintln(cr.out, cr.color("\033[1;36m", "  synroute")+" "+cr.color("\033[2m", cr.version)+" "+cr.color("\033[2m", "— code mode"))
+	for _, line := range logo {
+		fmt.Fprintln(cr.out, cr.color("\033[1;36m", line))
+	}
+
+	// Version + mode
+	ver := cr.version
+	if ver == "" {
+		ver = "dev"
+	}
+	fmt.Fprintln(cr.out, cr.color("\033[2m", "  "+ver+" · code mode · Ollama Cloud"))
+
+	// Project info
 	if cr.project != "" {
-		projectLine := "  Project: " + cr.color("\033[1;37m", cr.project)
+		projectLine := "  " + cr.color("\033[1;37m", cr.project)
 		if cr.language != "" {
-			projectLine += " " + cr.color("\033[2m", "("+cr.language+")")
+			projectLine += cr.color("\033[2m", " ("+cr.language+")")
 		}
 		fmt.Fprintln(cr.out, projectLine)
 	}
-	if cr.model != "" && cr.model != "auto" {
-		fmt.Fprintln(cr.out, "  Model: "+cr.color("\033[34m", cr.model))
+
+	// Working directory
+	if wd, err := os.Getwd(); err == nil {
+		fmt.Fprintln(cr.out, cr.color("\033[2m", "  "+wd))
 	}
+
 	fmt.Fprintln(cr.out)
-	fmt.Fprintln(cr.out, cr.color("\033[2m", "  Commands: /plan /review /check /fix /help"))
+	fmt.Fprintln(cr.out, cr.color("\033[2m", "  /plan  /review  /check  /fix  /help"))
+
+	// Detect synroute.md
+	if _, err := os.Stat("synroute.md"); err == nil {
+		fmt.Fprintln(cr.out, cr.color("\033[2m", "  project state: synroute.md"))
+	}
 	fmt.Fprintln(cr.out)
 }
 
