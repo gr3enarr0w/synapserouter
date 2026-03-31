@@ -373,9 +373,11 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 				vhsInstruction = "\n\nVERIFICATION REQUIRED: After implementing, you MUST verify with VHS:\n" +
 					"1. Write a .tape file in tests/ui/tapes/ that tests the change\n" +
 					"2. Run: bash(vhs tests/ui/tapes/<name>.tape)\n" +
-					"3. Read the screenshot with file_read to verify it looks correct\n" +
-					"4. Test both profiles (personal and ACTIVE_PROFILE=work) and NO_COLOR=1\n" +
-					"Do NOT declare done without VHS screenshot verification."
+					"3. Read EVERY screenshot with file_read — describe what you see in each one\n" +
+					"4. Confirm each screenshot matches expected output (no missing text, no garbage, correct layout)\n" +
+					"5. If ANY screenshot is wrong, fix the code and re-run the tape\n" +
+					"6. Test both profiles (personal and ACTIVE_PROFILE=work) and NO_COLOR=1\n" +
+					"Do NOT declare done without reading and verifying EVERY screenshot."
 			}
 
 			log.Printf("[Agent] plan-first: %s — injecting planning instruction (vhs=%v)", reason, isTerminalChange)
