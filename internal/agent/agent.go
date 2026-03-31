@@ -922,20 +922,22 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			"args_summary": formatToolCallSummary(name, args),
 		})
 
-		// File read dedup: return short notice if the file hasn't been modified.
-		// Previously returned full cached content, which caused conversation bloat
-		// when models re-read the same file repeatedly (loop detection #349).
-		// Now returns a short message telling the model to use the content it already has.
+		// File read dedup: return short notice if the EXACT same read was done before.
+		// Cache key includes path + offset + limit so reading different sections of
+		// the same file is allowed (needed for large files like ASCII art sources).
 		if name == "file_read" {
 			readPath, _ := args["path"].(string)
 			if readPath != "" {
 				resolvedPath := resolvePathForCache(readPath, a.config.WorkDir)
-				if _, ok := a.fileReadCache[resolvedPath]; ok {
-					log.Printf("[Agent] file_read cache hit: %s", resolvedPath)
+				offset, _ := args["offset"].(float64)
+				limit, _ := args["limit"].(float64)
+				cacheKey := fmt.Sprintf("%s@%d:%d", resolvedPath, int(offset), int(limit))
+				if _, ok := a.fileReadCache[cacheKey]; ok {
+					log.Printf("[Agent] file_read cache hit: %s", cacheKey)
 					a.conversation.Add(providers.Message{
 						Role:       "tool",
 						ToolCallID: callID,
-						Content:    fmt.Sprintf("[file already read] %s — you already have this file's content from a previous read. Use file_edit to modify it or proceed with what you know. Do NOT read it again.", resolvedPath),
+						Content:    fmt.Sprintf("[file already read] %s — you already have this content. Use file_edit to modify it or proceed with what you know.", resolvedPath),
 					})
 					continue
 				}
@@ -1063,22 +1065,32 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			Content:    conversationContent,
 		})
 
-		// File read cache: populate on successful read, invalidate on write/edit
+		// File read cache: populate on successful read, invalidate on write/edit.
+		// Cache key includes path@offset:limit so different ranges of the same file
+		// can be read independently (needed for large files).
 		if name == "file_read" && !isError {
 			readPath, _ := args["path"].(string)
 			if readPath != "" {
 				resolvedPath := resolvePathForCache(readPath, a.config.WorkDir)
+				offset, _ := args["offset"].(float64)
+				limit, _ := args["limit"].(float64)
+				cacheKey := fmt.Sprintf("%s@%d:%d", resolvedPath, int(offset), int(limit))
 				if a.fileReadCache == nil {
 					a.fileReadCache = make(map[string]string)
 				}
-				a.fileReadCache[resolvedPath] = conversationContent
+				a.fileReadCache[cacheKey] = conversationContent
 			}
 		}
 		if (name == "file_write" || name == "file_edit") && !isError {
 			writePath, _ := args["path"].(string)
 			if writePath != "" {
 				resolvedPath := resolvePathForCache(writePath, a.config.WorkDir)
-				delete(a.fileReadCache, resolvedPath)
+				// Invalidate ALL cached reads for this file (any offset/limit)
+				for k := range a.fileReadCache {
+					if strings.HasPrefix(k, resolvedPath+"@") {
+						delete(a.fileReadCache, k)
+					}
+				}
 			}
 		}
 
@@ -2684,7 +2696,7 @@ func (a *Agent) compactConversation(completedPhase string) {
 var toolIdentityKeys = map[string][]string{
 	"file_write": {"path"},
 	"file_edit":  {"path"},
-	"file_read":  {"path"},
+	"file_read":  {"path", "offset", "limit"}, // different sections of same file are NOT loops
 	"grep":       {"pattern", "path"},
 	"glob":       {"pattern", "path"},
 	"git":        {"subcommand"},
