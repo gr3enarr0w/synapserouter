@@ -537,7 +537,7 @@ func LoadDotEnv() error {
 	home, _ := os.UserHomeDir()
 	loaded := false
 
-	// 1. Binary's directory — the project .env (highest priority)
+	// 1. Binary's directory — the project .env (highest priority when running from source)
 	if execPath, err := os.Executable(); err == nil {
 		if resolved, err := filepath.EvalSymlinks(execPath); err == nil {
 			execEnv := filepath.Join(filepath.Dir(resolved), ".env")
@@ -549,7 +549,20 @@ func LoadDotEnv() error {
 		}
 	}
 
-	// 2. User config directory
+	// 2. Current working directory — for installed binaries running in project dirs.
+	// When synroute is installed to ~/.local/bin/ but run from a project directory
+	// that has its own .env (with API keys, chain config, etc.), load it.
+	// godotenv.Load does NOT override existing vars, so binary-dir .env wins.
+	if cwd, err := os.Getwd(); err == nil {
+		cwdEnv := filepath.Join(cwd, ".env")
+		if _, err := os.Stat(cwdEnv); err == nil {
+			if err := godotenv.Load(cwdEnv); err == nil {
+				loaded = true
+			}
+		}
+	}
+
+	// 3. User config directory
 	userEnv := filepath.Join(home, ".mcp", "synapse", ".env")
 	if _, err := os.Stat(userEnv); err == nil {
 		godotenv.Load(userEnv) // merge, don't overwrite
