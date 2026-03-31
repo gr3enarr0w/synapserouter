@@ -340,6 +340,30 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		}
 	}
 
+	// For non-pipeline mode (code mode): nudge the model to plan before coding.
+	// Pipeline tools (plan, review, check) are registered but models don't use them
+	// unless prompted. Two triggers:
+	// 1. Self-modification: always plan when working on synroute's own codebase
+	// 2. Complex tasks: plan when complexity is medium or higher
+	if !a.config.AutoOrchestrate && a.originalRequest == userMessage {
+		isSelfModify := strings.Contains(strings.ToLower(a.config.WorkDir), "synapserouter") ||
+			strings.Contains(strings.ToLower(a.config.WorkDir), "synroute")
+		complexity := AssessComplexity(userMessage, a.config.SpecFilePath != "")
+
+		shouldPlan := isSelfModify || complexity == ComplexityMedium || complexity == ComplexityFull
+		if shouldPlan {
+			reason := complexity.String()
+			if isSelfModify {
+				reason = "self-modification"
+			}
+			log.Printf("[Agent] plan-first: %s — injecting planning instruction", reason)
+			a.conversation.Add(providers.Message{
+				Role: "user",
+				Content: "IMPORTANT: Before writing any code, use the plan tool to create a brief plan with acceptance criteria. Then implement the plan step by step. Do NOT skip planning.",
+			})
+		}
+	}
+
 	// Initialize pipeline immediately on first message (if AutoOrchestrate enabled)
 	// This fires parallel planners BEFORE the main agent starts making tool calls
 	if a.config.AutoOrchestrate && a.pipeline == nil {
