@@ -528,30 +528,38 @@ func ParseOllamaChain(chainStr string) [][]string {
 	return levels
 }
 
-// LoadDotEnv searches for .env files in standard locations.
+// LoadDotEnv loads .env files from standard locations.
+// Priority: binary's directory (project config) first, then ~/.mcp/synapse/.env.
+// Does NOT load CWD/.env to avoid picking up unrelated secrets (e.g., ~/.env
+// containing GitHub tokens when running from ~).
+// godotenv does not overwrite existing env vars, so first-loaded wins.
 func LoadDotEnv() error {
 	home, _ := os.UserHomeDir()
-	candidates := []string{
-		".env",
-		filepath.Join(home, ".mcp", "synapse", ".env"),
-	}
+	loaded := false
 
+	// 1. Binary's directory — the project .env (highest priority)
 	if execPath, err := os.Executable(); err == nil {
 		if resolved, err := filepath.EvalSymlinks(execPath); err == nil {
 			execEnv := filepath.Join(filepath.Dir(resolved), ".env")
-			if execEnv != ".env" {
-				candidates = append(candidates, execEnv)
+			if _, err := os.Stat(execEnv); err == nil {
+				if err := godotenv.Load(execEnv); err == nil {
+					loaded = true
+				}
 			}
 		}
 	}
 
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			return godotenv.Load(candidate)
-		}
+	// 2. User config directory
+	userEnv := filepath.Join(home, ".mcp", "synapse", ".env")
+	if _, err := os.Stat(userEnv); err == nil {
+		godotenv.Load(userEnv) // merge, don't overwrite
+		loaded = true
 	}
 
-	return os.ErrNotExist
+	if !loaded {
+		return os.ErrNotExist
+	}
+	return nil
 }
 
 func envFirst(keys ...string) string {
