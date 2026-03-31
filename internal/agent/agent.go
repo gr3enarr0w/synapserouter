@@ -93,6 +93,7 @@ type Agent struct {
 	cachedPromptLevel  int      // provider level when system prompt was cached (-1 = uncached)
 	toolFingerprints   []string // sliding window of recent tool call fingerprints (loop detection)
 	loopWarningCount   int      // consecutive loop warnings without resolution (escalation trigger)
+	exhaustionRedirects int     // how many times we've hit chain-exhausted redirect (cap at 3)
 
 	// Context retrieval after compaction
 	hasCompacted bool // set true after compactConversation; triggers auto-context injection
@@ -721,8 +722,10 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		if len(msg.ToolCalls) == 0 {
 			a.noToolTurns++
 			// Stall detection: if model hasn't made tool calls in 2 consecutive turns,
-			// escalate to a bigger model regardless of mode (pipeline or direct).
-			if a.noToolTurns >= 2 {
+			// escalate to a bigger model — BUT only for non-trivial tasks.
+			// Conversational turns (trivial complexity) are expected to be text-only.
+			complexity := AssessComplexity(a.originalRequest, a.config.SpecFilePath != "")
+			if a.noToolTurns >= 2 && complexity != ComplexityTrivial {
 				phaseName := "direct"
 				if a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
 					phaseName = a.pipeline.Phases[a.pipelinePhase].Name
@@ -757,7 +760,7 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			// the written files match the project's detected language.
 			if a.toolCallCount > 0 && a.hasWrittenCode() && !a.completionVerifyDone {
 				a.completionVerifyDone = true
-				passed, results := a.RunVerificationGate("deploy")
+				passed, results := a.RunVerificationGate("self-check")
 				if !passed {
 					failMsg := FormatVerifyFailures(results)
 					log.Printf("[Agent] compile verification failed at completion — sending back for fixes (one attempt)")
@@ -774,8 +777,16 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 				log.Printf("[Agent] tests passed cleanly — exiting promptly (#340)")
 				return msg.Content, nil
 			}
-			// Detect completion signals — if the model says the task is done, exit
+			// Detect completion signals — if the model says the task is done, verify first
 			if isCompletionSignal(msg.Content) {
+				if a.toolCallCount > 0 && !a.testsPassedClean && a.hasWrittenCode() {
+					log.Printf("[Agent] completion signal detected but tests not verified — requesting verification")
+					a.conversation.Add(providers.Message{
+						Role:    "user",
+						Content: "You said the task is complete, but tests haven't been verified. Run the tests to confirm everything works before declaring done.",
+					})
+					continue
+				}
 				log.Printf("[Agent] completion signal detected — exiting")
 				return msg.Content, nil
 			}
@@ -799,10 +810,13 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			return msg.Content, nil
 		}
 
-		// Execute tool calls — reset stall counter only.
-		// Do NOT reset textContinuations — that allows tool→text→tool cycles
-		// to bypass the cap indefinitely (#339).
+		// Execute tool calls — reset stall counter. Reset textContinuations
+		// only after sustained tool usage (3+ tool calls since last text turn)
+		// to prevent tool→text→tool cycles bypassing the cap (#339).
 		a.noToolTurns = 0
+		if a.toolCallCount > 3 {
+			a.textContinuations = 0
+		}
 		a.toolCallCount += len(msg.ToolCalls)
 		a.phaseToolCalls += len(msg.ToolCalls)
 
@@ -866,18 +880,28 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 					a.toolFingerprints = nil
 					a.conversation.Add(loopDetectedMessage(repeats))
 				} else {
-					log.Printf("[Agent] action loop: %d warnings, %d repeats — chain exhausted, injecting redirect",
-						a.loopWarningCount, repeats)
+					a.exhaustionRedirects++
+					log.Printf("[Agent] action loop: %d warnings, %d repeats — chain exhausted (redirect %d/3)",
+						a.loopWarningCount, repeats, a.exhaustionRedirects)
+
+					if a.exhaustionRedirects >= 3 {
+						// Gave 3 chances after exhaustion — force exit with summary
+						log.Printf("[Agent] 3 exhaustion redirects — forcing exit")
+						return msg.Content, nil
+					}
+
 					a.toolFingerprints = nil
 					a.conversation.Add(providers.Message{
 						Role: "user",
-						Content: fmt.Sprintf(`CRITICAL: You have been looping for %d cycles across ALL provider tiers. Escalation exhausted.
+						Content: fmt.Sprintf(`CRITICAL: You have been looping for %d cycles across ALL provider tiers (redirect %d/3).
 
 STOP repeating the same tool calls. Instead:
 1. State what you have accomplished so far
 2. State what is blocking you
 3. Try a COMPLETELY different approach — different tools, different files, different strategy
-4. If truly stuck, respond with text explaining the situation — do NOT make more tool calls`, a.loopWarningCount),
+4. If truly stuck, respond with text explaining the situation — do NOT make more tool calls
+
+WARNING: %d redirect(s) remaining before forced exit.`, a.loopWarningCount, a.exhaustionRedirects, 3-a.exhaustionRedirects),
 					})
 				}
 			} else {
@@ -917,9 +941,11 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		if a.renderer != nil {
 			a.renderer.ToolCall(name, args)
 		}
+		argsSummary := formatToolCallSummary(name, args)
+		log.Printf("[Agent] tool: %s %s", name, argsSummary)
 		a.emit(EventToolStart, "", map[string]any{
 			"tool_name":    name,
-			"args_summary": formatToolCallSummary(name, args),
+			"args_summary": argsSummary,
 		})
 
 		// File read dedup: return short notice if the EXACT same read was done before.
@@ -1018,7 +1044,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		if execErr != nil {
 			exitCode = -1
 		}
-		argsSummary := FormatArgsSummary(name, args)
+		storeSummary := FormatArgsSummary(name, args)
 
 		// Store ALL tool outputs in DB regardless of size (if configured).
 		// This ensures nothing is lost — even small outputs are persisted for recall.
@@ -1026,7 +1052,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		if a.config.ToolStore != nil {
 			summary := SummarizeToolOutput(name, args, resultContent, exitCode)
 			outputID, storeErr := a.config.ToolStore.Store(
-				a.sessionID, name, argsSummary, summary, resultContent,
+				a.sessionID, name, storeSummary, summary, resultContent,
 				exitCode, len(resultContent))
 			if storeErr != nil {
 				log.Printf("[Agent] warning: failed to store tool output: %v", storeErr)
@@ -1158,6 +1184,21 @@ func (a *Agent) buildMessages() []providers.Message {
 		// Non-interactive mode: suppress follow-up questions (#315)
 		if a.config.NonInteractive {
 			sysPrompt += "\n\nNON-INTERACTIVE MODE: Complete the full task. Do not ask follow-up questions — there is no user to answer them. If requirements are ambiguous, make reasonable assumptions and document them."
+		}
+
+		// Enforce system prompt size caps by provider tier
+		promptLen := len(sysPrompt)
+		maxPrompt := 128000 // default cap
+		switch {
+		case a.providerIdx == 0:
+			maxPrompt = 8000 // ~2K tokens for small models
+		case a.providerIdx <= 2:
+			maxPrompt = 32000 // ~8K tokens for mid models
+		}
+		if promptLen > maxPrompt {
+			log.Printf("[Agent] warning: system prompt %d bytes exceeds cap %d for tier %d — truncating",
+				promptLen, maxPrompt, a.providerIdx)
+			sysPrompt = sysPrompt[:maxPrompt]
 		}
 
 		a.cachedSystemPrompt = sysPrompt
