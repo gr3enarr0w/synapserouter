@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/brand"
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/app"
@@ -66,12 +67,11 @@ func init() {
 
 func printLogo() {
 	if os.Getenv("NO_COLOR") != "" {
-		fmt.Println("\n  SynRoute")
+		fmt.Println("\n  SynRoute - LLM Router & Code Agent")
 		fmt.Println()
 		return
 	}
-	fmt.Println("\n\033[1;36m  Syn\033[1;35mRoute\033[0m")
-	fmt.Println()
+	brand.PrintLogo()
 }
 
 func main() {

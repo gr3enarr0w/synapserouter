@@ -183,69 +183,52 @@ func (cr *CodeRenderer) Init() {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 
-	// Brand logo — circuit-brain + SynRoute side by side (cyan→magenta gradient)
-	//
-	// 14-line circuit-brain art with gradient from cyan (0,220,255) to magenta (200,50,200).
-	// Right side text vertically centered at lines 6-7.
-	type artLine struct {
-		art   string
-		right string // non-empty only for vertically-centered text lines
-	}
-
-	brainArt := []artLine{
-		{"        ╭───────╮                ", ""},                          // 1
-		{"    ╭───╯ ●──── ╰───╮           ", ""},                          // 2
-		{"   ╭╯ ╶──┤  ◎   ├── ╰╮          ", ""},                         // 3
-		{"  ╭╯ ●╶──╯╶──╮╶─╰──● ╰╮        ", ""},                         // 4
-		{"  │ ╶──●  ╭──╯──╮  ◎╶─ │        ", ""},                         // 5
-		{"  │ ◉╶─┤  │ ◉◉  │  ├─╶○│        ", "SynRoute"},                 // 6
-		{"  │ ╶──┤  ╰──╮──╯  ├──╶│        ", "neural routing engine"},     // 7
-		{"  │ ○╶─╯╶──╮ ╰─╶╭──╯╶◎ │        ", ""},                         // 8
-		{"  ╰╮ ╶──●╶─╯╶──╮╰──● ╭╯        ", ""},                         // 9
-		{"   ╰╮ ──┤  ◎   ├── ╭╯          ", ""},                          // 10
-		{"    ╰───╮ ○──── ╭───╯           ", ""},                          // 11
-		{"        ╰───────╯               ", ""},                          // 12
-	}
-
-	// Gradient colors: cyan (0,220,255) → magenta (200,50,200) over 12 lines
-	type rgb struct{ r, g, b int }
-	gradientColors := []rgb{
-		{0, 220, 255},   // 1  pure cyan
-		{18, 205, 250},  // 2
-		{36, 190, 245},  // 3
-		{55, 175, 240},  // 4
-		{73, 160, 235},  // 5
-		{91, 145, 230},  // 6
-		{109, 130, 225}, // 7
-		{127, 115, 220}, // 8
-		{145, 100, 215}, // 9
-		{163, 85, 210},  // 10
-		{182, 68, 205},  // 11
-		{200, 50, 200},  // 12 pure magenta
+	// Professional banner — clean block-letter wordmark with cyan→magenta gradient
+	// 6 lines tall, under 72 chars wide. Typographic, enterprise-grade.
+	bannerLines := []string{
+		`  ███████╗██╗   ██╗███╗   ██╗`,
+		`  ██╔════╝╚██╗ ██╔╝████╗  ██║`,
+		`  ███████╗ ╚████╔╝ ██╔██╗ ██║  ╭─────────────────────────╮`,
+		`  ╚════██║  ╚██╔╝  ██║╚██╗██║  │  R  O  U  T  E         │`,
+		`  ███████║   ██║   ██║ ╚████║  ╰─────────────────────────╯`,
+		`  ╚══════╝   ╚═╝   ╚═╝  ╚═══╝    neural routing engine`,
 	}
 
 	fmt.Fprintln(cr.out, "")
 	if cr.noColor {
-		for _, l := range brainArt {
-			line := "  " + l.art
-			if l.right != "" {
-				line += l.right
-			}
+		for _, line := range bannerLines {
 			fmt.Fprintln(cr.out, line)
 		}
 	} else {
-		for i, l := range brainArt {
-			c := gradientColors[i]
-			colorCode := fmt.Sprintf("\033[38;2;%d;%d;%dm", c.r, c.g, c.b)
-			line := "  " + colorCode + l.art + "\033[0m"
-			if l.right == "SynRoute" {
-				// Bold gradient: "Syn" in cyan, "Route" in magenta
-				line += "\033[1;38;2;0;220;255mSyn\033[1;38;2;200;50;200mRoute\033[0m"
-			} else if l.right != "" {
-				// Dim tagline
-				line += "\033[2m" + l.right + "\033[0m"
+		type rgb struct{ r, g, b int }
+		cyan := rgb{0, 220, 255}
+		magenta := rgb{200, 50, 200}
+
+		// Apply per-character gradient across each banner line
+		gradientLine := func(s string) string {
+			runes := []rune(s)
+			n := len(runes)
+			if n <= 1 {
+				return s
 			}
-			fmt.Fprintln(cr.out, line)
+			var out strings.Builder
+			for j, ch := range runes {
+				if ch == ' ' {
+					out.WriteRune(ch)
+					continue
+				}
+				t := float64(j) / float64(n-1)
+				r := int(float64(cyan.r)*(1-t) + float64(magenta.r)*t)
+				g := int(float64(cyan.g)*(1-t) + float64(magenta.g)*t)
+				b := int(float64(cyan.b)*(1-t) + float64(magenta.b)*t)
+				fmt.Fprintf(&out, "\033[38;2;%d;%d;%dm%c", r, g, b, ch)
+			}
+			out.WriteString("\033[0m")
+			return out.String()
+		}
+
+		for _, line := range bannerLines {
+			fmt.Fprintln(cr.out, gradientLine(line))
 		}
 	}
 

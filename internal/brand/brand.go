@@ -17,13 +17,11 @@ var Logo string
 // Falls back to plain text when NO_COLOR is set.
 func PrintLogo() {
 	if os.Getenv("NO_COLOR") != "" {
-		fmt.Println("\n  SynRoute")
+		fmt.Println("\n  SynRoute - LLM Router & Code Agent")
 		fmt.Println()
 		return
 	}
 	fmt.Print(Logo)
-	fmt.Println("\033[1;36m  Syn\033[1;35mRoute\033[0m")
-	fmt.Println()
 }
 
 // FprintLogo prints the logo to the given writer.
