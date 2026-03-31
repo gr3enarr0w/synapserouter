@@ -8,9 +8,11 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -23,18 +25,116 @@ import (
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/worktree"
 )
 
-// Build-time variables set via ldflags
+// Build-time variables set via ldflags.
+// When ldflags are not provided (plain "go build"), resolveVersionInfo()
+// populates these from runtime/debug.BuildInfo (VCS data embedded by Go 1.18+).
 var (
 	version   = "dev"
 	commit    = "unknown"
 	buildDate = "unknown"
 )
 
+func init() {
+	resolveVersionInfo()
+}
+
+// resolveVersionInfo fills version/commit/buildDate from Go's embedded VCS
+// build info when ldflags were not injected at build time.
+func resolveVersionInfo() {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+
+	// If ldflags set a real version, don't override.
+	if version == "dev" {
+		// Prefer git describe (gives clean tag-based version like v1.0.1).
+		if desc, err := gitDescribe(); err == nil && desc != "" {
+			version = desc
+		} else if v := info.Main.Version; v != "" && v != "(devel)" {
+			// Fall back to module version (set by go install module@version).
+			version = v
+		} else {
+			version = versionFromVCS(info)
+		}
+	}
+
+	if commit == "unknown" {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" {
+				commit = s.Value
+				if len(commit) > 12 {
+					commit = commit[:12]
+				}
+				break
+			}
+		}
+	}
+
+	if buildDate == "unknown" {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.time" {
+				buildDate = s.Value
+				break
+			}
+		}
+	}
+}
+
+// versionFromVCS tries `git describe --tags` first (gives semver-like output),
+// then falls back to the short VCS revision from build info.
+func versionFromVCS(info *debug.BuildInfo) string {
+	// Try git describe for a nice tag-based version (e.g. v1.0.1 or v1.0.1-3-gabcdef).
+	if desc, err := gitDescribe(); err == nil && desc != "" {
+		return desc
+	}
+	// Fall back to short commit hash.
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" {
+			rev := s.Value
+			if len(rev) > 12 {
+				rev = rev[:12]
+			}
+			dirty := false
+			for _, s2 := range info.Settings {
+				if s2.Key == "vcs.modified" && s2.Value == "true" {
+					dirty = true
+					break
+				}
+			}
+			if dirty {
+				return "dev-" + rev + "-dirty"
+			}
+			return "dev-" + rev
+		}
+	}
+	return "dev"
+}
+
+// gitDescribe shells out to git describe to get the most recent tag.
+func gitDescribe() (string, error) {
+	out, err := execGitDescribe()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 func cmdVersion() {
 	printLogo()
 	profile := app.GetActiveProfile()
 	fmt.Printf("synroute %s (%s) built %s | profile: %s | %s\n",
 		version, commit, buildDate, profile, runtime.Version())
+}
+
+// execGitDescribe runs "git describe --tags --always --dirty" and returns the output.
+func execGitDescribe() (string, error) {
+	cmd := exec.Command("git", "describe", "--tags", "--always", "--dirty")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 func printUsage() {

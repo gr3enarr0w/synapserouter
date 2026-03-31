@@ -1,4 +1,4 @@
-.PHONY: build test clean run start dev help install uninstall deps
+.PHONY: build release version test clean run start dev help install uninstall deps
 
 # Default target
 .DEFAULT_GOAL := help
@@ -18,6 +18,18 @@ build:
 	@echo "🔨 Building $(BINARY_NAME)..."
 	@go build $(LDFLAGS) -o $(BINARY_NAME) .
 	@echo "✓ Build complete: ./$(BINARY_NAME)"
+
+## release: Build a release binary with full version info and optimizations
+release:
+	@echo "🚀 Building release $(BINARY_NAME) $(VERSION)..."
+	@go build $(LDFLAGS) -trimpath -o $(BINARY_NAME) .
+	@echo "✓ Release build complete: ./$(BINARY_NAME) $(VERSION)"
+
+## version: Show the version that would be embedded
+version:
+	@echo "Version:    $(VERSION)"
+	@echo "Commit:     $(COMMIT)"
+	@echo "Build Date: $(BUILD_DATE)"
 
 ## build-cli: Build the CLI binary
 build-cli:

@@ -183,11 +183,19 @@ func (cr *CodeRenderer) Init() {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 
-	// Brand name — logo image planned for v1.01
+	// Brand logo — brain icon + SynRoute side by side (cyan→magenta gradient)
 	if cr.noColor {
-		fmt.Fprintln(cr.out, "\n  SynRoute")
+		fmt.Fprintln(cr.out, "")
+		fmt.Fprintln(cr.out, "    ╭──╮  ╭╮")
+		fmt.Fprintln(cr.out, "   ╭╯╶─╰──╯╰╮    SynRoute")
+		fmt.Fprintln(cr.out, "   ╰╮╶──╶─╶╭─╯")
+		fmt.Fprintln(cr.out, "    ╰──────╯")
 	} else {
-		fmt.Fprintln(cr.out, "\n\033[1;36m  Syn\033[1;35mRoute\033[0m")
+		fmt.Fprintln(cr.out, "")
+		fmt.Fprintln(cr.out, "  \033[38;2;80;200;220m  ╭──╮\033[38;2;120;130;200m  ╭╮\033[0m")
+		fmt.Fprintln(cr.out, "  \033[38;2;60;180;200m ╭╯╶─╰──╯╰╮\033[0m    \033[1;38;2;80;200;220mSyn\033[1;38;2;180;100;200mRoute\033[0m")
+		fmt.Fprintln(cr.out, "  \033[38;2;60;160;180m ╰╮╶──╶─╶\033[38;2;160;100;180m╭─╯\033[0m")
+		fmt.Fprintln(cr.out, "  \033[38;2;80;180;200m  ╰──────╯\033[0m")
 	}
 
 	// Version + mode
