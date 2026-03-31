@@ -183,41 +183,77 @@ func (cr *CodeRenderer) Init() {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 
-	// Enterprise wordmark — clean single-line logo with subtle cyan→blue gradient.
-	// Aesthetic: terraform / kubectl / docker — no heavy block art, no boxes.
-	// "synroute" rendered letter-by-letter with per-character 24-bit color fade.
-	wordmark := "synroute"
-	subtitle := "neural routing engine"
-
-	fmt.Fprintln(cr.out)
-
-	if cr.noColor {
-		fmt.Fprintln(cr.out, "  "+wordmark)
-		fmt.Fprintln(cr.out, cr.color("\033[2m", "  "+subtitle))
-	} else {
-		// Gradient: electric-cyan (#00CFFF) → steel-blue (#4B8EF1)
-		// Calm, professional, readable on both dark and light terminals.
-		type rgb struct{ r, g, b int }
-		from := rgb{0, 207, 255}
-		to := rgb{75, 142, 241}
-
-		runes := []rune(wordmark)
-		n := len(runes)
-		var word strings.Builder
-		for j, ch := range runes {
-			t := float64(j) / float64(n-1)
-			r := int(float64(from.r)*(1-t) + float64(to.r)*t)
-			g := int(float64(from.g)*(1-t) + float64(to.g)*t)
-			b := int(float64(from.b)*(1-t) + float64(to.b)*t)
-			fmt.Fprintf(&word, "\033[1;38;2;%d;%d;%dm%c", r, g, b, ch)
-		}
-		word.WriteString("\033[0m")
-
-		fmt.Fprintf(cr.out, "  %s\n", word.String())
-		fmt.Fprintln(cr.out, "\033[2m  "+subtitle+"\033[0m")
+	// Brand logo — circuit-brain + SynRoute side by side (cyan→magenta gradient)
+	//
+	// 18-line detailed circuit-brain art with gradient from cyan (0,220,255) to magenta (200,50,200).
+	// Right side block-letter "SynRoute" text vertically centered.
+	type artLine struct {
+		art   string // left: brain art (~50 chars)
+		right string // right: SynRoute block text (~65 chars)
 	}
 
-	// Version + mode
+	brainArt := []artLine{
+		{`          .wdbbkb.            `, ``},
+		{`       .bdbbbbbdb.            `, ``},
+		{`     wkkd    dbbq0w           `, ``},
+		{`   J   pbk   Oppkb  wmOm     `, ``},
+		{`  ZJ  :zUCQ0J0O0OOZYO  JCU   `, `  ____                  ____              _        `},
+		{` bJ  bkwJ00QQCQCQOO0O  JCXUL  `, ` / ___|  _   _  _ __   |  _ \  ___  _   _| |_  ___ `},
+		{` kJ bdkbbpZQQQLLQQ0OZ  ZOYUL  `, ` \___ \ | | | || '_ \  | |_) |/ _ \| | | | __|/ _ \`},
+		{` bk bpqwZOOO0000OOZmw  ZmZUL  `, `  ___) || |_| || | | | |  _ <| (_) | |_| | |_|  __/`},
+		{` dk dkbpwmZZZOOZZmwq  pwmOUY  `, ` |____/  \__, ||_| |_| |_| \_\\___/ \__,_|\__|\___|`},
+		{`  b  dbkbpwwmmmwwpbk  dpwmOC   `, `          |___/                                    `},
+		{`  Jb  dbbkbppppbkkd  dbpwZOQ   `, ``},
+		{`   kb  ddbbbbbbbdd  dbbpwmO0   `, ``},
+		{`    kb   dddddddd  dbkpwmZOQ   `, ``},
+		{`     kkb         dkbpwmZO0QC   `, ``},
+		{`      dkkbbbbbbkkbpwmZOO0QCL   `, ``},
+		{`        dbbkkkkbbpwmZO00QCLJ   `, ``},
+		{`           dpppbwmZO00QCLJU    `, ``},
+		{`              wmZO0QCLJUX      `, ``},
+	}
+
+	type rgb struct{ r, g, b int }
+	gradientColors := []rgb{
+		{0, 220, 255},   // line 0  - cyan
+		{12, 210, 252},  // line 1
+		{24, 200, 248},  // line 2
+		{35, 190, 245},  // line 3
+		{47, 180, 241},  // line 4
+		{59, 170, 238},  // line 5
+		{71, 160, 234},  // line 6
+		{82, 150, 231},  // line 7
+		{94, 140, 227},  // line 8
+		{106, 130, 224}, // line 9
+		{118, 120, 220}, // line 10
+		{129, 110, 217}, // line 11
+		{141, 100, 213}, // line 12
+		{153, 90, 210},  // line 13
+		{165, 80, 206},  // line 14
+		{176, 70, 203},  // line 15
+		{188, 60, 203},  // line 16
+		{200, 50, 200},  // line 17 - magenta
+	}
+
+	fmt.Fprintln(cr.out, "")
+	if cr.noColor {
+		for _, l := range brainArt {
+			line := "  " + l.art
+			if l.right != "" {
+				line += "  " + l.right
+			}
+			fmt.Fprintln(cr.out, line)
+		}
+	} else {
+		for i, l := range brainArt {
+			c := gradientColors[i]
+			combined := l.art
+			if l.right != "" {
+				combined += "  " + l.right
+			}
+			fmt.Fprintf(cr.out, "  \033[38;2;%d;%d;%dm%s\033[0m\n", c.r, c.g, c.b, combined)
+		}
+	}
 	ver := cr.version
 	if ver == "" {
 		ver = "dev"
