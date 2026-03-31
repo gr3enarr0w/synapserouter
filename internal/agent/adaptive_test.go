@@ -78,9 +78,9 @@ func TestAssessComplexity(t *testing.T) {
 			want:    ComplexityTrivial,
 		},
 		{
-			name:    "short ambiguous defaults to simple",
+			name:    "very short ambiguous defaults to trivial",
 			message: "do it",
-			want:    ComplexitySimple,
+			want:    ComplexityTrivial,
 		},
 	}
 

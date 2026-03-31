@@ -350,7 +350,10 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 			strings.Contains(strings.ToLower(a.config.WorkDir), "synroute")
 		complexity := AssessComplexity(userMessage, a.config.SpecFilePath != "")
 
-		shouldPlan := isSelfModify || complexity == ComplexityMedium || complexity == ComplexityFull
+		// Self-modify forces planning ONLY for non-trivial tasks. "hello" in the
+		// synroute dir shouldn't trigger plan-first — it's a greeting, not a code change.
+		shouldPlan := (isSelfModify && complexity != ComplexityTrivial) ||
+			complexity == ComplexityMedium || complexity == ComplexityFull
 		if shouldPlan {
 			reason := complexity.String()
 			if isSelfModify {
