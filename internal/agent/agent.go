@@ -356,10 +356,28 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 			if isSelfModify {
 				reason = "self-modification"
 			}
-			log.Printf("[Agent] plan-first: %s — injecting planning instruction", reason)
+			// Detect if the task involves terminal/UI/CLI changes
+			lowerMsg := strings.ToLower(userMessage)
+			isTerminalChange := strings.Contains(lowerMsg, "banner") || strings.Contains(lowerMsg, "logo") ||
+				strings.Contains(lowerMsg, "terminal") || strings.Contains(lowerMsg, "tui") ||
+				strings.Contains(lowerMsg, "renderer") || strings.Contains(lowerMsg, "prompt") ||
+				strings.Contains(lowerMsg, "cli") || strings.Contains(lowerMsg, "color") ||
+				strings.Contains(lowerMsg, "display") || strings.Contains(lowerMsg, "keyboard")
+
+			vhsInstruction := ""
+			if isTerminalChange {
+				vhsInstruction = "\n\nVERIFICATION REQUIRED: After implementing, you MUST verify with VHS:\n" +
+					"1. Write a .tape file in tests/ui/tapes/ that tests the change\n" +
+					"2. Run: bash(vhs tests/ui/tapes/<name>.tape)\n" +
+					"3. Read the screenshot with file_read to verify it looks correct\n" +
+					"4. Test both profiles (personal and ACTIVE_PROFILE=work) and NO_COLOR=1\n" +
+					"Do NOT declare done without VHS screenshot verification."
+			}
+
+			log.Printf("[Agent] plan-first: %s — injecting planning instruction (vhs=%v)", reason, isTerminalChange)
 			a.conversation.Add(providers.Message{
 				Role: "user",
-				Content: "IMPORTANT: Before writing any code, use the plan tool to create a brief plan with acceptance criteria. Then implement the plan step by step. Do NOT skip planning.",
+				Content: "IMPORTANT: Before writing any code, use the plan tool to create a brief plan with acceptance criteria. Then implement the plan step by step. Do NOT skip planning." + vhsInstruction,
 			})
 		}
 	}
