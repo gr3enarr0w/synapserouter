@@ -553,10 +553,13 @@ func LoadDotEnv() error {
 	// When synroute is installed to ~/.local/bin/ but run from a project directory
 	// that has its own .env (with API keys, chain config, etc.), load it.
 	// godotenv.Load does NOT override existing vars, so binary-dir .env wins.
+	// Security note: matches Docker/Node/Rails behavior. Attacker would need user
+	// to clone malicious repo + run synroute + not have their own .env already.
 	if cwd, err := os.Getwd(); err == nil {
 		cwdEnv := filepath.Join(cwd, ".env")
 		if _, err := os.Stat(cwdEnv); err == nil {
 			if err := godotenv.Load(cwdEnv); err == nil {
+				log.Printf("Loaded .env from working directory: %s", cwdEnv)
 				loaded = true
 			}
 		}

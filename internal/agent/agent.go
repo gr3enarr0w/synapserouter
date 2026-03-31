@@ -570,6 +570,7 @@ func (a *Agent) RunPhase(ctx context.Context, phaseName string, userMessage stri
 }
 
 func (a *Agent) loop(ctx context.Context) (string, error) {
+	taskMaxTurns := 0 // computed on first check, cached for the session
 	for turn := 0; a.config.MaxTurns <= 0 || turn < a.config.MaxTurns; turn++ {
 		// Budget check
 		if a.budget != nil {
@@ -805,17 +806,20 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		// Global turn cap for non-pipeline mode (#339).
 		// In pipeline mode, phases handle turn limits. In direct mode,
 		// MaxTurns defaults to 0 (unlimited) — scale cap by task complexity.
+		// Complexity assessed once (first turn) and cached via taskMaxTurns.
 		if !a.config.AutoOrchestrate && a.config.MaxTurns <= 0 {
-			complexity := AssessComplexity(a.originalRequest, a.config.SpecFilePath != "")
-			maxTurns := 30 // default for simple tasks
-			switch complexity {
-			case ComplexityMedium:
-				maxTurns = 50
-			case ComplexityFull:
-				maxTurns = 80
+			if taskMaxTurns == 0 {
+				complexity := AssessComplexity(a.originalRequest, a.config.SpecFilePath != "")
+				taskMaxTurns = 30
+				switch complexity {
+				case ComplexityMedium:
+					taskMaxTurns = 50
+				case ComplexityFull:
+					taskMaxTurns = 80
+				}
 			}
-			if turn > maxTurns {
-				log.Printf("[Agent] direct mode exceeded %d turns (complexity=%s) — exiting", maxTurns, complexity)
+			if turn > taskMaxTurns {
+				log.Printf("[Agent] direct mode exceeded %d turns — exiting", taskMaxTurns)
 				return msg.Content, nil
 			}
 		}
