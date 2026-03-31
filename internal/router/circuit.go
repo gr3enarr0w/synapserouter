@@ -55,6 +55,10 @@ func (cb *CircuitBreaker) GetState() (CircuitState, error) {
 		WHERE provider = ?
 	`, cb.provider).Scan(&state, &openUntil)
 
+	if err == sql.ErrNoRows {
+		// No state row yet — provider hasn't been used. Treat as healthy.
+		return StateClosed, nil
+	}
 	if err != nil {
 		return StateClosed, err
 	}

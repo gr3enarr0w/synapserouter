@@ -84,6 +84,7 @@ type Agent struct {
 	noToolTurns        int // consecutive turns without tool calls (stall detection)
 	textContinuations  int  // how many times we've continued past text-only turns (cap at 2)
 	testsPassedClean   bool // true after a test command exits 0 — suppresses continuations (#340)
+	lastResponseStreamed bool // true if the most recent LLM response was delivered via streaming tokens
 	reviewTracker      *ReviewCycleTracker // detects stable review cycles (no progress)
 	phaseRetries       int // consecutive quality gate rejections in current phase
 	phaseTurns         int // turns spent in current phase (hard cap at maxPhaseTurns)
@@ -741,6 +742,12 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			if shouldContinue {
 				a.textContinuations++
 				log.Printf("[Agent] text-only turn — continuing (%d/2 chances, tools=%d)", a.textContinuations, a.toolCallCount)
+				// Add a user message to ensure conversation ends with user role.
+				// Required for Claude (Vertex) which rejects assistant-message prefill.
+				a.conversation.Add(providers.Message{
+					Role:    "user",
+					Content: "Continue. Use your tools to complete the task — do not just describe what you would do.",
+				})
 				continue
 			}
 			return msg.Content, nil
@@ -793,15 +800,34 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 					break // exit loop in direct mode
 				}
 			} else if a.loopWarningCount >= 3 || repeats >= 4 {
-				log.Printf("[Agent] action loop: %d warnings, %d repeats — escalating",
-					a.loopWarningCount, repeats)
-				a.escalateProvider()
-				a.toolFingerprints = nil
-				a.conversation.Add(loopDetectedMessage(repeats))
+				escalated := a.escalateProvider()
+				if escalated {
+					log.Printf("[Agent] action loop: %d warnings, %d repeats — escalating",
+						a.loopWarningCount, repeats)
+					a.toolFingerprints = nil
+					a.conversation.Add(loopDetectedMessage(repeats))
+				} else {
+					log.Printf("[Agent] action loop: %d warnings, %d repeats — chain exhausted, injecting redirect",
+						a.loopWarningCount, repeats)
+					a.toolFingerprints = nil
+					a.conversation.Add(providers.Message{
+						Role: "user",
+						Content: fmt.Sprintf(`CRITICAL: You have been looping for %d cycles across ALL provider tiers. Escalation exhausted.
+
+STOP repeating the same tool calls. Instead:
+1. State what you have accomplished so far
+2. State what is blocking you
+3. Try a COMPLETELY different approach — different tools, different files, different strategy
+4. If truly stuck, respond with text explaining the situation — do NOT make more tool calls`, a.loopWarningCount),
+					})
+				}
 			} else {
 				a.conversation.Add(loopDetectedMessage(repeats))
 			}
-		} else {
+		} else if repeats <= 1 {
+			// Only reset loop warning counter when there are truly no repeats.
+			// repeats==2 means we're borderline — keep the counter so escalation
+			// history accumulates across provider levels.
 			a.loopWarningCount = 0
 		}
 
@@ -1027,6 +1053,10 @@ func (a *Agent) buildMessages() []providers.Message {
 		if skillCtx := a.matchedSkillContext(); skillCtx != "" {
 			sysPrompt += "\n\n" + skillCtx
 			sysPrompt += "\n\nNOTE: Skill patterns are reference examples. When they conflict with the original request, the request takes priority."
+			log.Printf("[Agent] skill injection: %d bytes into system prompt", len(skillCtx))
+		} else {
+			log.Printf("[Agent] skill injection: none (skills=%d, originalRequest=%d chars)",
+				len(a.config.Skills), len(a.originalRequest))
 		}
 
 
@@ -3103,8 +3133,10 @@ func (a *Agent) callLLMWithStreaming(ctx context.Context, req providers.ChatRequ
 		}
 		if provider != "" {
 			onToken := func(token string) {
+				a.lastResponseStreamed = true
 				a.emit(EventTokenStream, provider, map[string]any{"token": token})
 			}
+			a.lastResponseStreamed = false // reset before each streaming attempt
 			resp, err := streamer.ChatCompletionStreamForProvider(ctx, req, a.sessionID, provider, onToken)
 			if err == nil {
 				return resp, nil

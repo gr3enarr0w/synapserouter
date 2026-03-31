@@ -242,9 +242,18 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 				continue
 			}
 			cr.renderer.Error(err.Error())
-		} else if response != "" {
+		}
+
+		log.Printf("[REPL] response: len=%d, streaming=%v, eventBus=%v",
+			len(response), cr.agent.config.Streaming, cr.agent.config.EventBus != nil)
+
+		if response != "" {
 			cr.renderer.mu.Lock()
-			if cr.agent.config.Streaming && cr.agent.config.EventBus != nil {
+			// Always display the response. If tokens were already streamed via
+			// EventTokenStream, the content is already on screen — just add spacing.
+			// If streaming didn't fire (non-streaming provider, cached response, or
+			// fast return), we need to print the full response here.
+			if cr.agent.config.Streaming && cr.agent.config.EventBus != nil && cr.agent.lastResponseStreamed {
 				cr.renderer.writeContent("")
 			} else {
 				cr.renderer.writeContent("")
@@ -252,6 +261,8 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 				cr.renderer.writeContent("")
 			}
 			cr.renderer.mu.Unlock()
+		} else if err == nil {
+			log.Printf("[REPL] warning: agent returned empty response with no error")
 		}
 
 		// Re-enter raw mode for next prompt
