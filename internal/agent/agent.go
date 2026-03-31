@@ -804,10 +804,20 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 
 		// Global turn cap for non-pipeline mode (#339).
 		// In pipeline mode, phases handle turn limits. In direct mode,
-		// MaxTurns defaults to 0 (unlimited) — cap at 30 to prevent runaway.
-		if !a.config.AutoOrchestrate && a.config.MaxTurns <= 0 && turn > 30 {
-			log.Printf("[Agent] direct mode exceeded 30 turns — exiting (#339)")
-			return msg.Content, nil
+		// MaxTurns defaults to 0 (unlimited) — scale cap by task complexity.
+		if !a.config.AutoOrchestrate && a.config.MaxTurns <= 0 {
+			complexity := AssessComplexity(a.originalRequest, a.config.SpecFilePath != "")
+			maxTurns := 30 // default for simple tasks
+			switch complexity {
+			case ComplexityMedium:
+				maxTurns = 50
+			case ComplexityFull:
+				maxTurns = 80
+			}
+			if turn > maxTurns {
+				log.Printf("[Agent] direct mode exceeded %d turns (complexity=%s) — exiting", maxTurns, complexity)
+				return msg.Content, nil
+			}
 		}
 
 		a.executeToolCalls(ctx, msg.ToolCalls)
@@ -2730,11 +2740,11 @@ func loopDetectedMessage(repeats int) providers.Message {
 		Role: "user",
 		Content: fmt.Sprintf(`LOOP DETECTED: You have called the same tool with the same arguments %d times.
 This is NOT making progress. You MUST try a DIFFERENT approach:
-- If a command keeps failing, investigate WHY (read the error output carefully)
-- If a dependency won't install, try a different version or skip it
-- If a file won't compile, read the specific error and fix it
-- Do NOT retry the same command — it will produce the same result
-Change your approach NOW.`, repeats),
+- If you keep READING the same file: you already have the content. STOP reading and START writing with file_edit or file_write.
+- If a command keeps failing: read the error output carefully, fix the cause, don't retry the same command.
+- If you are stuck: state what you know, what's blocking you, and try a completely different strategy.
+- Do NOT call the same tool again — it will produce the same result.
+TAKE ACTION NOW: write code, don't read more.`, repeats),
 	}
 }
 
