@@ -193,6 +193,7 @@ func cmdCode(args []string) {
 	codeRenderer := agent.NewCodeRenderer(os.Stdout, width, height, projectName, *model, detectedLang)
 	codeRenderer.SetVersion(version)
 	codeRenderer.SetVerbosity(*verbose)
+	codeRenderer.SetProviderLabel(ac.Profile)
 
 	// Subscribe renderer to event bus
 	events := bus.Subscribe()

@@ -1323,7 +1323,12 @@ WORKFLOW — start immediately with tool calls:
 3. bash: install dependencies, build, and run tests
 4. If tests fail: READ the error output, file_edit to fix the exact file:line, then re-run
 
-Do NOT output plans, descriptions, or JSON without tool calls. Every response must include at least one tool call.`, workDir, langDirective, toolBlock)
+CONVERSATIONAL MESSAGES:
+- For greetings, knowledge questions, or general conversation: respond with text only — no tool calls needed.
+- Only use tools when the user asks you to perform an action (create files, run commands, search code, etc.).
+- Do NOT write code files as demonstrations for knowledge questions — explain in text instead.
+
+Do NOT output plans, descriptions, or JSON without tool calls when the user asks for an action.`, workDir, langDirective, toolBlock)
 	}
 
 	// Level 1+ (larger models ~120B+): full prompt with methodology
@@ -1382,6 +1387,11 @@ VERIFY YOUR WORK:
 - After writing tests, ALWAYS run them. If any test fails, fix it before reporting success.
 - Never claim "tests pass" without actually running them and seeing the output.
 - If a test fails, read the error, fix the code or test, and re-run until all pass.
+
+CONVERSATIONAL MESSAGES:
+- For greetings, knowledge questions, or general conversation: respond with text only — no tool calls needed.
+- Only use tools when the user asks you to perform an action (create files, run commands, search code, etc.).
+- Do NOT write code files as demonstrations for knowledge questions — explain in text instead.
 
 PRODUCTION QUALITY:
 - Would a senior engineer ship this? No stubs, no flat structures, no missing edge cases.

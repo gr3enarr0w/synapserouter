@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"bufio"
 	"io"
 	"log"
 	"os"
@@ -14,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	// readline removed — ioloop goroutine dies after agent output (v1.01: use Bubble Tea)
+	"golang.org/x/term"
 )
 
 // CodeREPL implements the code mode interactive loop with readline-based input
@@ -102,22 +101,29 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 
 	exitCh := make(chan struct{})
 
-	// Set up history file
+	// Set up history file (for future use)
 	home, _ := os.UserHomeDir()
 	historyDir := filepath.Join(home, ".synroute")
 	os.MkdirAll(historyDir, 0755)
-	historyFile := filepath.Join(historyDir, "history")
 
-	// Use bufio.Scanner instead of readline for input.
-	// readline's ioloop goroutine dies after agent output due to cursor
-	// position query responses (\033[6n → \033[row;colR) interfering with
-	// the internal read state. Known issue: Node.js #57602, Ruby reline #674.
-	// TODO(v1.01): restore tab completion + history via Bubble Tea textinput.
-	_ = historyFile
-	inputScanner := bufio.NewScanner(os.Stdin)
-	inputScanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	// Put terminal in raw mode for character-at-a-time input (keyboard shortcuts).
+	// Raw mode lets us intercept Ctrl-L, Ctrl-P, etc. before the terminal processes them.
+	stdinFd := int(os.Stdin.Fd())
+	isTerminal := term.IsTerminal(stdinFd)
 
-	// Start signal handler goroutine AFTER readline is created (needs rl reference)
+	var restoreTerminal func()
+	if isTerminal {
+		oldState, err := term.MakeRaw(stdinFd)
+		if err != nil {
+			log.Printf("[REPL] failed to enter raw mode: %v — falling back to cooked mode", err)
+			isTerminal = false
+		} else {
+			restoreTerminal = func() { term.Restore(stdinFd, oldState) }
+			defer restoreTerminal()
+		}
+	}
+
+	// Start signal handler goroutine for Ctrl-C
 	go func() {
 		for range sigCh {
 			reqMu.Lock()
@@ -137,7 +143,7 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 				cr.renderer.mu.Unlock()
 			} else {
 				now := time.Now()
-				if now.Sub(lastCtrlC) < 2*time.Second {
+				if now.Sub(lastCtrlC) <= 2*time.Second {
 					ctrlCCount++
 				} else {
 					ctrlCCount = 1
@@ -159,6 +165,8 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		}
 	}()
 
+	noColor := os.Getenv("NO_COLOR") != ""
+
 	for {
 		// Check if double Ctrl-C exit was triggered
 		select {
@@ -167,66 +175,50 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		default:
 		}
 
-		// Print prompt
-		noColor := os.Getenv("NO_COLOR") != ""
+		// Print prompt (in raw mode we must use \r\n for newlines)
 		if noColor {
 			fmt.Fprint(cr.out, "synroute> ")
 		} else {
 			fmt.Fprint(cr.out, "\033[32msynroute>\033[0m ")
 		}
 
-		if !inputScanner.Scan() {
-			scanErr := inputScanner.Err()
-			log.Printf("[REPL] Scanner.Scan() returned false: err=%v", scanErr)
-			fmt.Fprintln(cr.out, "bye")
+		// Read a line of input (character-at-a-time in raw mode)
+		input, eof := cr.readLine(stdinFd, isTerminal, exitCh, &reqMu, &agentRunning, cancelFn, &ctrlCCount, &lastCtrlC)
+		if eof {
+			cr.rawWrite("\r\nbye\r\n")
 			return nil
 		}
-		line := inputScanner.Text()
-		log.Printf("[REPL] got input: %q", line)
 
-		input := strings.TrimSpace(line)
+		log.Printf("[REPL] got input: %q", input)
+
 		if input == "" {
+			cr.rawWrite("\r\n")
 			continue
 		}
 
-		// Handle keyboard shortcuts (Ctrl-key combos sent as single chars)
-		if len(input) == 1 {
-			switch input[0] {
-			case 0x10: // ^P — pipeline status
-				cr.renderer.ShowPipeline()
-				continue
-			case 0x14: // ^T — recent tools
-				cr.renderer.ShowRecentTools()
-				continue
-			case 0x0C: // ^L — cycle verbosity
-				v := (cr.renderer.verbosity + 1) % 3
-				cr.renderer.SetVerbosity(v)
-				continue
-			case 0x05: // ^E — force escalation
-				if cr.agent.ForceEscalate() {
-					cr.renderer.mu.Lock()
-					cr.renderer.writeContent(cr.renderer.color("\033[33m", "  escalated to next tier"))
-					cr.renderer.mu.Unlock()
-				} else {
-					cr.renderer.mu.Lock()
-					cr.renderer.writeContent(cr.renderer.color("\033[2m", "  already at highest tier"))
-					cr.renderer.mu.Unlock()
-				}
-				continue
-			}
-		}
-		// ^/ — help (0x1F)
-		if len(input) == 1 && input[0] == 0x1F {
-			cr.renderer.ShowHelp()
-			continue
-		}
+		cr.rawWrite("\r\n")
 
 		// Handle REPL slash commands
 		if strings.HasPrefix(input, "/") {
+			// Temporarily restore terminal for agent output
+			if restoreTerminal != nil {
+				restoreTerminal()
+			}
 			if done := cr.handleCommand(input); done {
 				return nil
 			}
+			// Re-enter raw mode
+			if isTerminal {
+				if oldState, err := term.MakeRaw(stdinFd); err == nil {
+					restoreTerminal = func() { term.Restore(stdinFd, oldState) }
+				}
+			}
 			continue
+		}
+
+		// Temporarily restore terminal for agent execution (tools use cooked mode)
+		if restoreTerminal != nil {
+			restoreTerminal()
 		}
 
 		// Create fresh context for the request
@@ -240,26 +232,195 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		response, err := cr.agent.Run(reqCtx, input)
 		markDone()
 		if err != nil {
-			// Don't show context cancelled as an error — just return to prompt
 			if reqCtx.Err() != nil {
+				// Re-enter raw mode before next prompt
+				if isTerminal {
+					if oldState, err := term.MakeRaw(stdinFd); err == nil {
+						restoreTerminal = func() { term.Restore(stdinFd, oldState) }
+					}
+				}
 				continue
 			}
 			cr.renderer.Error(err.Error())
-			continue
-		}
-
-		if response != "" {
+		} else if response != "" {
 			cr.renderer.mu.Lock()
-			cr.renderer.writeContent("")
-			cr.renderer.writeContent(response)
-			cr.renderer.writeContent("")
+			if cr.agent.config.Streaming && cr.agent.config.EventBus != nil {
+				cr.renderer.writeContent("")
+			} else {
+				cr.renderer.writeContent("")
+				cr.renderer.writeContent(response)
+				cr.renderer.writeContent("")
+			}
 			cr.renderer.mu.Unlock()
 		}
 
-		// Note: do NOT flush stdin here — readline's ioloop goroutine reads
-		// from a bufio.Reader wrapping stdin. Flushing the underlying fd
-		// causes ioloop to get a read error, which closes the terminal,
-		// which makes all future Readline() calls return io.EOF.
+		// Re-enter raw mode for next prompt
+		if isTerminal {
+			if oldState, err := term.MakeRaw(stdinFd); err == nil {
+				restoreTerminal = func() { term.Restore(stdinFd, oldState) }
+			}
+		}
+	}
+}
+
+// rawWrite writes directly to the output, used during raw mode where \r\n is needed.
+func (cr *CodeREPL) rawWrite(s string) {
+	fmt.Fprint(cr.out, s)
+}
+
+// readLine reads a line of input character-by-character in raw terminal mode.
+// Handles keyboard shortcuts (Ctrl-L/P/T/E) inline, returns the completed line on Enter.
+// Returns (line, eof). If eof is true, the user pressed Ctrl-D or the terminal closed.
+func (cr *CodeREPL) readLine(fd int, isRaw bool, exitCh chan struct{}, reqMu *sync.Mutex, agentRunning *bool, cancelFn context.CancelFunc, ctrlCCount *int, lastCtrlC *time.Time) (string, bool) {
+	if !isRaw {
+		// Fallback: cooked mode (piped input) — read a line from stdin
+		buf := make([]byte, 64*1024)
+		n, err := os.Stdin.Read(buf)
+		if err != nil || n == 0 {
+			return "", true
+		}
+		line := strings.TrimRight(string(buf[:n]), "\r\n")
+		return strings.TrimSpace(line), false
+	}
+
+	// Raw mode: read byte by byte
+	var lineBuf []byte
+	buf := make([]byte, 1)
+
+	for {
+		// Check exit channel
+		select {
+		case <-exitCh:
+			return "", true
+		default:
+		}
+
+		n, err := os.Stdin.Read(buf)
+		if err != nil || n == 0 {
+			return "", true
+		}
+
+		b := buf[0]
+
+		switch {
+		case b == 0x0D || b == 0x0A: // Enter (CR or LF)
+			return strings.TrimSpace(string(lineBuf)), false
+
+		case b == 0x04: // Ctrl-D (EOF)
+			if len(lineBuf) == 0 {
+				return "", true
+			}
+			// If there's text, ignore Ctrl-D (like bash)
+
+		case b == 0x03: // Ctrl-C
+			// Clear current line, show prompt again
+			// Erase the current line display
+			cr.rawWrite("\r\033[K") // move to start, clear line
+			return "", false
+
+		case b == 0x7F || b == 0x08: // Backspace (DEL or BS)
+			if len(lineBuf) > 0 {
+				lineBuf = lineBuf[:len(lineBuf)-1]
+				cr.rawWrite("\b \b") // erase last char visually
+			}
+
+		case b == 0x0C: // Ctrl-L — cycle verbosity
+			v := (cr.renderer.verbosity + 1) % 3
+			cr.renderer.SetVerbosity(v)
+			labels := []string{"compact", "normal", "verbose"}
+			cr.rawWrite("\r\n")
+			cr.renderer.mu.Lock()
+			cr.renderer.writeContent(cr.renderer.color("\033[33m", "  verbosity: "+labels[v]))
+			cr.renderer.mu.Unlock()
+			// Reprint prompt with current input
+			cr.rawWrite("\r\n")
+			noColor := os.Getenv("NO_COLOR") != ""
+			if noColor {
+				cr.rawWrite("synroute> ")
+			} else {
+				cr.rawWrite("\033[32msynroute>\033[0m ")
+			}
+			cr.rawWrite(string(lineBuf))
+
+		case b == 0x10: // Ctrl-P — pipeline status
+			cr.rawWrite("\r\n")
+			cr.renderer.ShowPipeline()
+			cr.rawWrite("\r\n")
+			noColor := os.Getenv("NO_COLOR") != ""
+			if noColor {
+				cr.rawWrite("synroute> ")
+			} else {
+				cr.rawWrite("\033[32msynroute>\033[0m ")
+			}
+			cr.rawWrite(string(lineBuf))
+
+		case b == 0x14: // Ctrl-T — recent tools
+			cr.rawWrite("\r\n")
+			cr.renderer.ShowRecentTools()
+			cr.rawWrite("\r\n")
+			noColor := os.Getenv("NO_COLOR") != ""
+			if noColor {
+				cr.rawWrite("synroute> ")
+			} else {
+				cr.rawWrite("\033[32msynroute>\033[0m ")
+			}
+			cr.rawWrite(string(lineBuf))
+
+		case b == 0x05: // Ctrl-E — force escalation
+			cr.rawWrite("\r\n")
+			if cr.agent.ForceEscalate() {
+				cr.renderer.mu.Lock()
+				cr.renderer.writeContent(cr.renderer.color("\033[33m", "  escalated to next tier"))
+				cr.renderer.mu.Unlock()
+			} else {
+				cr.renderer.mu.Lock()
+				cr.renderer.writeContent(cr.renderer.color("\033[2m", "  already at highest tier"))
+				cr.renderer.mu.Unlock()
+			}
+			cr.rawWrite("\r\n")
+			noColor := os.Getenv("NO_COLOR") != ""
+			if noColor {
+				cr.rawWrite("synroute> ")
+			} else {
+				cr.rawWrite("\033[32msynroute>\033[0m ")
+			}
+			cr.rawWrite(string(lineBuf))
+
+		case b == 0x1F: // Ctrl-/ — help
+			cr.rawWrite("\r\n")
+			cr.renderer.ShowHelp()
+			cr.rawWrite("\r\n")
+			noColor := os.Getenv("NO_COLOR") != ""
+			if noColor {
+				cr.rawWrite("synroute> ")
+			} else {
+				cr.rawWrite("\033[32msynroute>\033[0m ")
+			}
+			cr.rawWrite(string(lineBuf))
+
+		case b == 0x15: // Ctrl-U — clear line
+			// Erase the visible line
+			cr.rawWrite("\r\033[K")
+			noColor := os.Getenv("NO_COLOR") != ""
+			if noColor {
+				cr.rawWrite("synroute> ")
+			} else {
+				cr.rawWrite("\033[32msynroute>\033[0m ")
+			}
+			lineBuf = lineBuf[:0]
+
+		case b == 0x1B: // ESC — start of escape sequence, consume and ignore
+			// Read the rest of the escape sequence (e.g. arrow keys: ESC [ A)
+			seq := make([]byte, 2)
+			os.Stdin.Read(seq) // ignore arrow keys for now
+
+		case b >= 0x20 && b < 0x7F: // Printable ASCII
+			lineBuf = append(lineBuf, b)
+			cr.rawWrite(string([]byte{b})) // echo the char
+
+		default:
+			// Ignore other control characters
+		}
 	}
 }
 

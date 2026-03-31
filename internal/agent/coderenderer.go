@@ -46,6 +46,9 @@ type CodeRenderer struct {
 	// Version for display
 	version string
 
+	// Profile for banner display
+	providerLabel string
+
 	// Styling
 	noColor bool
 }
@@ -63,6 +66,13 @@ func NewCodeRenderer(out io.Writer, width, height int, project, model, language 
 		maxTools:  50,
 		noColor:   os.Getenv("NO_COLOR") != "",
 	}
+}
+
+// SetProviderLabel sets the provider label shown in the banner (e.g. "Ollama Cloud", "Vertex AI").
+func (cr *CodeRenderer) SetProviderLabel(label string) {
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+	cr.providerLabel = label
 }
 
 // SetVersion sets the version string for the launch banner.
@@ -185,7 +195,11 @@ func (cr *CodeRenderer) Init() {
 	if ver == "" {
 		ver = "dev"
 	}
-	fmt.Fprintln(cr.out, cr.color("\033[2m", "  "+ver+" · code mode · Ollama Cloud"))
+	profileName := cr.providerLabel
+	if profileName == "" {
+		profileName = "personal"
+	}
+	fmt.Fprintln(cr.out, cr.color("\033[2m", "  "+ver+" · code mode · "+profileName))
 
 	// Project info
 	if cr.project != "" {
