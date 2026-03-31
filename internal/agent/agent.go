@@ -915,17 +915,20 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			"args_summary": formatToolCallSummary(name, args),
 		})
 
-		// File read dedup: return cached content if the file hasn't been modified
+		// File read dedup: return short notice if the file hasn't been modified.
+		// Previously returned full cached content, which caused conversation bloat
+		// when models re-read the same file repeatedly (loop detection #349).
+		// Now returns a short message telling the model to use the content it already has.
 		if name == "file_read" {
 			readPath, _ := args["path"].(string)
 			if readPath != "" {
 				resolvedPath := resolvePathForCache(readPath, a.config.WorkDir)
-				if cached, ok := a.fileReadCache[resolvedPath]; ok {
+				if _, ok := a.fileReadCache[resolvedPath]; ok {
 					log.Printf("[Agent] file_read cache hit: %s", resolvedPath)
 					a.conversation.Add(providers.Message{
 						Role:       "tool",
 						ToolCallID: callID,
-						Content:    cached,
+						Content:    fmt.Sprintf("[file already read] %s — you already have this file's content from a previous read. Use file_edit to modify it or proceed with what you know. Do NOT read it again.", resolvedPath),
 					})
 					continue
 				}
