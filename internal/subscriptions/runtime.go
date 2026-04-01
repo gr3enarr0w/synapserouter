@@ -2,6 +2,7 @@ package subscriptions
 
 import (
 	"context"
+	"log"
 	"strings"
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
@@ -66,14 +67,9 @@ func LoadRuntimeProviders(ctx context.Context) ([]providers.Provider, error) {
 	for _, providerName := range cfg.RouteModelOrder {
 		switch providerName {
 		case "anthropic":
-			if upstream, ok := byName[providerName]; ok {
-				ordered = append(ordered, &runtimeProviderAdapter{
-					name:       "claude-code",
-					model:      preferredProviderModel("anthropic", upstream.ListModels(), "claude-sonnet-4-5-20250929"),
-					maxContext: 200000,
-					upstream:   upstream,
-				})
-			}
+			// Removed: Claude Code subscription provider violates Anthropic TOS.
+			// Using Claude Code's API as a proxy backend is not permitted.
+			log.Printf("[Subscriptions] skipping anthropic provider — Claude Code subscription use not permitted by TOS")
 		case "openai":
 			if upstream, ok := byName[providerName]; ok {
 				ordered = append(ordered, &runtimeProviderAdapter{

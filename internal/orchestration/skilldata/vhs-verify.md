@@ -88,10 +88,10 @@ Sleep 3s
 vhs tests/ui/tapes/<name>.tape
 ```
 
-### 3. Verify screenshots
-Read each screenshot with `file_read` tool and verify:
-- Banner displays correctly (logo, profile name, tier count)
-- Response text is visible (not empty, not garbage)
+### 3. Verify EVERY screenshot (MANDATORY)
+You MUST read EVERY screenshot with `file_read` and describe what you see.
+Do NOT skip any screenshot. Do NOT assume a screenshot is correct without reading it.
+For EACH screenshot, verify:
 - Colors render properly (or absent with NO_COLOR)
 - Keyboard shortcuts produce expected output
 - Prompt returns after each response

@@ -37,7 +37,7 @@ func RefreshCredential(ctx context.Context, provider string, credential Provider
 
 	switch provider {
 	case "anthropic":
-		return refreshClaudeToken(ctx, credential)
+		return ProviderCredential{}, fmt.Errorf("anthropic subscription removed — violates TOS")
 	case "openai":
 		return refreshCodexToken(ctx, credential)
 	case "gemini":

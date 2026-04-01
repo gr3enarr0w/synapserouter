@@ -60,6 +60,14 @@ func (a *Agent) SpawnChild(cfg SpawnConfig) *Agent {
 		sysPrompt = a.buildChildSystemPrompt(cfg.Role, workDir)
 	}
 
+	// Tell sub-agents about parent's work and how to access it
+	sysPrompt += "\n\nPARENT SESSION CONTEXT: You were spawned by a parent agent. " +
+		"Use the recall tool to access parent session context:\n" +
+		"- recall(query=\"search term\") — semantic search over past outputs\n" +
+		"- recall(tool_name=\"bash\") — filter by specific tool\n" +
+		"- recall(id=N) — retrieve full output by ID (from a previous recall search)\n" +
+		"Do NOT re-read files the parent already read — use recall instead."
+
 	// Inherit escalation chain so sub-agents use the same provider ordering.
 	// Without this, sub-agents fall through to default routing which may
 	// pick providers (gemini, codex) that should only be reached via escalation.

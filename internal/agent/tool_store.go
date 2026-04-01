@@ -122,12 +122,13 @@ func (s *ToolOutputStore) SearchMultiSession(sessionIDs []string, toolName strin
 	for rows.Next() {
 		var e tools.ToolOutputResult
 		if err := rows.Scan(&e.ID, &e.ToolName, &e.ArgsSummary, &e.Summary, &e.ExitCode, &e.OutputSize, &e.CreatedAt); err != nil {
+			log.Printf("[ToolStore] scan error in SearchMultiSession: %v", err)
 			continue
 		}
 		entries = append(entries, e)
 	}
 	if err := rows.Err(); err != nil {
-		return entries, fmt.Errorf("rows iteration error: %w", err)
+		return nil, fmt.Errorf("rows iteration error: %w", err)
 	}
 	return entries, nil
 }
@@ -167,12 +168,13 @@ func (s *ToolOutputStore) Search(sessionID, toolName string, limit int) ([]tools
 	for rows.Next() {
 		var e tools.ToolOutputResult
 		if err := rows.Scan(&e.ID, &e.ToolName, &e.ArgsSummary, &e.Summary, &e.ExitCode, &e.OutputSize, &e.CreatedAt); err != nil {
+			log.Printf("[ToolStore] scan error in Search: %v", err)
 			continue
 		}
 		entries = append(entries, e)
 	}
 	if err := rows.Err(); err != nil {
-		return entries, fmt.Errorf("rows iteration error: %w", err)
+		return nil, fmt.Errorf("rows iteration error: %w", err)
 	}
 	return entries, nil
 }

@@ -67,6 +67,9 @@ func InitLight(ctx context.Context) (*AppContext, error) {
 	if err != nil {
 		return nil, err
 	}
+	// SQLite connection limits — prevents bottleneck with concurrent agents
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(2)
 
 	// Run embedded migrations if registered (ensures all tables exist for code mode)
 	if hasMigrations {
@@ -537,7 +540,7 @@ func LoadDotEnv() error {
 	home, _ := os.UserHomeDir()
 	loaded := false
 
-	// 1. Binary's directory — the project .env (highest priority)
+	// 1. Binary's directory — the project .env (highest priority when running from source)
 	if execPath, err := os.Executable(); err == nil {
 		if resolved, err := filepath.EvalSymlinks(execPath); err == nil {
 			execEnv := filepath.Join(filepath.Dir(resolved), ".env")
@@ -549,7 +552,23 @@ func LoadDotEnv() error {
 		}
 	}
 
-	// 2. User config directory
+	// 2. Current working directory — for installed binaries running in project dirs.
+	// When synroute is installed to ~/.local/bin/ but run from a project directory
+	// that has its own .env (with API keys, chain config, etc.), load it.
+	// godotenv.Load does NOT override existing vars, so binary-dir .env wins.
+	// Security note: matches Docker/Node/Rails behavior. Attacker would need user
+	// to clone malicious repo + run synroute + not have their own .env already.
+	if cwd, err := os.Getwd(); err == nil {
+		cwdEnv := filepath.Join(cwd, ".env")
+		if _, err := os.Stat(cwdEnv); err == nil {
+			if err := godotenv.Load(cwdEnv); err == nil {
+				log.Printf("Loaded .env from working directory: %s", cwdEnv)
+				loaded = true
+			}
+		}
+	}
+
+	// 3. User config directory
 	userEnv := filepath.Join(home, ".mcp", "synapse", ".env")
 	if _, err := os.Stat(userEnv); err == nil {
 		godotenv.Load(userEnv) // merge, don't overwrite

@@ -74,7 +74,7 @@ type oauthServer struct {
 func Login(ctx context.Context, provider string, opts LoginOptions) (ProviderCredential, error) {
 	switch normalizeStoredProviderName(provider) {
 	case "anthropic":
-		return loginWithClaude(ctx, opts)
+		return ProviderCredential{}, fmt.Errorf("anthropic/Claude Code subscription removed — violates Anthropic TOS. Use Vertex AI for Claude models (work profile)")
 	case "openai":
 		return loginWithCodex(ctx, opts)
 	case "gemini":

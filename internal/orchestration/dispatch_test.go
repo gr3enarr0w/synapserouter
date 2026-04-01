@@ -58,6 +58,37 @@ func TestMatchSkills_Research(t *testing.T) {
 	assertContains(t, names, "api-design", "should match api-design for API keyword")
 }
 
+func TestMatchesTrigger_LanguageFalsePositives(t *testing.T) {
+	tests := []struct {
+		text    string
+		trigger string
+		want    bool
+	}{
+		// #99: Language names that are substrings of other words
+		{"I'm learning JavaScript", "java", false},       // "java" in "javascript"
+		{"fix the java code", "java", true},               // exact word match
+		{"trust the process", "rust", false},               // "rust" in "trust"
+		{"write a rust program", "rust", true},             // exact word match
+		{"set up mysql database", "sql", false},            // "sql" in "mysql"
+		{"write sql queries for the report", "sql", true},  // exact word match
+		{"nosql is better for this", "sql", false},         // "sql" in "nosql"
+		{"postgresql migration needed", "sql", false},      // "sql" in "postgresql"
+		// Substring matching should STILL work for non-ambiguous triggers
+		{"set up the dockerfile", "docker", true},          // valid substring
+		{"add testing framework", "test", true},            // valid substring
+		{"handle deployment pipeline", "deploy", true},     // valid substring
+	}
+	for _, tt := range tests {
+		t.Run(tt.text+"_"+tt.trigger, func(t *testing.T) {
+			words := tokenize(tt.text)
+			got := matchesTrigger(tt.text, words, tt.trigger)
+			if got != tt.want {
+				t.Errorf("matchesTrigger(%q, %q) = %v, want %v", tt.text, tt.trigger, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMatchesTrigger_CompoundEdgeCases(t *testing.T) {
 	tests := []struct {
 		text    string

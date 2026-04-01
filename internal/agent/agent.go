@@ -47,6 +47,15 @@ type Agent struct {
 	config       Config
 	sessionID    string
 
+	// runCtx is set at the start of Run() and used by sub-agent phases and MCP
+	// tool calls to inherit the parent's cancellation signal. The Agent loop is
+	// single-threaded (Run blocks until complete, sub-agents get clones), so
+	// there is no concurrent write race on this field. This deviates from the Go
+	// blog guidance to pass context as a parameter, but the pipeline advancement
+	// methods are called from deep within the agent loop where threading ctx
+	// through all callers would require significant refactoring.
+	runCtx context.Context
+
 	// Sub-agent hierarchy
 	mu       sync.Mutex
 	parentID string
@@ -93,6 +102,7 @@ type Agent struct {
 	cachedPromptLevel  int      // provider level when system prompt was cached (-1 = uncached)
 	toolFingerprints   []string // sliding window of recent tool call fingerprints (loop detection)
 	loopWarningCount   int      // consecutive loop warnings without resolution (escalation trigger)
+	exhaustionRedirects int     // how many times we've hit chain-exhausted redirect (cap at 3)
 
 	// Context retrieval after compaction
 	hasCompacted bool // set true after compactConversation; triggers auto-context injection
@@ -236,6 +246,8 @@ func (a *Agent) setupTrimHook() {
 
 // Run processes a user message through the agent loop and returns the final text response.
 func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
+	a.runCtx = ctx // store for sub-agent context inheritance
+
 	// Protect spec file from agent overwrite (tool-layer enforcement)
 	if a.config.SpecFilePath != "" {
 		tools.SetProtectedPaths([]string{a.config.SpecFilePath})
@@ -350,16 +362,39 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 			strings.Contains(strings.ToLower(a.config.WorkDir), "synroute")
 		complexity := AssessComplexity(userMessage, a.config.SpecFilePath != "")
 
-		shouldPlan := isSelfModify || complexity == ComplexityMedium || complexity == ComplexityFull
+		// Self-modify forces planning ONLY for non-trivial tasks. "hello" in the
+		// synroute dir shouldn't trigger plan-first — it's a greeting, not a code change.
+		shouldPlan := (isSelfModify && complexity != ComplexityTrivial) ||
+			complexity == ComplexityMedium || complexity == ComplexityFull
 		if shouldPlan {
 			reason := complexity.String()
 			if isSelfModify {
 				reason = "self-modification"
 			}
-			log.Printf("[Agent] plan-first: %s — injecting planning instruction", reason)
+			// Detect if the task involves terminal/UI/CLI changes
+			lowerMsg := strings.ToLower(userMessage)
+			isTerminalChange := strings.Contains(lowerMsg, "banner") || strings.Contains(lowerMsg, "logo") ||
+				strings.Contains(lowerMsg, "terminal") || strings.Contains(lowerMsg, "tui") ||
+				strings.Contains(lowerMsg, "renderer") || strings.Contains(lowerMsg, "prompt") ||
+				strings.Contains(lowerMsg, "cli") || strings.Contains(lowerMsg, "color") ||
+				strings.Contains(lowerMsg, "display") || strings.Contains(lowerMsg, "keyboard")
+
+			vhsInstruction := ""
+			if isTerminalChange {
+				vhsInstruction = "\n\nVERIFICATION REQUIRED: After implementing, you MUST verify with VHS:\n" +
+					"1. Write a .tape file in tests/ui/tapes/ that tests the change\n" +
+					"2. Run: bash(vhs tests/ui/tapes/<name>.tape)\n" +
+					"3. Read EVERY screenshot with file_read — describe what you see in each one\n" +
+					"4. Confirm each screenshot matches expected output (no missing text, no garbage, correct layout)\n" +
+					"5. If ANY screenshot is wrong, fix the code and re-run the tape\n" +
+					"6. Test both profiles (personal and ACTIVE_PROFILE=work) and NO_COLOR=1\n" +
+					"Do NOT declare done without reading and verifying EVERY screenshot."
+			}
+
+			log.Printf("[Agent] plan-first: %s — injecting planning instruction (vhs=%v)", reason, isTerminalChange)
 			a.conversation.Add(providers.Message{
 				Role: "user",
-				Content: "IMPORTANT: Before writing any code, use the plan tool to create a brief plan with acceptance criteria. Then implement the plan step by step. Do NOT skip planning.",
+				Content: "IMPORTANT: Before writing any code, use the plan tool to create a brief plan with acceptance criteria. Then implement the plan step by step. Do NOT skip planning." + vhsInstruction,
 			})
 		}
 	}
@@ -552,6 +587,7 @@ func (a *Agent) RunPhase(ctx context.Context, phaseName string, userMessage stri
 }
 
 func (a *Agent) loop(ctx context.Context) (string, error) {
+	taskMaxTurns := 0 // computed on first check, cached for the session
 	for turn := 0; a.config.MaxTurns <= 0 || turn < a.config.MaxTurns; turn++ {
 		// Budget check
 		if a.budget != nil {
@@ -699,8 +735,10 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		if len(msg.ToolCalls) == 0 {
 			a.noToolTurns++
 			// Stall detection: if model hasn't made tool calls in 2 consecutive turns,
-			// escalate to a bigger model regardless of mode (pipeline or direct).
-			if a.noToolTurns >= 2 {
+			// escalate to a bigger model — BUT only for non-trivial tasks.
+			// Conversational turns (trivial complexity) are expected to be text-only.
+			complexity := AssessComplexity(a.originalRequest, a.config.SpecFilePath != "")
+			if a.noToolTurns >= 2 && complexity != ComplexityTrivial {
 				phaseName := "direct"
 				if a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
 					phaseName = a.pipeline.Phases[a.pipelinePhase].Name
@@ -735,7 +773,7 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			// the written files match the project's detected language.
 			if a.toolCallCount > 0 && a.hasWrittenCode() && !a.completionVerifyDone {
 				a.completionVerifyDone = true
-				passed, results := a.RunVerificationGate("deploy")
+				passed, results := a.RunVerificationGate("self-check")
 				if !passed {
 					failMsg := FormatVerifyFailures(results)
 					log.Printf("[Agent] compile verification failed at completion — sending back for fixes (one attempt)")
@@ -752,8 +790,16 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 				log.Printf("[Agent] tests passed cleanly — exiting promptly (#340)")
 				return msg.Content, nil
 			}
-			// Detect completion signals — if the model says the task is done, exit
+			// Detect completion signals — if the model says the task is done, verify first
 			if isCompletionSignal(msg.Content) {
+				if a.toolCallCount > 0 && !a.testsPassedClean && a.hasWrittenCode() {
+					log.Printf("[Agent] completion signal detected but tests not verified — requesting verification")
+					a.conversation.Add(providers.Message{
+						Role:    "user",
+						Content: "You said the task is complete, but tests haven't been verified. Run the tests to confirm everything works before declaring done.",
+					})
+					continue
+				}
 				log.Printf("[Agent] completion signal detected — exiting")
 				return msg.Content, nil
 			}
@@ -777,19 +823,35 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			return msg.Content, nil
 		}
 
-		// Execute tool calls — reset stall counter only.
-		// Do NOT reset textContinuations — that allows tool→text→tool cycles
-		// to bypass the cap indefinitely (#339).
+		// Execute tool calls — reset stall counter. Reset textContinuations
+		// only after sustained tool usage (3+ tool calls since last text turn)
+		// to prevent tool→text→tool cycles bypassing the cap (#339).
 		a.noToolTurns = 0
+		if a.toolCallCount > 3 {
+			a.textContinuations = 0
+		}
 		a.toolCallCount += len(msg.ToolCalls)
 		a.phaseToolCalls += len(msg.ToolCalls)
 
 		// Global turn cap for non-pipeline mode (#339).
 		// In pipeline mode, phases handle turn limits. In direct mode,
-		// MaxTurns defaults to 0 (unlimited) — cap at 30 to prevent runaway.
-		if !a.config.AutoOrchestrate && a.config.MaxTurns <= 0 && turn > 30 {
-			log.Printf("[Agent] direct mode exceeded 30 turns — exiting (#339)")
-			return msg.Content, nil
+		// MaxTurns defaults to 0 (unlimited) — scale cap by task complexity.
+		// Complexity assessed once (first turn) and cached via taskMaxTurns.
+		if !a.config.AutoOrchestrate && a.config.MaxTurns <= 0 {
+			if taskMaxTurns == 0 {
+				complexity := AssessComplexity(a.originalRequest, a.config.SpecFilePath != "")
+				taskMaxTurns = 30
+				switch complexity {
+				case ComplexityMedium:
+					taskMaxTurns = 50
+				case ComplexityFull:
+					taskMaxTurns = 80
+				}
+			}
+			if turn > taskMaxTurns {
+				log.Printf("[Agent] direct mode exceeded %d turns — exiting", taskMaxTurns)
+				return msg.Content, nil
+			}
 		}
 
 		a.executeToolCalls(ctx, msg.ToolCalls)
@@ -831,18 +893,28 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 					a.toolFingerprints = nil
 					a.conversation.Add(loopDetectedMessage(repeats))
 				} else {
-					log.Printf("[Agent] action loop: %d warnings, %d repeats — chain exhausted, injecting redirect",
-						a.loopWarningCount, repeats)
+					a.exhaustionRedirects++
+					log.Printf("[Agent] action loop: %d warnings, %d repeats — chain exhausted (redirect %d/3)",
+						a.loopWarningCount, repeats, a.exhaustionRedirects)
+
+					if a.exhaustionRedirects >= 3 {
+						// Gave 3 chances after exhaustion — force exit with summary
+						log.Printf("[Agent] 3 exhaustion redirects — forcing exit")
+						return msg.Content, nil
+					}
+
 					a.toolFingerprints = nil
 					a.conversation.Add(providers.Message{
 						Role: "user",
-						Content: fmt.Sprintf(`CRITICAL: You have been looping for %d cycles across ALL provider tiers. Escalation exhausted.
+						Content: fmt.Sprintf(`CRITICAL: You have been looping for %d cycles across ALL provider tiers (redirect %d/3).
 
 STOP repeating the same tool calls. Instead:
 1. State what you have accomplished so far
 2. State what is blocking you
 3. Try a COMPLETELY different approach — different tools, different files, different strategy
-4. If truly stuck, respond with text explaining the situation — do NOT make more tool calls`, a.loopWarningCount),
+4. If truly stuck, respond with text explaining the situation — do NOT make more tool calls
+
+WARNING: %d redirect(s) remaining before forced exit.`, a.loopWarningCount, a.exhaustionRedirects, 3-a.exhaustionRedirects),
 					})
 				}
 			} else {
@@ -882,22 +954,29 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		if a.renderer != nil {
 			a.renderer.ToolCall(name, args)
 		}
+		argsSummary := formatToolCallSummary(name, args)
+		log.Printf("[Agent] tool: %s %s", name, argsSummary)
 		a.emit(EventToolStart, "", map[string]any{
 			"tool_name":    name,
-			"args_summary": formatToolCallSummary(name, args),
+			"args_summary": argsSummary,
 		})
 
-		// File read dedup: return cached content if the file hasn't been modified
+		// File read dedup: return short notice if the EXACT same read was done before.
+		// Cache key includes path + offset + limit so reading different sections of
+		// the same file is allowed (needed for large files like ASCII art sources).
 		if name == "file_read" {
 			readPath, _ := args["path"].(string)
 			if readPath != "" {
 				resolvedPath := resolvePathForCache(readPath, a.config.WorkDir)
-				if cached, ok := a.fileReadCache[resolvedPath]; ok {
-					log.Printf("[Agent] file_read cache hit: %s", resolvedPath)
+				offset, _ := args["offset"].(float64)
+				limit, _ := args["limit"].(float64)
+				cacheKey := fmt.Sprintf("%s@%d:%d", resolvedPath, int(offset), int(limit))
+				if _, ok := a.fileReadCache[cacheKey]; ok {
+					log.Printf("[Agent] file_read cache hit: %s", cacheKey)
 					a.conversation.Add(providers.Message{
 						Role:       "tool",
 						ToolCallID: callID,
-						Content:    cached,
+						Content:    fmt.Sprintf("[file already read] %s — you already have this content. Use file_edit to modify it or proceed with what you know.", resolvedPath),
 					})
 					continue
 				}
@@ -978,7 +1057,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		if execErr != nil {
 			exitCode = -1
 		}
-		argsSummary := FormatArgsSummary(name, args)
+		storeSummary := FormatArgsSummary(name, args)
 
 		// Store ALL tool outputs in DB regardless of size (if configured).
 		// This ensures nothing is lost — even small outputs are persisted for recall.
@@ -986,7 +1065,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		if a.config.ToolStore != nil {
 			summary := SummarizeToolOutput(name, args, resultContent, exitCode)
 			outputID, storeErr := a.config.ToolStore.Store(
-				a.sessionID, name, argsSummary, summary, resultContent,
+				a.sessionID, name, storeSummary, summary, resultContent,
 				exitCode, len(resultContent))
 			if storeErr != nil {
 				log.Printf("[Agent] warning: failed to store tool output: %v", storeErr)
@@ -1025,22 +1104,32 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			Content:    conversationContent,
 		})
 
-		// File read cache: populate on successful read, invalidate on write/edit
+		// File read cache: populate on successful read, invalidate on write/edit.
+		// Cache key includes path@offset:limit so different ranges of the same file
+		// can be read independently (needed for large files).
 		if name == "file_read" && !isError {
 			readPath, _ := args["path"].(string)
 			if readPath != "" {
 				resolvedPath := resolvePathForCache(readPath, a.config.WorkDir)
+				offset, _ := args["offset"].(float64)
+				limit, _ := args["limit"].(float64)
+				cacheKey := fmt.Sprintf("%s@%d:%d", resolvedPath, int(offset), int(limit))
 				if a.fileReadCache == nil {
 					a.fileReadCache = make(map[string]string)
 				}
-				a.fileReadCache[resolvedPath] = conversationContent
+				a.fileReadCache[cacheKey] = conversationContent
 			}
 		}
 		if (name == "file_write" || name == "file_edit") && !isError {
 			writePath, _ := args["path"].(string)
 			if writePath != "" {
 				resolvedPath := resolvePathForCache(writePath, a.config.WorkDir)
-				delete(a.fileReadCache, resolvedPath)
+				// Invalidate ALL cached reads for this file (any offset/limit)
+				for k := range a.fileReadCache {
+					if strings.HasPrefix(k, resolvedPath+"@") {
+						delete(a.fileReadCache, k)
+					}
+				}
 			}
 		}
 
@@ -1110,6 +1199,21 @@ func (a *Agent) buildMessages() []providers.Message {
 			sysPrompt += "\n\nNON-INTERACTIVE MODE: Complete the full task. Do not ask follow-up questions — there is no user to answer them. If requirements are ambiguous, make reasonable assumptions and document them."
 		}
 
+		// Enforce system prompt size caps by provider tier
+		promptLen := len(sysPrompt)
+		maxPrompt := 128000 // default cap
+		switch {
+		case a.providerIdx == 0:
+			maxPrompt = 8000 // ~2K tokens for small models
+		case a.providerIdx <= 2:
+			maxPrompt = 32000 // ~8K tokens for mid models
+		}
+		if promptLen > maxPrompt {
+			log.Printf("[Agent] warning: system prompt %d bytes exceeds cap %d for tier %d — truncating",
+				promptLen, maxPrompt, a.providerIdx)
+			sysPrompt = sysPrompt[:maxPrompt]
+		}
+
 		a.cachedSystemPrompt = sysPrompt
 		a.cachedPromptLevel = a.providerIdx
 	}
@@ -1138,7 +1242,7 @@ func (a *Agent) buildMessages() []providers.Message {
 				})
 				msgs = append(msgs, providers.Message{
 					Role:    "assistant",
-					Content: "Understood, I have the retrieved context from earlier in the session.",
+					Content: "Understood, I have the retrieved context. I can also search for past tool outputs using the recall tool with queries or tool names.",
 				})
 			}
 		}
@@ -1253,6 +1357,8 @@ func countBefore(chain []orchestration.Skill, name string) int {
 // invokeMCPToolsForSkills calls MCP tools bound to the matched skill chain
 // and returns formatted results. Gracefully skips if MCPClient is nil or
 // individual tool calls fail.
+// invokeMCPToolsForSkills uses a.runCtx for timeout (set in Run() before buildMessages).
+// Cannot pass ctx as parameter because this is called via sync.Once in matchedSkillContext().
 func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query string) string {
 	if a.config.MCPClient == nil {
 		return ""
@@ -1263,7 +1369,11 @@ func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query strin
 		return ""
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	parentCtx := a.runCtx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	mcpCtx, cancel := context.WithTimeout(parentCtx, 15*time.Second)
 	defer cancel()
 
 	var b strings.Builder
@@ -1271,14 +1381,24 @@ func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query strin
 	hasResults := false
 
 	for _, toolName := range mcpTools {
-		result, err := a.config.MCPClient.CallTool(ctx, mcp.ToolCall{
+		result, err := a.config.MCPClient.CallTool(mcpCtx, mcp.ToolCall{
 			ToolName:  toolName,
 			Arguments: map[string]interface{}{"query": query},
 		})
 		if err != nil {
+			log.Printf("[Agent] MCP tool %s failed: %v", toolName, err)
+			b.WriteString(fmt.Sprintf("\n[MCP:%s] ERROR: %v\n", toolName, err))
+			hasResults = true // include error in results so LLM knows what failed
 			continue
 		}
 		if result == nil || !result.Success {
+			errMsg := "no result"
+			if result != nil && result.Error != "" {
+				errMsg = result.Error
+			}
+			log.Printf("[Agent] MCP tool %s failed: %s", toolName, errMsg)
+			b.WriteString(fmt.Sprintf("\n[MCP:%s] ERROR: %s\n", toolName, errMsg))
+			hasResults = true
 			continue
 		}
 
@@ -2024,7 +2144,11 @@ func (a *Agent) advancePipeline(content string) bool {
 // sequential review→fix stages: A reviews → B fixes → C reviews B's fix.
 // Returns the final sub-agent's result text.
 func (a *Agent) runSubAgentPhase(phase PipelinePhase) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	parentCtx := a.runCtx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, 15*time.Minute)
 	defer cancel()
 	model := "auto"
 
@@ -2623,6 +2747,9 @@ func (a *Agent) compactConversation(completedPhase string) {
 	// Store dropped messages to DB for later recall (all roles including tool).
 	a.storeMessagesToDB(msgs[:dropCount], "compaction")
 
+	// Extract key context from dropped messages before compaction
+	summary := extractCompactionSummary(msgs[:dropCount], completedPhase, dropCount)
+
 	// Replace conversation with summary + recent messages
 	recent := make([]providers.Message, keepCount)
 	copy(recent, msgs[dropCount:])
@@ -2630,7 +2757,7 @@ func (a *Agent) compactConversation(completedPhase string) {
 	a.conversation.Clear()
 	a.conversation.Add(providers.Message{
 		Role:    "user",
-		Content: fmt.Sprintf("[Phase %s completed. %d earlier messages compacted to DB. Use recall tool to access past context.]", completedPhase, dropCount),
+		Content: summary,
 	})
 	for _, m := range recent {
 		a.conversation.Add(m)
@@ -2640,13 +2767,92 @@ func (a *Agent) compactConversation(completedPhase string) {
 	log.Printf("[Agent] compacted conversation: dropped %d messages, kept %d + summary", dropCount, keepCount)
 }
 
+// extractCompactionSummary builds a context-rich summary from dropped messages.
+// Includes files modified, test results, and key decisions so post-compaction
+// conversation doesn't lose critical context.
+func extractCompactionSummary(msgs []providers.Message, phase string, count int) string {
+	var files []string
+	var testResults []string
+	filesSeen := make(map[string]bool)
+
+	for _, m := range msgs {
+		content := m.Content
+		// Extract file paths from tool call results
+		for _, path := range extractFilePaths(content) {
+			if !filesSeen[path] {
+				filesSeen[path] = true
+				files = append(files, path)
+			}
+		}
+		// Extract test results
+		if strings.Contains(content, "PASS") || strings.Contains(content, "FAIL") ||
+			strings.Contains(content, "ok  \t") || strings.Contains(content, "--- PASS") {
+			// Truncate long test output
+			lines := strings.Split(content, "\n")
+			for _, line := range lines {
+				if (strings.Contains(line, "PASS") || strings.Contains(line, "FAIL") ||
+					strings.Contains(line, "ok  \t")) && len(line) < 200 {
+					testResults = append(testResults, strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "[Phase %s completed. %d earlier messages compacted to DB.]\n", phase, count)
+
+	if len(files) > 0 {
+		b.WriteString("Files touched: ")
+		maxFiles := 10
+		if len(files) < maxFiles {
+			maxFiles = len(files)
+		}
+		b.WriteString(strings.Join(files[:maxFiles], ", "))
+		if len(files) > 10 {
+			fmt.Fprintf(&b, " (+%d more)", len(files)-10)
+		}
+		b.WriteString("\n")
+	}
+
+	if len(testResults) > 0 {
+		b.WriteString("Test results: ")
+		maxTests := 5
+		if len(testResults) < maxTests {
+			maxTests = len(testResults)
+		}
+		b.WriteString(strings.Join(testResults[:maxTests], "; "))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("Use recall tool to access full context from earlier messages.")
+	return b.String()
+}
+
+// extractFilePaths finds file paths in text (simple heuristic).
+func extractFilePaths(text string) []string {
+	var paths []string
+	for _, word := range strings.Fields(text) {
+		// Match paths like /foo/bar.go, ./src/main.py, internal/agent/agent.go
+		if (strings.Contains(word, "/") || strings.Contains(word, ".go") ||
+			strings.Contains(word, ".py") || strings.Contains(word, ".js")) &&
+			!strings.HasPrefix(word, "http") && len(word) < 200 {
+			// Clean trailing punctuation
+			word = strings.TrimRight(word, ",:;\"')")
+			if strings.Contains(word, ".") {
+				paths = append(paths, word)
+			}
+		}
+	}
+	return paths
+}
+
 // toolIdentityKeys defines which argument keys constitute the "identity" of a tool call.
 // Only these keys are hashed for loop detection. Payload keys (file content, edit text)
 // are excluded so agents can't evade detection by varying file content.
 var toolIdentityKeys = map[string][]string{
 	"file_write": {"path"},
 	"file_edit":  {"path"},
-	"file_read":  {"path"},
+	"file_read":  {"path", "offset", "limit"}, // different sections of same file are NOT loops
 	"grep":       {"pattern", "path"},
 	"glob":       {"pattern", "path"},
 	"git":        {"subcommand"},
@@ -2712,11 +2918,11 @@ func loopDetectedMessage(repeats int) providers.Message {
 		Role: "user",
 		Content: fmt.Sprintf(`LOOP DETECTED: You have called the same tool with the same arguments %d times.
 This is NOT making progress. You MUST try a DIFFERENT approach:
-- If a command keeps failing, investigate WHY (read the error output carefully)
-- If a dependency won't install, try a different version or skip it
-- If a file won't compile, read the specific error and fix it
-- Do NOT retry the same command — it will produce the same result
-Change your approach NOW.`, repeats),
+- If you keep READING the same file: you already have the content. STOP reading and START writing with file_edit or file_write.
+- If a command keeps failing: read the error output carefully, fix the cause, don't retry the same command.
+- If you are stuck: state what you know, what's blocking you, and try a completely different strategy.
+- Do NOT call the same tool again — it will produce the same result.
+TAKE ACTION NOW: write code, don't read more.`, repeats),
 	}
 }
 
@@ -2725,8 +2931,11 @@ Change your approach NOW.`, repeats),
 // For implement phases: dynamic role assignment — agent 1 implements, agent 2 tests,
 // agent 3+ bug-reviews. Stage 2 cross-review: each model reviews another's output.
 func (a *Agent) runParallelPhase(phase PipelinePhase) string {
-	// Use a timeout context rather than background to prevent runaway sub-agents
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	parentCtx := a.runCtx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, 10*time.Minute)
 	defer cancel()
 	// For plan phases, use the hardcoded planner providers.
 	// For ALL other phases, use currentLevelProviders() — never stale cached values.
@@ -3099,9 +3308,19 @@ Your job:
 		}
 	}
 
-	// Merge via MergeProvider if configured (e.g., Codex synthesizes 2 plans)
-	if phase.MergeProvider != "" {
-		log.Printf("[Agent] merging parallel results via %s", phase.MergeProvider)
+	// Merge via MergeProvider if configured (e.g., synthesize 2 plans into 1)
+	mergeProvider := phase.MergeProvider
+	if mergeProvider == "auto" {
+		// Resolve from escalation chain — use the highest available provider
+		if len(a.config.EscalationChain) > 0 {
+			top := a.config.EscalationChain[len(a.config.EscalationChain)-1]
+			if len(top.Providers) > 0 {
+				mergeProvider = top.Providers[0]
+			}
+		}
+	}
+	if mergeProvider != "" && mergeProvider != "auto" {
+		log.Printf("[Agent] merging parallel results via %s", mergeProvider)
 		mergeTask := fmt.Sprintf(`Multiple models produced independent plans for the same task. Synthesize the BEST plan by:
 1. Taking the strongest acceptance criteria from each
 2. Combining the most thorough task decomposition
@@ -3127,13 +3346,13 @@ Output the MERGED plan with complete acceptance criteria that reference the skil
 
 		merged, err := a.RunChild(ctx, SpawnConfig{
 			Role:     "plan-merger",
-			Provider: phase.MergeProvider,
+			Provider: mergeProvider,
 		}, mergeTask)
 		if err != nil {
-			log.Printf("[Agent] merge via %s failed: %v, using combined output", phase.MergeProvider, err)
+			log.Printf("[Agent] merge via %s failed: %v, using combined output", mergeProvider, err)
 			return combined.String()
 		}
-		log.Printf("[Agent] plan merge completed via %s", phase.MergeProvider)
+		log.Printf("[Agent] plan merge completed via %s", mergeProvider)
 		return merged
 	}
 

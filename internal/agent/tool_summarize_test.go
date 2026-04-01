@@ -161,6 +161,37 @@ func TestScrubSecrets_KeyValuePatterns(t *testing.T) {
 	}
 }
 
+func TestScrubSecrets_ProviderTokens(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		leaked string
+	}{
+		{"OpenAI key", "export OPENAI_API_KEY=sk-proj-abc123def456ghi789jkl012mno345pqr678", "sk-proj-abc123def456ghi789jkl012mno345pqr678"},
+		{"GitHub PAT", "git clone https://ghp_ABCDEFghijklmnop1234567890abcdefghijkl@github.com/repo", "ghp_ABCDEFghijklmnop1234567890abcdefghijkl"},
+		{"GitHub OAuth", "token: gho_ABCDEFghijklmnop1234567890abcdefghijkl", "gho_ABCDEFghijklmnop1234567890abcdefghijkl"},
+		{"GitHub server", "ghs_ABCDEFghijklmnop1234567890abcdefghijkl", "ghs_ABCDEFghijklmnop1234567890abcdefghijkl"},
+		{"AWS key", "aws_access_key_id = AKIAIOSFODNN7EXAMPLE", "AKIAIOSFODNN7EXAMPLE"},
+		{"private key RSA", "-----BEGIN RSA PRIVATE KEY-----\nMIIEpA...", "-----BEGIN RSA PRIVATE KEY-----"},
+		{"private key EC", "-----BEGIN EC PRIVATE KEY-----\nMHQC...", "-----BEGIN EC PRIVATE KEY-----"},
+		{"private key OpenSSH", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl...", "-----BEGIN OPENSSH PRIVATE KEY-----"},
+		{"standalone OpenAI key", "The key is sk-proj-abc123def456ghi789jkl012mno345pqr678 here", "sk-proj-abc123def456ghi789jkl012mno345pqr678"},
+		{"Stripe live key", "STRIPE_KEY=sk_live_abc123def456ghi789jkl012mno345", "sk_live_abc123def456ghi789jkl012mno345"},
+		{"Stripe test key", "sk_test_4eC39HqLyjWDarjtT1zdp7dc", "sk_test_4eC39HqLyjWDarjtT1zdp7dc"},
+		{"Slack bot token", "SLACK_TOKEN=xoxb-1234567890-1234567890123-abcdefghijklmnopqrstuvwx", "xoxb-1234567890-1234567890123-abcdefghijklmnopqrstuvwx"},
+		{"SendGrid key", "SG.abc123_def456-ghi789_jkl012mno", "SG.abc123_def456-ghi789_jkl012mno"},
+		{"Twilio SID", "TWILIO_SID=AC1234567890abcdef1234567890abcdef", "AC1234567890abcdef1234567890abcdef"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := scrubSecrets(tt.input)
+			if strings.Contains(result, tt.leaked) {
+				t.Errorf("secret %q should be redacted, got %q", tt.leaked, result)
+			}
+		})
+	}
+}
+
 func TestFormatArgsSummary_ScrubsSecrets(t *testing.T) {
 	s := FormatArgsSummary("bash", map[string]interface{}{
 		"command": "curl -H 'Authorization: Bearer sk-abc123' https://api.example.com",

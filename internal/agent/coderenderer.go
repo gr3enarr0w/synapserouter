@@ -183,20 +183,10 @@ func (cr *CodeRenderer) Init() {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 
-	// Brand logo — brain icon + SynRoute side by side (cyan→magenta gradient)
-	if cr.noColor {
-		fmt.Fprintln(cr.out, "")
-		fmt.Fprintln(cr.out, "    ╭──╮  ╭╮")
-		fmt.Fprintln(cr.out, "   ╭╯╶─╰──╯╰╮    SynRoute")
-		fmt.Fprintln(cr.out, "   ╰╮╶──╶─╶╭─╯")
-		fmt.Fprintln(cr.out, "    ╰──────╯")
-	} else {
-		fmt.Fprintln(cr.out, "")
-		fmt.Fprintln(cr.out, "  \033[38;2;80;200;220m  ╭──╮\033[38;2;120;130;200m  ╭╮\033[0m")
-		fmt.Fprintln(cr.out, "  \033[38;2;60;180;200m ╭╯╶─╰──╯╰╮\033[0m    \033[1;38;2;80;200;220mSyn\033[1;38;2;180;100;200mRoute\033[0m")
-		fmt.Fprintln(cr.out, "  \033[38;2;60;160;180m ╰╮╶──╶─╶\033[38;2;160;100;180m╭─╯\033[0m")
-		fmt.Fprintln(cr.out, "  \033[38;2;80;180;200m  ╰──────╯\033[0m")
-	}
+	fmt.Fprintln(cr.out)
+
+	// Brain logo with text — adapts to terminal width
+	fmt.Fprint(cr.out, BannerForWidth(cr.width, cr.noColor))
 
 	// Version + mode
 	ver := cr.version
@@ -238,9 +228,10 @@ func (cr *CodeRenderer) Resize(width, height int) {
 	cr.height = height
 }
 
-// writeContent writes a line of output, wrapping naturally at terminal width.
+// writeContent writes a line of output. Uses \r\n for raw terminal mode
+// so the cursor returns to column 0 (raw mode doesn't translate \n to \r\n).
 func (cr *CodeRenderer) writeContent(line string) {
-	fmt.Fprintln(cr.out, line)
+	fmt.Fprint(cr.out, line+"\r\n")
 }
 
 // --- Event handling ---

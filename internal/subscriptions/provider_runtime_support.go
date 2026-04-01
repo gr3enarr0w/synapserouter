@@ -550,7 +550,7 @@ func buildCodexCompactRequest(req providers.ChatRequest, model string) codexComp
 	return payload
 }
 
-func (r codexCompactResponse) asChatCompletion(fallbackModel string) providers.ChatResponse {
+func (r codexCompactResponse) asChatCompletion(fallbackModel string) (providers.ChatResponse, error) {
 	var content string
 	toolCalls := make([]map[string]interface{}, 0)
 
@@ -609,9 +609,12 @@ func (r codexCompactResponse) asChatCompletion(fallbackModel string) providers.C
 		content = r.OutputText
 	}
 
-	// 4. Log warning if we have usage but no content (suspicious)
-	if strings.TrimSpace(content) == "" && len(toolCalls) == 0 && r.Usage.CompletionTokens > 0 {
-		log.Printf("[Codex] WARNING: Response has %d completion tokens but empty content and no tool calls - response may be malformed", r.Usage.CompletionTokens)
+	// 4. Reject empty responses — return error so router tries next provider
+	if strings.TrimSpace(content) == "" && len(toolCalls) == 0 {
+		if r.Usage.CompletionTokens > 0 {
+			return providers.ChatResponse{}, fmt.Errorf("codex returned empty content with %d completion tokens (malformed response)", r.Usage.CompletionTokens)
+		}
+		return providers.ChatResponse{}, fmt.Errorf("codex returned empty completion (no content or tool calls)")
 	}
 
 	finishReason := "stop"
@@ -632,7 +635,7 @@ func (r codexCompactResponse) asChatCompletion(fallbackModel string) providers.C
 			FinishReason: finishReason,
 		}},
 		Usage: normalizeUsage(r.Usage),
-	}
+	}, nil
 }
 
 func applyCodexHeaders(req *http.Request, credential ProviderCredential, sessionID string, stream bool) {
@@ -729,7 +732,7 @@ func (p *geminiProvider) geminiCLIChatCompletion(ctx context.Context, credential
 		if err != nil {
 			return providers.ChatResponse{}, err
 		}
-		return upstreamResp.asChatCompletion(model), nil
+		return upstreamResp.asChatCompletion(model)
 	}
 	return providers.ChatResponse{}, lastErr
 }
@@ -1093,16 +1096,11 @@ func decodeResponseBody(body io.ReadCloser, contentEncoding string) (io.ReadClos
 	return body, nil
 }
 
-func (r geminiChatResponse) asChatCompletion(model string) providers.ChatResponse {
+func (r geminiChatResponse) asChatCompletion(model string) (providers.ChatResponse, error) {
 	responseText := ""
 	toolCalls := make([]map[string]interface{}, 0)
 	if len(r.Candidates) == 0 {
-		return providers.ChatResponse{
-			ID:      fmt.Sprintf("gemini-%d", time.Now().UnixNano()),
-			Object:  "chat.completion",
-			Model:   model,
-			Choices: []providers.Choice{{Index: 0, Message: providers.Message{Role: "assistant", Content: ""}, FinishReason: "stop"}},
-		}
+		return providers.ChatResponse{}, fmt.Errorf("gemini returned empty completion (no candidates)")
 	}
 	for _, part := range r.Candidates[0].Content.Parts {
 		if len(part.FunctionCall) > 0 {
@@ -1124,6 +1122,11 @@ func (r geminiChatResponse) asChatCompletion(model string) providers.ChatRespons
 			continue
 		}
 		responseText += part.Text
+	}
+	// Reject empty responses — return error so router tries next provider.
+	// Empty content WITH tool_calls is valid (model delegating to tools).
+	if strings.TrimSpace(responseText) == "" && len(toolCalls) == 0 {
+		return providers.ChatResponse{}, fmt.Errorf("gemini returned empty completion (no text or tool calls)")
 	}
 	finishReason := "stop"
 	if len(toolCalls) > 0 {
@@ -1149,7 +1152,7 @@ func (r geminiChatResponse) asChatCompletion(model string) providers.ChatRespons
 			CompletionTokens: r.UsageMetadata.CandidatesTokenCount,
 			TotalTokens:      r.UsageMetadata.TotalTokenCount,
 		},
-	}
+	}, nil
 }
 
 func cachedProviderModels(providerName string, loader func() []ModelInfo) []ModelInfo {

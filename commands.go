@@ -18,6 +18,7 @@ import (
 
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/agent"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/app"
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/subscriptions"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/environment"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
 	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcpserver"
@@ -783,6 +784,103 @@ func hasExistingProject(dir string) bool {
 		}
 	}
 	return false
+}
+
+// cmdAuth handles subscription provider authentication.
+// Usage: synroute auth login codex|gemini
+//
+//	synroute auth status
+func cmdAuth(args []string) {
+	if len(args) == 0 {
+		fmt.Println("Usage: synroute auth <command>")
+		fmt.Println()
+		fmt.Println("Commands:")
+		fmt.Println("  login <provider>   Authenticate with a subscription provider")
+		fmt.Println("                     Providers: codex (OpenAI), gemini (Google)")
+		fmt.Println("  status             Show credential status for all providers")
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  synroute auth login codex    # Opens browser for OpenAI OAuth")
+		fmt.Println("  synroute auth login gemini   # Opens browser for Google OAuth")
+		fmt.Println("  synroute auth status         # Check token expiry")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	switch args[0] {
+	case "login":
+		if len(args) < 2 {
+			fmt.Println("Usage: synroute auth login <provider>")
+			fmt.Println("Providers: codex, gemini")
+			os.Exit(1)
+		}
+		provider := args[1]
+		switch strings.ToLower(provider) {
+		case "codex", "openai":
+			provider = "openai"
+		case "gemini", "google":
+			provider = "gemini"
+		default:
+			fmt.Fprintf(os.Stderr, "Unknown provider: %s\nSupported: codex, gemini\n", provider)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Authenticating with %s...\n", provider)
+		fmt.Println("A browser window will open for you to sign in.")
+		fmt.Println()
+
+		credential, err := subscriptions.Login(ctx, provider, subscriptions.LoginOptions{})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := subscriptions.StoreCredential(provider, credential); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to store credential: %v\n", err)
+			os.Exit(1)
+		}
+
+		email := credential.Email
+		if email == "" {
+			email = "(unknown)"
+		}
+		fmt.Printf("\n✓ Authenticated as %s\n", email)
+		fmt.Println("Credential stored. Run 'synroute test' to verify.")
+
+	case "status":
+		creds, err := subscriptions.LoadAllStoredCredentials()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to load credentials: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("Subscription Provider Credentials:")
+		fmt.Println("──────────────────────────────────")
+		if len(creds) == 0 {
+			fmt.Println("  No credentials stored.")
+			fmt.Println("  Run 'synroute auth login codex' or 'synroute auth login gemini'")
+			return
+		}
+		for provider, providerCreds := range creds {
+			for _, c := range providerCreds {
+				status := "✓ valid"
+				if c.NeedsRefresh(0) {
+					status = "⚠ expired"
+				}
+				email := c.Email
+				if email == "" {
+					email = "(no email)"
+				}
+				fmt.Printf("  %-10s %s  %s\n", provider, status, email)
+			}
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown auth command: %s\nRun 'synroute auth' for help.\n", args[0])
+		os.Exit(1)
+	}
 }
 
 // detectLanguageFromSpec scans spec text for language/framework indicators.

@@ -228,10 +228,11 @@ func isCompletionSignal(content string) bool {
 		"task is complete",
 		"task has been completed",
 		"successfully completed",
-		"all done",
 		"the fix is complete",
 		"changes are complete",
 		"implementation is complete",
+		"i've completed the task",
+		"work is finished",
 	}
 	for _, sig := range signals {
 		if strings.Contains(lower, sig) {

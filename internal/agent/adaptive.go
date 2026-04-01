@@ -78,8 +78,12 @@ func AssessComplexity(message string, hasSpecFile bool) TaskComplexity {
 	mediumScore := countKeywordMatches(lower, mediumKeywords)
 	fullScore := countKeywordMatches(lower, fullKeywords)
 
-	// Message length heuristic: very short messages are usually simple.
-	// Under 60 chars with no full or medium keywords → likely simple or trivial.
+	// Very short messages with no action keywords are trivial (greetings, etc.)
+	if msgLen < 20 && fullScore == 0 && mediumScore == 0 && simpleScore == 0 {
+		return ComplexityTrivial
+	}
+
+	// Message length heuristic: under 60 chars with no complex keywords → simple or trivial.
 	if msgLen < 60 && fullScore == 0 && mediumScore == 0 {
 		if trivialScore > 0 {
 			return ComplexityTrivial

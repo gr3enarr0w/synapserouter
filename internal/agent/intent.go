@@ -127,6 +127,9 @@ Use file_edit for modifications. Only use file_write for genuinely new files.`
 
 // findPhaseByName returns the index of a phase by name, or -1 if not found.
 func findPhaseByName(pipeline *Pipeline, name string) int {
+	if pipeline == nil {
+		return -1
+	}
 	for i, p := range pipeline.Phases {
 		if p.Name == name {
 			return i

@@ -60,14 +60,27 @@ func MatchSkillsForLanguage(goal string, registry []Skill, projectLanguage strin
 	return filtered
 }
 
-// ambiguousWords are short words that commonly appear as prefixes in unrelated
-// words (e.g. "go" in "going"/"got", "do" in "doing"/"done").
-// These require exact word-boundary matching.
+// ambiguousWords are words that commonly appear as substrings in unrelated
+// words (e.g. "go" in "going", "java" in "JavaScript", "rust" in "trust").
+// These require exact word-boundary matching to prevent false positive
+// skill triggering. Includes both short common words and language names
+// that are substrings of other technology names.
 var ambiguousWords = map[string]bool{
+	// Short common words
 	"go": true, "do": true, "is": true, "it": true, "or": true,
 	"an": true, "as": true, "at": true, "be": true, "by": true,
 	"in": true, "no": true, "of": true, "on": true, "so": true,
 	"to": true, "up": true, "us": true, "we": true,
+	// Language/technology names that are substrings of other words (#99)
+	"java": true, // "JavaScript" contains "java"
+	"rust": true, // "trust", "frustrate" contain "rust"
+	"sql":  true, // "mysql", "nosql", "postgresql" contain "sql"
+	// Generic verbs that cause false positives in non-coding conversation (#55)
+	"build":  true, // "building relationships" vs "build the project"
+	"write":  true, // "writer's block" vs "write code"
+	"review": true, // "movie review" vs "review the code"
+	"clean":  true, // "clean the house" vs "clean code"
+	"check":  true, // "check the weather" vs "check the code"
 }
 
 // matchesTrigger checks if a trigger matches the goal text.

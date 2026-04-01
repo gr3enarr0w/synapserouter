@@ -71,15 +71,37 @@ func Detect(workDir string) *ProjectEnv {
 	return nil
 }
 
-// hasSQLFiles checks if the directory contains .sql files (in root or sql/ subdir).
+// hasSQLFiles checks if the directory is a SQL project.
+// Requires both .sql files AND a project indicator to avoid false positives
+// in directories like ~/ that happen to contain stray .sql files.
 func hasSQLFiles(workDir string) bool {
 	patterns := []string{
 		filepath.Join(workDir, "*.sql"),
 		filepath.Join(workDir, "sql", "*.sql"),
 	}
+	var found bool
 	for _, pattern := range patterns {
 		matches, _ := filepath.Glob(pattern)
 		if len(matches) > 0 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false
+	}
+
+	indicators := []string{
+		".git",
+		"migrations",
+		"db",
+		"Makefile",
+		"README.md",
+		"docker-compose.yml",
+		"docker-compose.yaml",
+	}
+	for _, ind := range indicators {
+		if _, err := os.Stat(filepath.Join(workDir, ind)); err == nil {
 			return true
 		}
 	}
