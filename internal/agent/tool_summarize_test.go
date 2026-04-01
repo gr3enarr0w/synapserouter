@@ -176,11 +176,11 @@ func TestScrubSecrets_ProviderTokens(t *testing.T) {
 		{"private key EC", "-----BEGIN EC PRIVATE KEY-----\nMHQC...", "-----BEGIN EC PRIVATE KEY-----"},
 		{"private key OpenSSH", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl...", "-----BEGIN OPENSSH PRIVATE KEY-----"},
 		{"standalone OpenAI key", "The key is sk-proj-abc123def456ghi789jkl012mno345pqr678 here", "sk-proj-abc123def456ghi789jkl012mno345pqr678"},
-		{"Stripe live key", "STRIPE_KEY=sk_live_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE00", "sk_live_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE00"},
-		{"Stripe test key", "sk_test_FAKEFAKEFAKEFAKEFAKEFAKE00", "sk_test_FAKEFAKEFAKEFAKEFAKEFAKE00"},
-		{"Slack bot token", "SLACK_TOKEN=xoxb-0000000000-0000000000000-FAKEFAKEFAKEFAKEFAKEFAKE", "xoxb-0000000000-0000000000000-FAKEFAKEFAKEFAKEFAKEFAKE"},
-		{"SendGrid key", "SG.FAKE_FAKE_FAKE-FAKE_FAKE_FAKE0", "SG.FAKE_FAKE_FAKE-FAKE_FAKE_FAKE0"},
-		{"Twilio SID", "TWILIO_SID=AC00000000000000000000000000000000", "AC00000000000000000000000000000000"},
+		{"Stripe live key", "STRIPE_KEY=sk_live_TESTONLYnotarealkeyfortest", "sk_live_TESTONLYnotarealkeyfortest"},
+		{"Stripe test key", "sk_test_TESTONLYnotarealkeyfortest", "sk_test_TESTONLYnotarealkeyfortest"},
+		{"Slack bot token", "SLACK_TOKEN=xoxb-TESTONLY-NOTREAL-TESTONLYforverification", "xoxb-TESTONLY-NOTREAL-TESTONLYforverification"},
+		{"SendGrid key", "SG.TESTONLYnotarealSendGridkey00", "SG.TESTONLYnotarealSendGridkey00"},
+		{"Twilio SID", "TWILIO_SID=AC00112233445566778899aabbccddeeff", "AC00112233445566778899aabbccddeeff"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
