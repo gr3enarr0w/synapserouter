@@ -47,6 +47,9 @@ type Agent struct {
 	config       Config
 	sessionID    string
 
+	// Run context — stored so sub-agent phases can inherit cancellation
+	runCtx context.Context
+
 	// Sub-agent hierarchy
 	mu       sync.Mutex
 	parentID string
@@ -237,6 +240,8 @@ func (a *Agent) setupTrimHook() {
 
 // Run processes a user message through the agent loop and returns the final text response.
 func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
+	a.runCtx = ctx // store for sub-agent context inheritance
+
 	// Protect spec file from agent overwrite (tool-layer enforcement)
 	if a.config.SpecFilePath != "" {
 		tools.SetProtectedPaths([]string{a.config.SpecFilePath})
@@ -1356,7 +1361,11 @@ func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query strin
 		return ""
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	parentCtx := a.runCtx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, 15*time.Second)
 	defer cancel()
 
 	var b strings.Builder
@@ -2117,7 +2126,11 @@ func (a *Agent) advancePipeline(content string) bool {
 // sequential review→fix stages: A reviews → B fixes → C reviews B's fix.
 // Returns the final sub-agent's result text.
 func (a *Agent) runSubAgentPhase(phase PipelinePhase) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	parentCtx := a.runCtx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, 15*time.Minute)
 	defer cancel()
 	model := "auto"
 
@@ -2818,8 +2831,12 @@ TAKE ACTION NOW: write code, don't read more.`, repeats),
 // For implement phases: dynamic role assignment — agent 1 implements, agent 2 tests,
 // agent 3+ bug-reviews. Stage 2 cross-review: each model reviews another's output.
 func (a *Agent) runParallelPhase(phase PipelinePhase) string {
-	// Use a timeout context rather than background to prevent runaway sub-agents
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	// Inherit parent context so cancellation propagates to sub-agents
+	parentCtx := a.runCtx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, 10*time.Minute)
 	defer cancel()
 	// For plan phases, use the hardcoded planner providers.
 	// For ALL other phases, use currentLevelProviders() — never stale cached values.
