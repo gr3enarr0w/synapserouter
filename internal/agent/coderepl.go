@@ -324,10 +324,33 @@ func (cr *CodeREPL) readLine(fd int, isRaw bool, exitCh chan struct{}, reqMu *sy
 			// If there's text, ignore Ctrl-D (like bash)
 
 		case b == 0x03: // Ctrl-C
-			// Clear current line, show prompt again
-			// Erase the current line display
-			cr.rawWrite("\r\033[K") // move to start, clear line
-			return "", false
+			if len(lineBuf) > 0 {
+				// Text on line: clear it
+				cr.rawWrite("\r\033[K")
+				lineBuf = lineBuf[:0]
+				cr.rawWrite(cr.renderer.color("\033[36m", "synroute> "))
+				continue
+			}
+			// Empty line: track double-tap for exit
+			now := time.Now()
+			if now.Sub(*lastCtrlC) <= 2*time.Second {
+				*ctrlCCount++
+			} else {
+				*ctrlCCount = 1
+			}
+			*lastCtrlC = now
+
+			if *ctrlCCount >= 2 {
+				cr.rawWrite("\r\n")
+				cr.rawWrite("bye\r\n")
+				return "", true // exit signal
+			}
+			// First Ctrl-C: show hint
+			cr.rawWrite("\r\n")
+			cr.rawWrite(cr.renderer.color("\033[2m", "  (press Ctrl-C again to exit)"))
+			cr.rawWrite("\r\n")
+			cr.rawWrite(cr.renderer.color("\033[36m", "synroute> "))
+			continue
 
 		case b == 0x7F || b == 0x08: // Backspace (DEL or BS)
 			if len(lineBuf) > 0 {
