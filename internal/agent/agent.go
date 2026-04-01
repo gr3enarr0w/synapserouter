@@ -1378,9 +1378,11 @@ func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query strin
 			Arguments: map[string]interface{}{"query": query},
 		})
 		if err != nil {
+			log.Printf("[Agent] MCP tool %s failed: %v", toolName, err)
 			continue
 		}
 		if result == nil || !result.Success {
+			log.Printf("[Agent] MCP tool %s returned no result or failed", toolName)
 			continue
 		}
 
