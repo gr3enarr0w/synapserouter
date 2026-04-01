@@ -161,6 +161,29 @@ func TestScrubSecrets_KeyValuePatterns(t *testing.T) {
 	}
 }
 
+func TestScrubSecrets_ProviderTokens(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		leaked string
+	}{
+		{"OpenAI key", "export OPENAI_API_KEY=sk-proj-abc123def456ghi789jkl012mno345pqr678", "sk-proj-abc123def456ghi789jkl012mno345pqr678"},
+		{"GitHub PAT", "git clone https://ghp_ABCDEFghijklmnop1234567890abcdefghijkl@github.com/repo", "ghp_ABCDEFghijklmnop1234567890abcdefghijkl"},
+		{"GitHub OAuth", "token: gho_ABCDEFghijklmnop1234567890abcdefghijkl", "gho_ABCDEFghijklmnop1234567890abcdefghijkl"},
+		{"GitHub server", "ghs_ABCDEFghijklmnop1234567890abcdefghijkl", "ghs_ABCDEFghijklmnop1234567890abcdefghijkl"},
+		{"AWS key", "aws_access_key_id = AKIAIOSFODNN7EXAMPLE", "AKIAIOSFODNN7EXAMPLE"},
+		{"private key", "-----BEGIN RSA PRIVATE KEY-----\nMIIEpA...", "-----BEGIN RSA PRIVATE KEY-----"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := scrubSecrets(tt.input)
+			if strings.Contains(result, tt.leaked) {
+				t.Errorf("secret %q should be redacted, got %q", tt.leaked, result)
+			}
+		})
+	}
+}
+
 func TestFormatArgsSummary_ScrubsSecrets(t *testing.T) {
 	s := FormatArgsSummary("bash", map[string]interface{}{
 		"command": "curl -H 'Authorization: Bearer sk-abc123' https://api.example.com",

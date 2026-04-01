@@ -290,6 +290,7 @@ func formatArgsSummaryRaw(toolName string, args map[string]interface{}) string {
 }
 
 // secretPatterns matches common credential patterns for redaction before DB storage.
+// Aligned with SecretPatternGuardrail in guardrails.go.
 var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(Bearer\s+)[^\s"']+`),
 	regexp.MustCompile(`(?i)(token=)[^\s&"']+`),
@@ -298,12 +299,24 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(secret=)[^\s&"']+`),
 	regexp.MustCompile(`(?i)(api[-_]?key[=:\s]+)[^\s"']+`),
 	regexp.MustCompile(`(?i)(authorization:\s+)[^\s"']+`),
+	regexp.MustCompile(`sk-[a-zA-Z0-9]{20,}`),                              // OpenAI API keys
+	regexp.MustCompile(`ghp_[a-zA-Z0-9]{36,}`),                            // GitHub personal access tokens
+	regexp.MustCompile(`gho_[a-zA-Z0-9]{36,}`),                            // GitHub OAuth tokens
+	regexp.MustCompile(`ghs_[a-zA-Z0-9]{36,}`),                            // GitHub server tokens
+	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),                                // AWS access key IDs
+	regexp.MustCompile(`(?i)-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----`),     // Private keys
 }
 
 // scrubSecrets redacts known credential patterns from text.
 func scrubSecrets(s string) string {
 	for _, p := range secretPatterns {
-		s = p.ReplaceAllString(s, "${1}[REDACTED]")
+		if p.NumSubexp() > 0 {
+			// Pattern has capture group — preserve prefix, redact the rest
+			s = p.ReplaceAllString(s, "${1}[REDACTED]")
+		} else {
+			// No capture group — replace entire match
+			s = p.ReplaceAllString(s, "[REDACTED]")
+		}
 	}
 	return s
 }
