@@ -381,7 +381,9 @@ func (p *VertexProvider) geminiGenerateContent(ctx context.Context, req ChatRequ
 		Candidates []struct {
 			Content struct {
 				Parts []struct {
-					Text string `json:"text"`
+					Text             string                 `json:"text,omitempty"`
+					ThoughtSignature string                 `json:"thoughtSignature,omitempty"`
+					FunctionCall     map[string]interface{} `json:"functionCall,omitempty"`
 				} `json:"parts"`
 			} `json:"content"`
 		} `json:"candidates"`
@@ -398,7 +400,17 @@ func (p *VertexProvider) geminiGenerateContent(ctx context.Context, req ChatRequ
 	text := ""
 	if len(gemResp.Candidates) > 0 {
 		for _, part := range gemResp.Candidates[0].Content.Parts {
-			text += part.Text
+			if part.Text != "" {
+				text += part.Text
+			}
+			// thoughtSignature and functionCall parts are acknowledged but
+			// not yet fully supported — log for debugging
+			if part.ThoughtSignature != "" {
+				log.Printf("[Vertex] Gemini thought_signature received (thinking model)")
+			}
+			if part.FunctionCall != nil {
+				log.Printf("[Vertex] Gemini functionCall received: %v", part.FunctionCall)
+			}
 		}
 	}
 
