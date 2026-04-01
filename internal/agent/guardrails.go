@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"log"
 	"strings"
 )
 
@@ -62,7 +63,9 @@ func (g *MaxLengthGuardrail) Validate(content string) *GuardrailResult {
 	return &GuardrailResult{Passed: true}
 }
 
-// SecretPatternGuardrail blocks content that appears to contain secrets.
+// SecretPatternGuardrail warns when content appears to contain secrets.
+// Does NOT block — users need to pass secrets for .env files, configs, etc.
+// Secrets are scrubbed from stored data by scrubSecrets() in tool_summarize.go.
 type SecretPatternGuardrail struct{}
 
 func (g *SecretPatternGuardrail) Name() string { return "secret_pattern" }
@@ -83,10 +86,11 @@ func (g *SecretPatternGuardrail) Validate(content string) *GuardrailResult {
 	}
 	for _, p := range patterns {
 		if strings.Contains(lower, p) {
+			log.Printf("[Guardrail] secret pattern detected in input — will be scrubbed from stored data")
 			return &GuardrailResult{
-				Passed: false,
-				Reason: "content may contain secrets or credentials",
-				Action: "block",
+				Passed: true,
+				Reason: "content may contain secrets — will be scrubbed from stored data",
+				Action: "warn",
 			}
 		}
 	}

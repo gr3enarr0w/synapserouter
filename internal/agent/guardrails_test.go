@@ -23,6 +23,8 @@ func TestSecretPatternGuardrail(t *testing.T) {
 		t.Error("normal content should pass")
 	}
 
+	// Secrets should PASS (warn, not block) — users need to pass secrets for .env files etc.
+	// Secrets are scrubbed from stored data by scrubSecrets().
 	secrets := []string{
 		"API_KEY=abc123",
 		"password=hunter2",
@@ -32,8 +34,12 @@ func TestSecretPatternGuardrail(t *testing.T) {
 		"-----BEGIN RSA PRIVATE KEY-----",
 	}
 	for _, s := range secrets {
-		if result := g.Validate(s); result.Passed {
-			t.Errorf("should block secret: %q", s)
+		result := g.Validate(s)
+		if !result.Passed {
+			t.Errorf("should warn (not block) secret: %q", s)
+		}
+		if result.Action != "warn" {
+			t.Errorf("action should be 'warn' for %q, got %q", s, result.Action)
 		}
 	}
 }
@@ -61,8 +67,9 @@ func TestGuardrailChain(t *testing.T) {
 	if result := chain.Validate("hello"); !result.Passed {
 		t.Error("normal content should pass chain")
 	}
-	if result := chain.Validate("API_KEY=secret123"); result.Passed {
-		t.Error("secret should fail chain")
+	// Secret should pass chain (warn, not block)
+	if result := chain.Validate("API_KEY=secret123"); !result.Passed {
+		t.Error("secret should pass chain (warn only)")
 	}
 }
 
