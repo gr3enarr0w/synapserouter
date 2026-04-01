@@ -35,6 +35,10 @@ type Message struct {
 	Name       string                   `json:"name,omitempty"`
 	ToolCallID string                   `json:"tool_call_id,omitempty"`
 	ToolCalls  []map[string]interface{} `json:"tool_calls,omitempty"`
+	// ProviderMeta holds provider-specific data that must be preserved across
+	// turns (e.g., Gemini thoughtSignature for thinking model continuity).
+	// Not serialized to OpenAI-format JSON — only used internally.
+	ProviderMeta map[string]interface{} `json:"-"`
 }
 
 // ChatResponse represents an OpenAI-compatible chat response

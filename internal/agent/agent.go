@@ -47,7 +47,13 @@ type Agent struct {
 	config       Config
 	sessionID    string
 
-	// Run context — stored so sub-agent phases can inherit cancellation
+	// runCtx is set at the start of Run() and used by sub-agent phases and MCP
+	// tool calls to inherit the parent's cancellation signal. The Agent loop is
+	// single-threaded (Run blocks until complete, sub-agents get clones), so
+	// there is no concurrent write race on this field. This deviates from the Go
+	// blog guidance to pass context as a parameter, but the pipeline advancement
+	// methods are called from deep within the agent loop where threading ctx
+	// through all callers would require significant refactoring.
 	runCtx context.Context
 
 	// Sub-agent hierarchy
@@ -1351,6 +1357,8 @@ func countBefore(chain []orchestration.Skill, name string) int {
 // invokeMCPToolsForSkills calls MCP tools bound to the matched skill chain
 // and returns formatted results. Gracefully skips if MCPClient is nil or
 // individual tool calls fail.
+// invokeMCPToolsForSkills uses a.runCtx for timeout (set in Run() before buildMessages).
+// Cannot pass ctx as parameter because this is called via sync.Once in matchedSkillContext().
 func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query string) string {
 	if a.config.MCPClient == nil {
 		return ""
@@ -1365,7 +1373,7 @@ func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query strin
 	if parentCtx == nil {
 		parentCtx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(parentCtx, 15*time.Second)
+	mcpCtx, cancel := context.WithTimeout(parentCtx, 15*time.Second)
 	defer cancel()
 
 	var b strings.Builder
@@ -1373,7 +1381,7 @@ func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query strin
 	hasResults := false
 
 	for _, toolName := range mcpTools {
-		result, err := a.config.MCPClient.CallTool(ctx, mcp.ToolCall{
+		result, err := a.config.MCPClient.CallTool(mcpCtx, mcp.ToolCall{
 			ToolName:  toolName,
 			Arguments: map[string]interface{}{"query": query},
 		})
@@ -2923,7 +2931,6 @@ TAKE ACTION NOW: write code, don't read more.`, repeats),
 // For implement phases: dynamic role assignment — agent 1 implements, agent 2 tests,
 // agent 3+ bug-reviews. Stage 2 cross-review: each model reviews another's output.
 func (a *Agent) runParallelPhase(phase PipelinePhase) string {
-	// Inherit parent context so cancellation propagates to sub-agents
 	parentCtx := a.runCtx
 	if parentCtx == nil {
 		parentCtx = context.Background()
