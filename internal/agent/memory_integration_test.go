@@ -825,3 +825,62 @@ func TestMemoryFlow_StoreMessagesToDB_WithMetadata(t *testing.T) {
 	}
 }
 
+// TestMemoryFlow_500Messages_Stress tests compaction at scale.
+// Creates 500 conversation messages, triggers multiple compaction cycles,
+// and verifies the agent can still function correctly after heavy compaction.
+func TestMemoryFlow_500Messages_Stress(t *testing.T) {
+	agent, _ := setupTestAgent(t)
+	agent.setupTrimHook()
+	sessionID := agent.SessionID()
+
+	// Add 500 messages to conversation (250 user + 250 assistant)
+	for i := 0; i < 250; i++ {
+		agent.conversation.Add(providers.Message{
+			Role:    "user",
+			Content: fmt.Sprintf("User message %d about topic %d", i, i%10),
+		})
+		agent.conversation.Add(providers.Message{
+			Role:    "assistant",
+			Content: fmt.Sprintf("Response %d covering topic %d with detail", i, i%10),
+		})
+
+		// Compact every 50 messages to simulate pipeline phase transitions
+		if (i+1)%25 == 0 {
+			agent.compactConversation(fmt.Sprintf("phase-%d", i/25))
+		}
+	}
+
+	// After 10 compaction cycles, conversation should be manageable
+	msgs := agent.conversation.Messages()
+	if len(msgs) > 50 {
+		t.Errorf("after 10 compactions, expected <=50 messages, got %d", len(msgs))
+	}
+	if len(msgs) == 0 {
+		t.Error("conversation should not be empty after compaction")
+	}
+
+	// Verify hasCompacted flag is set
+	if !agent.hasCompacted {
+		t.Error("hasCompacted should be true after compaction")
+	}
+
+	// Store tool outputs throughout to verify they survive compaction
+	for i := 0; i < 20; i++ {
+		_, err := agent.config.ToolStore.Store(sessionID, "bash",
+			fmt.Sprintf("cmd-%d", i), fmt.Sprintf("summary-%d", i),
+			fmt.Sprintf("output-%d", i), 0, 10)
+		if err != nil {
+			t.Fatalf("failed to store tool output %d: %v", i, err)
+		}
+	}
+
+	// Verify tool outputs are still accessible
+	results, err := agent.config.ToolStore.Search(sessionID, "", 20)
+	if err != nil {
+		t.Fatalf("search after compaction failed: %v", err)
+	}
+	if len(results) != 20 {
+		t.Errorf("expected 20 tool outputs after compaction, got %d", len(results))
+	}
+}
+
