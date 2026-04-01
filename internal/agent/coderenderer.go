@@ -257,9 +257,10 @@ func (cr *CodeRenderer) Resize(width, height int) {
 	cr.height = height
 }
 
-// writeContent writes a line of output, wrapping naturally at terminal width.
+// writeContent writes a line of output. Uses \r\n for raw terminal mode
+// so the cursor returns to column 0 (raw mode doesn't translate \n to \r\n).
 func (cr *CodeRenderer) writeContent(line string) {
-	fmt.Fprintln(cr.out, line)
+	fmt.Fprint(cr.out, line+"\r\n")
 }
 
 // --- Event handling ---
