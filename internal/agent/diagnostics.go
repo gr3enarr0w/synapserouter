@@ -34,15 +34,15 @@ func (a *Agent) writeDiagnostics(startTime time.Time) {
 	report := a.buildDiagnosticsReport(startTime)
 	content := formatDiagnosticsReport(report)
 
-	// Write to a temp file and rename for atomicity (prevents interleaved output
-	// from concurrent agents writing to the same synroute.md)
+	// Append-only write — avoids read-modify-write race between concurrent agents.
+	// Each agent appends its report independently; no data is lost.
 	path := filepath.Join(a.config.WorkDir, diagnosticsFile)
-	tmp := path + "." + a.sessionID + ".tmp"
-	existing, _ := os.ReadFile(path)
-	if err := os.WriteFile(tmp, append(existing, []byte(content)...), 0644); err != nil {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
 		return // best-effort
 	}
-	os.Rename(tmp, path) // atomic on POSIX
+	f.Write([]byte(content))
+	f.Close()
 }
 
 func (a *Agent) buildDiagnosticsReport(startTime time.Time) DiagnosticsReport {
