@@ -285,5 +285,12 @@ func RunOneShot(ctx context.Context, executor ChatExecutor, registry *tools.Regi
 	registry.Register(NewHandoffTool(ag))
 	ag.SetInputGuardrails(NewGuardrailChain(&SecretPatternGuardrail{}))
 
-	return ag.Run(ctx, message)
+	response, err := ag.Run(ctx, message)
+
+	// Save session so one-shot runs are resumable via --resume
+	if config.DB != nil {
+		_ = ag.SaveState(config.DB)
+	}
+
+	return response, err
 }
