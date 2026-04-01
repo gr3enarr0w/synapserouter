@@ -305,6 +305,10 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`ghs_[a-zA-Z0-9]{36,}`),                            // GitHub server tokens
 	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),                                // AWS access key IDs
 	regexp.MustCompile(`(?i)-----BEGIN\s+[\w\s]*PRIVATE\s+KEY-----`),       // Private keys (RSA, EC, DSA, OpenSSH, etc.)
+	regexp.MustCompile(`sk_(?:live|test)_[a-zA-Z0-9]{20,}`),               // Stripe API keys
+	regexp.MustCompile(`xox[bpoa]-[a-zA-Z0-9\-]{10,}`),                   // Slack tokens (bot, user, app, admin)
+	regexp.MustCompile(`SG\.[a-zA-Z0-9_\-]{20,}`),                        // SendGrid API keys
+	regexp.MustCompile(`(?:AC|SK)[a-f0-9]{32}`),                           // Twilio Account SID / Auth tokens
 }
 
 // scrubSecrets redacts known credential patterns from text.

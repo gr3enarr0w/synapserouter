@@ -176,6 +176,11 @@ func TestScrubSecrets_ProviderTokens(t *testing.T) {
 		{"private key EC", "-----BEGIN EC PRIVATE KEY-----\nMHQC...", "-----BEGIN EC PRIVATE KEY-----"},
 		{"private key OpenSSH", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl...", "-----BEGIN OPENSSH PRIVATE KEY-----"},
 		{"standalone OpenAI key", "The key is sk-proj-abc123def456ghi789jkl012mno345pqr678 here", "sk-proj-abc123def456ghi789jkl012mno345pqr678"},
+		{"Stripe live key", "STRIPE_KEY=sk_live_abc123def456ghi789jkl012mno345", "sk_live_abc123def456ghi789jkl012mno345"},
+		{"Stripe test key", "sk_test_4eC39HqLyjWDarjtT1zdp7dc", "sk_test_4eC39HqLyjWDarjtT1zdp7dc"},
+		{"Slack bot token", "SLACK_TOKEN=xoxb-1234567890-1234567890123-abcdefghijklmnopqrstuvwx", "xoxb-1234567890-1234567890123-abcdefghijklmnopqrstuvwx"},
+		{"SendGrid key", "SG.abc123_def456-ghi789_jkl012mno", "SG.abc123_def456-ghi789_jkl012mno"},
+		{"Twilio SID", "TWILIO_SID=AC1234567890abcdef1234567890abcdef", "AC1234567890abcdef1234567890abcdef"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

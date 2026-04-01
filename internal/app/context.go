@@ -67,6 +67,9 @@ func InitLight(ctx context.Context) (*AppContext, error) {
 	if err != nil {
 		return nil, err
 	}
+	// SQLite connection limits — prevents bottleneck with concurrent agents
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(2)
 
 	// Run embedded migrations if registered (ensures all tables exist for code mode)
 	if hasMigrations {

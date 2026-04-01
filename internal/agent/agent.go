@@ -1379,10 +1379,18 @@ func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query strin
 		})
 		if err != nil {
 			log.Printf("[Agent] MCP tool %s failed: %v", toolName, err)
+			b.WriteString(fmt.Sprintf("\n[MCP:%s] ERROR: %v\n", toolName, err))
+			hasResults = true // include error in results so LLM knows what failed
 			continue
 		}
 		if result == nil || !result.Success {
-			log.Printf("[Agent] MCP tool %s returned no result or failed", toolName)
+			errMsg := "no result"
+			if result != nil && result.Error != "" {
+				errMsg = result.Error
+			}
+			log.Printf("[Agent] MCP tool %s failed: %s", toolName, errMsg)
+			b.WriteString(fmt.Sprintf("\n[MCP:%s] ERROR: %s\n", toolName, errMsg))
+			hasResults = true
 			continue
 		}
 
