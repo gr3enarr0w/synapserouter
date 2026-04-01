@@ -1236,7 +1236,7 @@ func (a *Agent) buildMessages() []providers.Message {
 				})
 				msgs = append(msgs, providers.Message{
 					Role:    "assistant",
-					Content: "Understood, I have the retrieved context from earlier in the session.",
+					Content: "Understood, I have the retrieved context. I can also use recall() to access full tool outputs from earlier in the session.",
 				})
 			}
 		}
@@ -3293,9 +3293,19 @@ Your job:
 		}
 	}
 
-	// Merge via MergeProvider if configured (e.g., Codex synthesizes 2 plans)
-	if phase.MergeProvider != "" {
-		log.Printf("[Agent] merging parallel results via %s", phase.MergeProvider)
+	// Merge via MergeProvider if configured (e.g., synthesize 2 plans into 1)
+	mergeProvider := phase.MergeProvider
+	if mergeProvider == "auto" {
+		// Resolve from escalation chain — use the highest available provider
+		if len(a.config.EscalationChain) > 0 {
+			top := a.config.EscalationChain[len(a.config.EscalationChain)-1]
+			if len(top.Providers) > 0 {
+				mergeProvider = top.Providers[0]
+			}
+		}
+	}
+	if mergeProvider != "" && mergeProvider != "auto" {
+		log.Printf("[Agent] merging parallel results via %s", mergeProvider)
 		mergeTask := fmt.Sprintf(`Multiple models produced independent plans for the same task. Synthesize the BEST plan by:
 1. Taking the strongest acceptance criteria from each
 2. Combining the most thorough task decomposition
@@ -3321,13 +3331,13 @@ Output the MERGED plan with complete acceptance criteria that reference the skil
 
 		merged, err := a.RunChild(ctx, SpawnConfig{
 			Role:     "plan-merger",
-			Provider: phase.MergeProvider,
+			Provider: mergeProvider,
 		}, mergeTask)
 		if err != nil {
-			log.Printf("[Agent] merge via %s failed: %v, using combined output", phase.MergeProvider, err)
+			log.Printf("[Agent] merge via %s failed: %v, using combined output", mergeProvider, err)
 			return combined.String()
 		}
-		log.Printf("[Agent] plan merge completed via %s", phase.MergeProvider)
+		log.Printf("[Agent] plan merge completed via %s", mergeProvider)
 		return merged
 	}
 

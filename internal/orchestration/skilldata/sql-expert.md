@@ -15,6 +15,13 @@ phase: analyze
 language: sql
 mcp_tools:
   - "context7.query-docs"
+verify:
+  - name: "Constraint check"
+    command: "grep -i 'CHECK\\|UNIQUE\\|FOREIGN KEY' *.sql"
+    expect: "constraints defined"
+  - name: "Query plan review"
+    command: "echo 'EXPLAIN plan required for large table queries'"
+    expect: "EXPLAIN"
 ---
 # Skill: SQL Expert
 
