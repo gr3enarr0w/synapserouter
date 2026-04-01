@@ -1,0 +1,20 @@
+use knapsack::*;
+
+{% for test in cases %}
+#[test]
+#[ignore]
+fn {{ test.description | make_ident }}() {
+    let max_weight = {{ test.input.maximumWeight }};
+    let items = [
+        {% for item in test.input.items -%}
+            Item {
+                weight: {{ item.weight }},
+                value: {{ item.value }},
+            },
+        {% endfor -%}
+    ];
+    let output = maximum_value(max_weight, &items);
+    let expected = {{ test.expected | json_encode() }};
+    assert_eq!(output, expected);
+}
+{% endfor -%}

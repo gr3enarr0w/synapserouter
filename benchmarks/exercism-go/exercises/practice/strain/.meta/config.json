@@ -1,0 +1,35 @@
+{
+  "authors": [],
+  "contributors": [
+    "alebaffa",
+    "bitfield",
+    "ekingery",
+    "ferhatelmas",
+    "hilary",
+    "kytrinyx",
+    "leenipper",
+    "petertseng",
+    "robphoenix",
+    "sebito91",
+    "soniakeys",
+    "eklatzer",
+    "junedev"
+  ],
+  "files": {
+    "solution": [
+      "strain.go"
+    ],
+    "test": [
+      "strain_test.go"
+    ],
+    "example": [
+      ".meta/example.go"
+    ],
+    "invalidator": [
+      "go.mod"
+    ]
+  },
+  "blurb": "Implement the `keep` and `discard` operation on collections.",
+  "source": "Conversation with James Edward Gray II",
+  "source_url": "http://graysoftinc.com/"
+}

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org"
+      th:fragment="layout(template, title)">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title th:text="${title}">PetClinic</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"/>
+  <style>
+    body { padding-top: 70px; }
+    .container { max-width: 960px; }
+    .table th, .table td { vertical-align: middle; }
+    .nav-link.active { font-weight: bold; }
+  </style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
+  <div class="container">
+    <a class="navbar-brand" th:href="@{/}">
+      <span>🏥</span> PetClinic
+    </a>
+    <div class="collapse navbar-collapse">
+      <ul class="navbar-nav me-auto">
+        <li class="nav-item">
+          <a class="nav-link" th:href="@{/}">Home</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" th:href="@{/owners/find}">Find Owners</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" th:href="@{/vets.html}">Veterinarians</a>
+        </li>
+      </ul>
+    </div>
+  </div>
+</nav>
+<div class="container">
+  <div th:replace="${template}">
+    Content goes here
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

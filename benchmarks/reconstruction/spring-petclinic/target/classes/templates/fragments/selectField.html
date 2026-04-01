@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org">
+<body>
+<div th:fragment="selectField(label, fieldName, items)">
+  <div class="mb-3">
+    <label class="form-label" th:text="${label}">Label</label>
+    <select class="form-select" th:field="*{__${fieldName}__}">
+      <option th:each="item : ${items}"
+              th:value="${item}"
+              th:text="${item}">Item</option>
+    </select>
+  </div>
+</div>
+</body>
+</html>

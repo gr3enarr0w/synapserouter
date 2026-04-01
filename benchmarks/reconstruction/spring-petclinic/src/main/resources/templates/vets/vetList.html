@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org"
+      th:replace="~{fragments/layout :: layout(~{::body/div}, 'Veterinarians')}">
+<body>
+<div>
+  <h2>Veterinarians</h2>
+  <table class="table table-striped">
+    <thead>
+    <tr>
+      <th>Name</th>
+      <th>Specialties</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr th:each="vet : ${listVets}">
+      <td th:text="${vet.firstName + ' ' + vet.lastName}">Name</td>
+      <td>
+        <span th:if="${vet.nrOfSpecialties == 0}">none</span>
+        <span th:each="specialty, iterStat : ${vet.specialties}"
+              th:text="${specialty.name + (iterStat.last ? '' : ', ')}">Specialty</span>
+      </td>
+    </tr>
+    </tbody>
+  </table>
+
+  <nav th:if="${totalPages > 1}">
+    <ul class="pagination">
+      <li class="page-item" th:classappend="${currentPage == 1} ? 'disabled'">
+        <a class="page-link" th:href="@{/vets.html(page=${currentPage - 1})}">Previous</a>
+      </li>
+      <li class="page-item" th:each="i : ${#numbers.sequence(1, totalPages)}"
+          th:classappend="${i == currentPage} ? 'active'">
+        <a class="page-link" th:href="@{/vets.html(page=${i})}" th:text="${i}">1</a>
+      </li>
+      <li class="page-item" th:classappend="${currentPage == totalPages} ? 'disabled'">
+        <a class="page-link" th:href="@{/vets.html(page=${currentPage + 1})}">Next</a>
+      </li>
+    </ul>
+  </nav>
+</div>
+</body>
+</html>

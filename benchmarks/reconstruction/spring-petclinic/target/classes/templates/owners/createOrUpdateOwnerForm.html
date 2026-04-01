@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org"
+      th:replace="~{fragments/layout :: layout(~{::body/div}, 'Owner')}">
+<body>
+<div>
+  <h2>
+    <span th:if="${owner.isNew()}">New </span>Owner
+  </h2>
+  <form th:object="${owner}"
+        th:action="${owner.isNew()} ? @{/owners/new} : @{/owners/{ownerId}/edit(ownerId=${owner.id})}"
+        method="post">
+    <div th:replace="~{fragments/inputField :: inputField('First Name', 'firstName')}"/>
+    <div th:replace="~{fragments/inputField :: inputField('Last Name', 'lastName')}"/>
+    <div th:replace="~{fragments/inputField :: inputField('Address', 'address')}"/>
+    <div th:replace="~{fragments/inputField :: inputField('City', 'city')}"/>
+    <div th:replace="~{fragments/inputField :: inputField('Telephone', 'telephone')}"/>
+    <button class="btn btn-primary" type="submit">
+      <span th:if="${owner.isNew()}">Add Owner</span>
+      <span th:unless="${owner.isNew()}">Update Owner</span>
+    </button>
+  </form>
+</div>
+</body>
+</html>

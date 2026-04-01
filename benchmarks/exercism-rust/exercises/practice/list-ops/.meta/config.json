@@ -1,0 +1,20 @@
+{
+  "authors": [
+    "ellnix",
+    "senekor",
+    "Morgane55440"
+  ],
+  "files": {
+    "solution": [
+      "src/lib.rs",
+      "Cargo.toml"
+    ],
+    "test": [
+      "tests/list_ops.rs"
+    ],
+    "example": [
+      ".meta/example.rs"
+    ]
+  },
+  "blurb": "Implement basic list operations."
+}

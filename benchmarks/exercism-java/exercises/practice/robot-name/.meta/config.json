@@ -1,0 +1,41 @@
+{
+  "authors": [],
+  "contributors": [
+    "c-thornton",
+    "FridaTveit",
+    "jmluy",
+    "jmrunkle",
+    "jtigger",
+    "kytrinyx",
+    "lemoncurry",
+    "matthewmorgan",
+    "mirkoperillo",
+    "morrme",
+    "msomji",
+    "muzimuzhi",
+    "SleeplessByte",
+    "Smarticles101",
+    "sshine",
+    "stkent",
+    "superklamer",
+    "vasouv",
+    "vdemeester",
+    "Zaldrick"
+  ],
+  "files": {
+    "solution": [
+      "src/main/java/Robot.java"
+    ],
+    "test": [
+      "src/test/java/RobotTest.java"
+    ],
+    "example": [
+      ".meta/src/reference/java/Robot.java"
+    ],
+    "invalidator": [
+      "build.gradle"
+    ]
+  },
+  "blurb": "Manage robot factory settings.",
+  "source": "A debugging session with Paul Blackwell at gSchool."
+}

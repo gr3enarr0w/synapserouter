@@ -1,0 +1,21 @@
+package isogram
+
+import "testing"
+
+func TestIsIsogram(t *testing.T) {
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			if actual := IsIsogram(tc.input); actual != tc.expected {
+				t.Fatalf("IsIsogram(%q) = %t, want: %t", tc.input, actual, tc.expected)
+			}
+		})
+	}
+}
+
+func BenchmarkIsIsogram(b *testing.B) {
+	for range b.N {
+		for _, c := range testCases {
+			IsIsogram(c.input)
+		}
+	}
+}

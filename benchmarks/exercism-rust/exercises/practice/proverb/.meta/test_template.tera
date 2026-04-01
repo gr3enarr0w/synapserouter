@@ -1,0 +1,16 @@
+use proverb::*;
+
+{% for test in cases %}
+#[test]
+#[ignore]
+fn {{ test.description | make_ident }}() {
+    let input = &{{ test.input.strings | json_encode() }};
+    let output = build_proverb(input);
+    {% if test.expected | length == 0 -%}
+        let expected = String::new();
+    {%- else -%}
+        let expected: String = {{ test.expected | json_encode() }}.join("\n");
+    {%- endif %}
+    assert_eq!(output, expected);
+}
+{% endfor -%}

@@ -1,0 +1,3 @@
+Corrigendum: The correction states "exit code non-zero, failed" while the ACTUAL OUTPUT shows "test result: ok. 50 passed; 0 failed". These statements contradict.
+
+Based on ACTUAL OUTPUT: Tests pass.

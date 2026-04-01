@@ -1,0 +1,24 @@
+package acronym
+
+import (
+	"testing"
+)
+
+func TestAcronym(t *testing.T) {
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			actual := Abbreviate(tc.input)
+			if actual != tc.expected {
+				t.Errorf("Abbreviate(%q) = %q, want: %q", tc.input, actual, tc.expected)
+			}
+		})
+	}
+}
+
+func BenchmarkAcronym(b *testing.B) {
+	for range b.N {
+		for _, test := range testCases {
+			Abbreviate(test.input)
+		}
+	}
+}

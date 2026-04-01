@@ -1,0 +1,30 @@
+{
+  "authors": [],
+  "contributors": [
+    "ankorGH",
+    "jagdish-15",
+    "rchavarria",
+    "SleeplessByte",
+    "xarxziux"
+  ],
+  "files": {
+    "solution": [
+      "collatz-conjecture.js"
+    ],
+    "test": [
+      "collatz-conjecture.spec.js"
+    ],
+    "example": [
+      ".meta/proof.ci.js"
+    ]
+  },
+  "blurb": "Calculate the number of steps to reach 1 using the Collatz conjecture.",
+  "source": "Wikipedia",
+  "source_url": "https://en.wikipedia.org/wiki/Collatz_conjecture",
+  "custom": {
+    "version.tests.compatibility": "jest-27",
+    "flag.tests.task-per-describe": false,
+    "flag.tests.may-run-long": false,
+    "flag.tests.includes-optional": false
+  }
+}

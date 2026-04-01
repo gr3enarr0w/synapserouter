@@ -1,0 +1,29 @@
+{
+  "authors": [
+    "LegalizeAdulthood"
+  ],
+  "contributors": [
+    "cyborgsphinx",
+    "elyashiv",
+    "jackhughesweb",
+    "KevinWMatthews",
+    "kytrinyx",
+    "patricksjackson"
+  ],
+  "files": {
+    "solution": [
+      "series.cpp",
+      "series.h"
+    ],
+    "test": [
+      "series_test.cpp"
+    ],
+    "example": [
+      ".meta/example.cpp",
+      ".meta/example.h"
+    ]
+  },
+  "blurb": "Given a string of digits, output all the contiguous substrings of length `n` in that string.",
+  "source": "A subset of the Problem 8 at Project Euler",
+  "source_url": "https://projecteuler.net/problem=8"
+}

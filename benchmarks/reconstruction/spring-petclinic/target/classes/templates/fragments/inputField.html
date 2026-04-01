@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org">
+<body>
+<div th:fragment="inputField(label, fieldName)">
+  <div class="mb-3">
+    <label class="form-label" th:text="${label}">Label</label>
+    <input class="form-control" type="text"
+           th:field="*{__${fieldName}__}"
+           th:classappend="${#fields.hasErrors('__${fieldName}__')} ? 'is-invalid'"/>
+    <div class="invalid-feedback"
+         th:if="${#fields.hasErrors('__${fieldName}__')}"
+         th:errors="*{__${fieldName}__}">Error</div>
+  </div>
+</div>
+</body>
+</html>

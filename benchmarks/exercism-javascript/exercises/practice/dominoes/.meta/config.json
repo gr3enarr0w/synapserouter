@@ -1,0 +1,27 @@
+{
+  "authors": [
+    "chauchakching"
+  ],
+  "contributors": [
+    "jagdish-15",
+    "SleeplessByte"
+  ],
+  "files": {
+    "solution": [
+      "dominoes.js"
+    ],
+    "test": [
+      "dominoes.spec.js"
+    ],
+    "example": [
+      ".meta/proof.ci.js"
+    ]
+  },
+  "blurb": "Make a chain of dominoes.",
+  "custom": {
+    "version.tests.compatibility": "jest-27",
+    "flag.tests.task-per-describe": false,
+    "flag.tests.may-run-long": false,
+    "flag.tests.includes-optional": false
+  }
+}

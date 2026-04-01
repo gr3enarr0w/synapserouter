@@ -1,0 +1,22 @@
+{
+  "authors": [
+    "siebenschlaefer"
+  ],
+  "contributors": [
+    "elyashiv"
+  ],
+  "files": {
+    "solution": [
+      "two_fer.cpp",
+      "two_fer.h"
+    ],
+    "test": [
+      "two_fer_test.cpp"
+    ],
+    "example": [
+      ".meta/example.h"
+    ]
+  },
+  "blurb": "Create a sentence of the form \"One for X, one for me.\".",
+  "source_url": "https://github.com/exercism/problem-specifications/issues/757"
+}

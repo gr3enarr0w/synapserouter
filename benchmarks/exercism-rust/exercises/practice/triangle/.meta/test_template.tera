@@ -1,0 +1,70 @@
+{% for test_group in cases %}
+mod {{ test_group.description | split(pat=" ") | first }} {
+    use triangle::Triangle;
+
+{% for test in test_group.cases %}
+
+{% if test.property == "equilateral" %}
+#[test]
+#[ignore]
+{% if test.description is containing("float") %}
+#[cfg(feature = "generic")]
+{% endif -%}
+fn {{ test.description | make_ident }}() {
+    let input = {{ test.input.sides | json_encode() }};
+    let output = Triangle::build(input).unwrap();
+    {%- if test.expected %}
+        assert!(output.is_equilateral());
+    {% else %}
+        assert!(!output.is_equilateral());
+    {% endif -%}
+}
+
+{% elif test.property == "isosceles" %}
+#[test]
+#[ignore]
+{% if test.scenarios and test.scenarios is containing("floating-point") %}
+#[cfg(feature = "generic")]
+{% endif -%}
+fn {{ test.description | make_ident }}() {
+    let input = {{ test.input.sides | json_encode() }};
+    let output = Triangle::build(input).unwrap();
+    {%- if test.expected %}
+        assert!(output.is_isosceles());
+    {% else %}
+        assert!(!output.is_isosceles());
+    {% endif -%}
+}
+
+{% elif test.property == "scalene" %}
+#[test]
+#[ignore]
+{% if test.scenarios and test.scenarios is containing("floating-point") %}
+#[cfg(feature = "generic")]
+{% endif -%}
+fn {{ test.description | make_ident }}() {
+    let input = {{ test.input.sides | json_encode() }};
+    let output = Triangle::build(input).unwrap();
+    {%- if test.expected %}
+        assert!(output.is_scalene());
+    {% else %}
+        assert!(!output.is_scalene());
+    {% endif -%}
+}
+
+{% elif test.property == "invalid" %}
+#[test]
+#[ignore]
+{% if test.scenarios and test.scenarios is containing("floating-point") %}
+#[cfg(feature = "generic")]
+{% endif -%}
+fn {{ test.description | make_ident }}() {
+    let input = {{ test.input.sides | json_encode() }};
+    let output = Triangle::build(input);
+    assert!(output.is_none());
+}
+
+{% endif %}
+{% endfor %}
+}
+{% endfor %}

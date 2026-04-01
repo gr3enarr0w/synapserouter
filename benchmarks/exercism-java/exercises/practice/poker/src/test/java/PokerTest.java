@@ -1,0 +1,381 @@
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.util.Arrays;
+import java.util.Collections;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+public class PokerTest {
+    @Test
+    @DisplayName("single hand always wins")
+    public void oneHand() {
+        String hand = "4S 5S 7H 8D JC";
+        assertThat(new Poker(Collections.singletonList(hand)).getBestHands())
+            .containsExactly(hand);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("highest card out of all hands wins")
+    public void highestCardWins() {
+        String highest8 = "4D 5S 6S 8D 3C";
+        String highest10 = "2S 4C 7S 9H 10H";
+        String highestJ = "3S 4S 5D 6H JH";
+        assertThat(new Poker(Arrays.asList(highest8, highest10, highestJ)).getBestHands())
+            .containsExactly(highestJ);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("a tie has multiple winners")
+    public void tieHasMultipleWinners() {
+        String highest8 = "4D 5S 6S 8D 3C";
+        String highest10 = "2S 4C 7S 9H 10H";
+        String highestJh = "3S 4S 5D 6H JH";
+        String highestJd = "3H 4H 5C 6C JD";
+        assertThat(new Poker(Arrays.asList(highest8, highest10, highestJh, highestJd)).getBestHands())
+            .containsExactly(highestJh, highestJd);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("multiple hands with the same high cards, tie compares next highest ranked, down to last card")
+    public void sameHighCards() {
+        String nextHighest3 = "3S 5H 6S 8D 7H";
+        String nextHighest2 = "2S 5D 6D 8C 7S";
+        assertThat(new Poker(Arrays.asList(nextHighest3, nextHighest2)).getBestHands())
+            .containsExactly(nextHighest3);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("winning high card hand also has the lowest card")
+    public void winningWithLowestCard() {
+        String lowest2 = "2S 5H 6S 8D 7H";
+        String lowest3 = "3S 4D 6D 8C 7S";
+        assertThat(new Poker(Arrays.asList(lowest2, lowest3)).getBestHands())
+            .containsExactly(lowest2);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("one pair beats high card")
+    public void nothingVsOnePair() {
+        String nothing = "4S 5H 6C 8D KH";
+        String pairOf4 = "2S 4H 6S 4D JH";
+        assertThat(new Poker(Arrays.asList(nothing, pairOf4)).getBestHands())
+            .containsExactly(pairOf4);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("highest pair wins")
+    public void twoPairs() {
+        String pairOf2 = "4S 2H 6S 2D JH";
+        String pairOf4 = "2S 4H 6C 4D JD";
+        assertThat(new Poker(Arrays.asList(pairOf2, pairOf4)).getBestHands())
+            .containsExactly(pairOf4);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("both hands have the same pair, high card wins")
+    public void samePair() {
+        String pairOf4Lower = "4H 4S AH JC 3D";
+        String pairOf4Higher = "4C 4D AS 5D 6C";
+        assertThat(new Poker(Arrays.asList(pairOf4Lower, pairOf4Higher)).getBestHands())
+            .containsExactly(pairOf4Lower);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("two pairs beats one pair")
+    public void onePairVsDoublePair() {
+        String pairOf8 = "2S 8H 6S 8D JH";
+        String doublePair = "4S 5H 4C 8C 5C";
+        assertThat(new Poker(Arrays.asList(pairOf8, doublePair)).getBestHands())
+            .containsExactly(doublePair);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("both hands have two pairs, highest ranked pair wins")
+    public void twoDoublePairs() {
+        String doublePair2And8 = "2S 8H 2D 8D 3H";
+        String doublePair4And5 = "4S 5H 4C 8S 5D";
+        assertThat(new Poker(Arrays.asList(doublePair2And8, doublePair4And5)).getBestHands())
+            .containsExactly(doublePair2And8);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("both hands have two pairs, with the same highest ranked pair, tie goes to low pair")
+    public void sameHighestPair() {
+        String doublePair2AndQ = "2S QS 2C QD JH";
+        String doublePairJAndQ = "JD QH JS 8D QC";
+        assertThat(new Poker(Arrays.asList(doublePairJAndQ, doublePair2AndQ)).getBestHands())
+            .containsExactly(doublePairJAndQ);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("both hands have two identically ranked pairs, tie goes to remaining card (kicker)")
+    public void identicallyRankedPairs() {
+        String kicker8 = "JD QH JS 8D QC";
+        String kicker2 = "JS QS JC 2D QD";
+        assertThat(new Poker(Arrays.asList(kicker8, kicker2)).getBestHands())
+            .containsExactly(kicker8);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("both hands have two pairs that add to the same value, win goes to highest pair")
+    public void twoPairsAddingToSameValue() {
+        String doublePair6And3 = "6S 6H 3S 3H AS";
+        String doublePair7And2 = "7H 7S 2H 2S AC";
+        assertThat(new Poker(Arrays.asList(doublePair6And3, doublePair7And2)).getBestHands())
+            .containsExactly(doublePair7And2);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("two pairs first ranked by largest pair")
+    public void rankedByLargestPair() {
+        String doublePairs5And4 = "5C 2S 5S 4H 4C";
+        String doublePairs6And2 = "6S 2S 6H 7C 2C";
+        assertThat(new Poker(Arrays.asList(doublePairs5And4, doublePairs6And2)).getBestHands())
+            .containsExactly(doublePairs6And2);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("three of a kind beats two pair")
+    public void doublePairVsThree() {
+        String doublePair2And8 = "2S 8H 2H 8D JH";
+        String threeOf4 = "4S 5H 4C 8S 4H";
+        assertThat(new Poker(Arrays.asList(doublePair2And8, threeOf4)).getBestHands())
+            .containsExactly(threeOf4);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("both hands have three of a kind, tie goes to highest ranked triplet")
+    public void twoThrees() {
+        String threeOf2 = "2S 2H 2C 8D JH";
+        String threeOf1 = "4S AH AS 8C AD";
+        assertThat(new Poker(Arrays.asList(threeOf2, threeOf1)).getBestHands())
+            .containsExactly(threeOf1);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("with multiple decks, two players can have same three of a kind, ties go to highest remaining cards")
+    public void sameThreesMultipleDecks() {
+        String remainingCard7 = "5S AH AS 7C AD";
+        String remainingCard8 = "4S AH AS 8C AD";
+        assertThat(new Poker(Arrays.asList(remainingCard7, remainingCard8)).getBestHands())
+            .containsExactly(remainingCard8);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("a straight beats three of a kind")
+    public void threeVsStraight() {
+        String threeOf4 = "4S 5H 4C 8D 4H";
+        String straight = "3S 4D 2S 6D 5C";
+        assertThat(new Poker(Arrays.asList(threeOf4, straight)).getBestHands())
+            .containsExactly(straight);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("aces can end a straight (10 J Q K A)")
+    public void acesCanEndAStraight() {
+        String hand = "4S 5H 4C 8D 4H";
+        String straightEndsA = "10D JH QS KD AC";
+        assertThat(new Poker(Arrays.asList(hand, straightEndsA)).getBestHands())
+            .containsExactly(straightEndsA);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("aces can start a straight (A 2 3 4 5)")
+    public void acesCanStartAStraight() {
+        String hand = "4S 5H 4C 8D 4H";
+        String straightStartA = "4D AH 3S 2D 5C";
+        assertThat(new Poker(Arrays.asList(hand, straightStartA)).getBestHands())
+            .containsExactly(straightStartA);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("aces cannot be in the middle of a straight (Q K A 2 3)")
+    public void acesCannotBeInMiddleOfStraight() {
+        String hand = "2C 3D 7H 5H 2S";
+        String straightMiddleA = "QS KH AC 2D 3S";
+        assertThat(new Poker(Arrays.asList(hand, straightMiddleA)).getBestHands())
+            .containsExactly(hand);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("both hands with a straight, tie goes to highest ranked card")
+    public void twoStraights() {
+        String straightTo8 = "4S 6C 7S 8D 5H";
+        String straightTo9 = "5S 7H 8S 9D 6H";
+        assertThat(new Poker(Arrays.asList(straightTo8, straightTo9)).getBestHands())
+            .containsExactly(straightTo9);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("even though an ace is usually high, a 5-high straight is the lowest-scoring straight")
+    public void theLowestStraightStartsWithAce() {
+        String straight = "2H 3C 4D 5D 6H";
+        String straightStartA = "4S AH 3S 2D 5H";
+        assertThat(new Poker(Arrays.asList(straight, straightStartA)).getBestHands())
+            .containsExactly(straight);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("flush beats a straight")
+    public void straightVsFlush() {
+        String straightTo8 = "4C 6H 7D 8D 5H";
+        String flushTo7 = "2S 4S 5S 6S 7S";
+        assertThat(new Poker(Arrays.asList(straightTo8, flushTo7)).getBestHands())
+            .containsExactly(flushTo7);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("both hands have a flush, tie goes to high card, down to the last one if necessary")
+    public void twoFlushs() {
+        String flushTo9 = "2H 7H 8H 9H 6H";
+        String flushTo7 = "3S 5S 6S 7S 8S";
+        assertThat(new Poker(Arrays.asList(flushTo9, flushTo7)).getBestHands())
+            .containsExactly(flushTo9);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("full house beats a flush")
+    public void flushVsFull() {
+        String flushTo8 = "3H 6H 7H 8H 5H";
+        String full = "4S 5H 4C 5D 4H";
+        assertThat(new Poker(Arrays.asList(full, flushTo8)).getBestHands())
+            .containsExactly(full);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("both hands have a full house, tie goes to highest-ranked triplet")
+    public void twoFulls() {
+        String fullOf4By9 = "4H 4S 4D 9S 9D";
+        String fullOf5By8 = "5H 5S 5D 8S 8D";
+        assertThat(new Poker(Arrays.asList(fullOf4By9, fullOf5By8)).getBestHands())
+            .containsExactly(fullOf5By8);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("with multiple decks, both hands have a full house with the same triplet, tie goes to the pair")
+    public void twoFullssameThripletMultipleDecks() {
+        String fullOf5By9 = "5H 5S 5D 9S 9D";
+        String fullOf5By8 = "5H 5S 5D 8S 8D";
+        assertThat(new Poker(Arrays.asList(fullOf5By9, fullOf5By8)).getBestHands())
+            .containsExactly(fullOf5By9);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("four of a kind beats a full house")
+    public void fullVsSquare() {
+        String full = "4S 5H 4D 5D 4H";
+        String squareOf3 = "3S 3H 2S 3D 3C";
+        assertThat(new Poker(Arrays.asList(full, squareOf3)).getBestHands())
+            .containsExactly(squareOf3);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("both hands have four of a kind, tie goes to high quad")
+    public void twoSquares() {
+        String squareOf2 = "2S 2H 2C 8D 2D";
+        String squareOf5 = "4S 5H 5S 5D 5C";
+        assertThat(new Poker(Arrays.asList(squareOf2, squareOf5)).getBestHands())
+            .containsExactly(squareOf5);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("with multiple decks, both hands with identical four of a kind, tie determined by kicker")
+    public void sameSquaresMultipleDecks() {
+        String kicker2 = "3S 3H 2S 3D 3C";
+        String kicker4 = "3S 3H 4S 3D 3C";
+        assertThat(new Poker(Arrays.asList(kicker2, kicker4)).getBestHands())
+            .containsExactly(kicker4);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("straight flush beats four of a kind")
+    public void squareVsStraightFlush() {
+        String squareOf5 = "4S 5H 5S 5D 5C";
+        String straightFlushTo9 = "7S 8S 9S 6S 10S";
+        assertThat(new Poker(Arrays.asList(squareOf5, straightFlushTo9)).getBestHands())
+            .containsExactly(straightFlushTo9);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("aces can end a straight flush (10 J Q K A)")
+    public void acesEndingStraightFlush() {
+        String hand = "KC AH AS AD AC";
+        String straightFlushEndingWithA = "10C JC QC KC AC";
+        assertThat(new Poker(Arrays.asList(hand, straightFlushEndingWithA)).getBestHands())
+            .containsExactly(straightFlushEndingWithA);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("aces can start a straight flush (A 2 3 4 5)")
+    public void acesStartingStraightFlush() {
+        String straightFlushStartingWithA = "4H AH 3H 2H 5H";
+        String hand = "KS AH AS AD AC";
+        assertThat(new Poker(Arrays.asList(straightFlushStartingWithA, hand)).getBestHands())
+            .containsExactly(straightFlushStartingWithA);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("aces cannot be in the middle of a straight flush (Q K A 2 3)")
+    public void acesCannotBeInMiddleOfStraightFlush() {
+        String straightFlushWithAInMiddle = "QH KH AH 2H 3H";
+        String hand = "2C AC QC 10C KC";
+        assertThat(new Poker(Arrays.asList(straightFlushWithAInMiddle, hand)).getBestHands())
+            .containsExactly(hand);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("both hands have a straight flush, tie goes to highest-ranked card")
+    public void twoStraightFlushes() {
+        String straightFlushTo8 = "4H 6H 7H 8H 5H";
+        String straightFlushTo9 = "5S 7S 8S 9S 6S";
+        assertThat(new Poker(Arrays.asList(straightFlushTo8, straightFlushTo9)).getBestHands())
+            .containsExactly(straightFlushTo9);
+    }
+
+    @Disabled("Remove to run test")
+    @Test
+    @DisplayName("even though an ace is usually high, a 5-high straight flush is the lowest-scoring straight flush")
+    public void straightFlushTo5IsTheLowestScoring() {
+        String straightFlushTo6 = "2H 3H 4H 5H 6H";
+        String straightFlushTo5 = "4D AD 3D 2D 5D";
+        assertThat(new Poker(Arrays.asList(straightFlushTo6, straightFlushTo5)).getBestHands())
+            .containsExactly(straightFlushTo6);
+    }
+}

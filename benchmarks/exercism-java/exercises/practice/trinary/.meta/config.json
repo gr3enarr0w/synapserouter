@@ -1,0 +1,38 @@
+{
+  "blurb": "Convert a trinary number, represented as a string (e.g. '102012'), to its decimal equivalent using first principles.",
+  "authors": [
+    "PaulNoth"
+  ],
+  "contributors": [
+    "FridaTveit",
+    "jmrunkle",
+    "jtigger",
+    "kytrinyx",
+    "lemoncurry",
+    "matthewmorgan",
+    "msomji",
+    "muzimuzhi",
+    "SleeplessByte",
+    "Smarticles101",
+    "sshine",
+    "stkent",
+    "vdemeester",
+    "Zaldrick"
+  ],
+  "files": {
+    "solution": [
+      "src/main/java/Trinary.java"
+    ],
+    "test": [
+      "src/test/java/TrinaryTest.java"
+    ],
+    "example": [
+      ".meta/src/reference/java/Trinary.java"
+    ],
+    "invalidator": [
+      "build.gradle"
+    ]
+  },
+  "source": "All of Computer Science",
+  "source_url": "http://www.wolframalpha.com/input/?i=binary&a=*C.binary-_*MathWorld-"
+}

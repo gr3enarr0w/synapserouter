@@ -1,0 +1,33 @@
+{
+  "authors": [
+    "matthewmorgan"
+  ],
+  "contributors": [
+    "ankorGH",
+    "apapirovski",
+    "jagdish-15",
+    "ovidiu141",
+    "rchavarria",
+    "ryanplusplus",
+    "SleeplessByte",
+    "tejasbubane"
+  ],
+  "files": {
+    "solution": [
+      "custom-set.js"
+    ],
+    "test": [
+      "custom-set.spec.js"
+    ],
+    "example": [
+      ".meta/proof.ci.js"
+    ]
+  },
+  "blurb": "Create a custom set type.",
+  "custom": {
+    "version.tests.compatibility": "jest-27",
+    "flag.tests.task-per-describe": false,
+    "flag.tests.may-run-long": false,
+    "flag.tests.includes-optional": false
+  }
+}

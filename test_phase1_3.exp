@@ -1,0 +1,35 @@
+#!/usr/bin/expect -f
+set timeout 60
+log_user 1
+
+spawn env NO_COLOR=1 ./synroute code
+
+expect {
+    "synroute>" {}
+    timeout { puts "FAIL: prompt never appeared"; exit 1 }
+}
+
+# Turn 1
+send "hello\r"
+expect {
+    "synroute>" { puts "PASS_TURN_1: response + prompt" }
+    timeout { puts "FAIL: turn 1 no prompt"; exit 1 }
+}
+
+# Turn 2
+send "what does the ls command do\r"
+expect {
+    "synroute>" { puts "PASS_TURN_2: response + prompt" }
+    timeout { puts "FAIL: turn 2 no prompt"; exit 1 }
+}
+
+# Turn 3
+send "thanks\r"
+expect {
+    "synroute>" { puts "PASS_TURN_3: response + prompt" }
+    timeout { puts "FAIL: turn 3 no prompt"; exit 1 }
+}
+
+send "/exit\r"
+expect eof
+puts "Phase 1.3 COMPLETE - ALL PASS"

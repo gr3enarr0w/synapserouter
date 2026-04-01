@@ -1,0 +1,30 @@
+{
+  "authors": [
+    "matthewmorgan"
+  ],
+  "contributors": [
+    "rchavarria",
+    "slaymance",
+    "SleeplessByte",
+    "tejasbubane",
+    "xarxziux"
+  ],
+  "files": {
+    "solution": [
+      "alphametics.js"
+    ],
+    "test": [
+      "alphametics.spec.js"
+    ],
+    "example": [
+      ".meta/proof.ci.js"
+    ]
+  },
+  "blurb": "Given an alphametics puzzle, find the correct solution.",
+  "custom": {
+    "version.tests.compatibility": "jest-27",
+    "flag.tests.task-per-describe": false,
+    "flag.tests.may-run-long": false,
+    "flag.tests.includes-optional": false
+  }
+}

@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org"
+      th:replace="~{fragments/layout :: layout(~{::body/div}, 'Welcome')}">
+<body>
+<div>
+  <h2>Welcome to PetClinic</h2>
+  <div class="row">
+    <div class="col-md-12">
+      <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/Spring_Framework_Logo_2018.svg/320px-Spring_Framework_Logo_2018.svg.png"
+           alt="Spring Logo" style="max-width:200px;"/>
+      <p class="mt-3">A Spring Boot sample application demonstrating the use of Spring MVC,
+        Spring Data JPA, Thymeleaf, and Bootstrap.</p>
+    </div>
+  </div>
+</div>
+</body>
+</html>

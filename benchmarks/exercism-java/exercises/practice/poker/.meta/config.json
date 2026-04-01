@@ -1,0 +1,41 @@
+{
+  "authors": [
+    "Zaldrick"
+  ],
+  "contributors": [
+    "aadityakulkarni",
+    "FridaTveit",
+    "hgvanpariya",
+    "jagdish-15",
+    "jmrunkle",
+    "katmpatz",
+    "kytrinyx",
+    "lemoncurry",
+    "MartinDekanovsky",
+    "mirkoperillo",
+    "msomji",
+    "muzimuzhi",
+    "sjwarner-bp",
+    "SleeplessByte",
+    "Smarticles101",
+    "sshine",
+    "stkent"
+  ],
+  "files": {
+    "solution": [
+      "src/main/java/Poker.java"
+    ],
+    "test": [
+      "src/test/java/PokerTest.java"
+    ],
+    "example": [
+      ".meta/src/reference/java/Poker.java"
+    ],
+    "invalidator": [
+      "build.gradle"
+    ]
+  },
+  "blurb": "Pick the best hand(s) from a list of poker hands.",
+  "source": "Inspired by the training course from Udacity.",
+  "source_url": "https://www.udacity.com/course/design-of-computer-programs--cs212"
+}

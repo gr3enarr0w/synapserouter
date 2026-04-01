@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org"
+      th:replace="~{fragments/layout :: layout(~{::body/div}, 'Find Owners')}">
+<body>
+<div>
+  <h2>Find Owners</h2>
+  <form th:object="${owner}" th:action="@{/owners}" method="get" class="mb-3">
+    <div class="mb-3">
+      <label class="form-label">Last name</label>
+      <input class="form-control" th:field="*{lastName}" size="30" maxlength="80"/>
+      <span class="text-danger" th:if="${#fields.hasErrors('lastName')}" th:errors="*{lastName}">Error</span>
+    </div>
+    <button class="btn btn-primary" type="submit">Find Owner</button>
+  </form>
+  <br/>
+  <a class="btn btn-success" th:href="@{/owners/new}">Add Owner</a>
+</div>
+</body>
+</html>

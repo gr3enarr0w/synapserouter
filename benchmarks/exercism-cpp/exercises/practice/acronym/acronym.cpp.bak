@@ -1,0 +1,36 @@
+#include "acronym.h"
+
+#include <cctype>
+#include <string>
+#include <vector>
+
+namespace acronym {
+
+std::string generate_acronym(const std::string& phrase) {
+    std::vector<char> acronym;
+    std::string word;
+    
+    for (char ch : phrase) {
+        if (isalpha(ch)) {
+            word += toupper(ch);
+        } else if (ch == ' ' || ch == '-' || ch == '_') {
+            if (!word.empty()) {
+                acronym.push_back(word[0]);
+                word.clear();
+            }
+        } else if (ch == '\'') {
+            // Ignore apostrophes
+            continue;
+        }
+    }
+    
+    // Add the last word if it exists
+    if (!word.empty()) {
+        acronym.push_back(word[0]);
+    }
+    
+    // Convert the vector to a string
+    return std::string(acronym.begin(), acronym.end());
+}
+
+}  // namespace acronym

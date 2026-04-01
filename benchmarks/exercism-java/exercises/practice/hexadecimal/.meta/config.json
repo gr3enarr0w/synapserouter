@@ -1,0 +1,39 @@
+{
+  "blurb": "Convert a hexadecimal number, represented as a string (e.g. \"10af8c\"), to its decimal equivalent using first principles (i.e. no, you may not use built-in or external libraries to accomplish the conversion).",
+  "authors": [
+    "matthewmorgan"
+  ],
+  "contributors": [
+    "FridaTveit",
+    "javaeeeee",
+    "jmrunkle",
+    "jtigger",
+    "kytrinyx",
+    "lemoncurry",
+    "mirkoperillo",
+    "msomji",
+    "muzimuzhi",
+    "SleeplessByte",
+    "Smarticles101",
+    "sshine",
+    "stkent",
+    "t0dd",
+    "Zaldrick"
+  ],
+  "files": {
+    "solution": [
+      "src/main/java/Hexadecimal.java"
+    ],
+    "test": [
+      "src/test/java/HexadecimalTest.java"
+    ],
+    "example": [
+      ".meta/src/reference/java/Hexadecimal.java"
+    ],
+    "invalidator": [
+      "build.gradle"
+    ]
+  },
+  "source": "All of Computer Science",
+  "source_url": "http://www.wolframalpha.com/examples/NumberBases.html"
+}

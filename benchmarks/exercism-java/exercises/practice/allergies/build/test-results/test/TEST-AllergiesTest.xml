@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="AllergiesTest" tests="50" skipped="0" failures="0" errors="0" timestamp="2026-03-30T18:07:03.997Z" hostname="ceverson1-mac" time="0.053">
+  <properties/>
+  <testcase name="not allergic to anything" classname="AllergiesTest" time="0.023"/>
+  <testcase name="allergic to everything" classname="AllergiesTest" time="0.0"/>
+  <testcase name="no allergen score parts without highest valid score" classname="AllergiesTest" time="0.004"/>
+  <testcase name="more than eggs but not peanuts" classname="AllergiesTest" time="0.0"/>
+  <testcase name="no allergen score parts" classname="AllergiesTest" time="0.001"/>
+  <testcase name="allergic to something, but not shellfish" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to tomatoes and something else" classname="AllergiesTest" time="0.001"/>
+  <testcase name="everything" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to everything" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to everything" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to something, but not chocolate" classname="AllergiesTest" time="0.0"/>
+  <testcase name="not allergic to anything" classname="AllergiesTest" time="0.001"/>
+  <testcase name="not allergic to anything" classname="AllergiesTest" time="0.0"/>
+  <testcase name="just peanuts" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic only to chocolate" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to something, but not cats" classname="AllergiesTest" time="0.0"/>
+  <testcase name="not allergic to anything" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to peanuts and something else" classname="AllergiesTest" time="0.001"/>
+  <testcase name="lots of stuff" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to chocolate and something else" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to something, but not eggs" classname="AllergiesTest" time="0.001"/>
+  <testcase name="just strawberries" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic only to peanuts" classname="AllergiesTest" time="0.001"/>
+  <testcase name="allergic to everything" classname="AllergiesTest" time="0.0"/>
+  <testcase name="no allergies" classname="AllergiesTest" time="0.001"/>
+  <testcase name="allergic only to strawberries" classname="AllergiesTest" time="0.001"/>
+  <testcase name="allergic only to tomatoes" classname="AllergiesTest" time="0.0"/>
+  <testcase name="not allergic to anything" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to strawberries and something else" classname="AllergiesTest" time="0.001"/>
+  <testcase name="allergic only to eggs" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic only to pollen" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to cats and something else" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to everything" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to something, but not pollen" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to something, but not peanuts" classname="AllergiesTest" time="0.0"/>
+  <testcase name="just eggs" classname="AllergiesTest" time="0.0"/>
+  <testcase name="not allergic to anything" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to something, but not tomatoes" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic only to shellfish" classname="AllergiesTest" time="0.001"/>
+  <testcase name="allergic to eggs and something else" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to pollen and something else" classname="AllergiesTest" time="0.0"/>
+  <testcase name="not allergic to anything" classname="AllergiesTest" time="0.0"/>
+  <testcase name="not allergic to anything" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to everything" classname="AllergiesTest" time="0.001"/>
+  <testcase name="allergic to everything" classname="AllergiesTest" time="0.0"/>
+  <testcase name="eggs and peanuts" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to shellfish and something else" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to something, but not strawberries" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic only to cats" classname="AllergiesTest" time="0.0"/>
+  <testcase name="allergic to everything" classname="AllergiesTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

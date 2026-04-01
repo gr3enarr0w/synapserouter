@@ -1,0 +1,18 @@
+use perfect_numbers::*;
+
+{% for test_group in cases %}
+{% for test in test_group.cases %}
+#[test]
+#[ignore]
+fn {{ test.description | make_ident }}() {
+    let input = {{ test.input.number | fmt_num }};
+    let output = classify(input);
+{%- if test.expected is object %}
+    assert!(output.is_none());
+{% else %}
+    let expected = Some(Classification::{{ test.expected | title }});
+    assert_eq!(output, expected);
+{% endif -%}
+}
+{% endfor -%}
+{% endfor -%}

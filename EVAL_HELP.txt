@@ -1,0 +1,22 @@
+synroute eval — Multi-language eval framework
+Usage:
+synroute eval <command> [flags]
+Commands:
+import      Import exercises from benchmark repos
+import-all  Import all benchmarks from a directory
+exercises   List imported exercises by language
+run         Run evaluations
+results     Show results from a run
+compare     Compare two evaluation runs
+
+Examples:
+synroute eval import --source polyglot --path ~/polyglot-benchmark
+synroute eval import --source exercism --path ~/exercism-go --language go
+synroute eval import --source codecontests --path ~/code_contests --count 500
+synroute eval import-all --dir ~/eval-benchmarks
+synroute eval exercises --language go --json
+synroute eval run --language go --count 10 --two-pass
+synroute eval results --run-id eval-abc123 --json
+synroute eval compare --run-a eval-abc --run-b eval-def
+
+Use 'synroute eval <command> --help' for command details.

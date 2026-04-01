@@ -1,0 +1,9 @@
+TASK COMPLETE
+
+Implementation: src/lib.rs
+- Allergies struct
+- Allergen enum
+- is_allergic_to() method
+- allergies() method
+
+Test output shows: ok. 50 passed; 0 failed

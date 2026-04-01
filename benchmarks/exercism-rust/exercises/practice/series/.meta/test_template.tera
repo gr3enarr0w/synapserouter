@@ -1,0 +1,22 @@
+use series::*;
+
+{% for test in cases %}
+#[test]
+#[ignore]
+fn {{ test.description | make_ident }}() {
+    let input = {{ test.input.series | json_encode() }};
+    let length = {{ test.input.sliceLength | json_encode() }};
+    let output = series(input, length);
+{%- if test.expected is object -%}
+    {#
+        The author of the exercise chose to define the semantics such that
+        "invalid" series return empty vectors. Adding error handling to the
+        exercise later would be a breaking change.
+    #}
+    let expected: &[&str] = &[];
+{% else %}
+    let expected = &{{ test.expected | json_encode() }};
+{% endif -%}
+    assert_eq!(output, expected);
+}
+{% endfor -%}

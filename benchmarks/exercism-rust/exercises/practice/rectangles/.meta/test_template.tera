@@ -1,0 +1,19 @@
+use rectangles::*;
+
+{% for test in cases %}
+#[test]
+#[ignore]
+fn {{ test.description | make_ident }}() {
+    {% if test.input.strings | length > 1 -%}
+    #[rustfmt::skip]
+    {%- endif %}
+    let input = &[
+        {%- for row in test.input.strings %}
+        {{ row | json_encode }},
+        {%- endfor %}
+    ];
+    let output = count(input);
+    let expected = {{ test.expected | json_encode() }};
+    assert_eq!(output, expected);
+}
+{% endfor -%}

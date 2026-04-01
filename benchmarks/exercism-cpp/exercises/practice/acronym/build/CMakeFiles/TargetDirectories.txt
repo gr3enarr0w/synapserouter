@@ -1,0 +1,4 @@
+/Users/ceverson/Development/synapserouter/benchmarks/exercism-cpp/exercises/practice/acronym/build/CMakeFiles/acronym.dir
+/Users/ceverson/Development/synapserouter/benchmarks/exercism-cpp/exercises/practice/acronym/build/CMakeFiles/test_acronym.dir
+/Users/ceverson/Development/synapserouter/benchmarks/exercism-cpp/exercises/practice/acronym/build/CMakeFiles/edit_cache.dir
+/Users/ceverson/Development/synapserouter/benchmarks/exercism-cpp/exercises/practice/acronym/build/CMakeFiles/rebuild_cache.dir

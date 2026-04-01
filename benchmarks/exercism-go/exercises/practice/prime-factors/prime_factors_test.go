@@ -1,0 +1,27 @@
+package primefactors
+
+import (
+	"slices"
+	"testing"
+)
+
+func TestPrimeFactors(t *testing.T) {
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			actual := Factors(tc.input)
+			slices.Sort(actual)
+			slices.Sort(tc.expected)
+			if !slices.Equal(actual, tc.expected) {
+				t.Fatalf("Factors(%d)\n got:%#v\nwant:%#v", tc.input, actual, tc.expected)
+			}
+		})
+	}
+}
+
+func BenchmarkPrimeFactors(b *testing.B) {
+	for range b.N {
+		for _, test := range testCases {
+			Factors(test.input)
+		}
+	}
+}

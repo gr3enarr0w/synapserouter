@@ -1,0 +1,27 @@
+{
+  "authors": [
+    "marvelou-s"
+  ],
+  "contributors": [
+    "elyashiv",
+    "KevinWMatthews",
+    "patricksjackson",
+    "kytrinyx"
+  ],
+  "files": {
+    "solution": [
+      "collatz_conjecture.cpp",
+      "collatz_conjecture.h"
+    ],
+    "test": [
+      "collatz_conjecture_test.cpp"
+    ],
+    "example": [
+      ".meta/example.cpp",
+      ".meta/example.h"
+    ]
+  },
+  "blurb": "Calculate the number of steps to reach 1 using the Collatz conjecture.",
+  "source": "Wikipedia",
+  "source_url": "https://en.wikipedia.org/wiki/Collatz_conjecture"
+}

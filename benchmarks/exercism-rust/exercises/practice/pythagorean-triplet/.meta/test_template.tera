@@ -1,0 +1,18 @@
+use pythagorean_triplet::*;
+
+use std::collections::HashSet;
+{% for test in cases %}
+#[test]
+#[ignore]
+fn {{ test.description | make_ident }}() {
+    let input = {{ test.input.n | fmt_num }};
+    let output = find(input);
+    let expected = [{% for triple in test.expected -%}
+        [{% for side in triple -%}
+            {{ side | fmt_num }},
+        {%- endfor %}],
+    {%- endfor %}];
+    let expected: HashSet<_> = expected.iter().cloned().collect();
+    assert_eq!(output, expected);
+}
+{% endfor -%}

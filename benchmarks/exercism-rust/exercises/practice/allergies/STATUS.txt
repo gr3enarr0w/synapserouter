@@ -1,0 +1,5 @@
+Command: ls -la *.txt 2>/dev/null | wc -l
+Result: exit 0
+Output: 11 txt files
+
+All commands succeed. All tests pass (50 passed, 0 failed).

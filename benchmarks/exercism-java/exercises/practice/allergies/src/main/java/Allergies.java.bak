@@ -1,0 +1,25 @@
+import java.util.ArrayList;
+import java.util.List;
+
+class Allergies {
+    private final int score;
+
+    Allergies(int score) {
+        this.score = score;
+    }
+
+    boolean isAllergicTo(Allergen allergen) {
+        return (this.score & allergen.getScore()) != 0;
+    }
+
+    List<Allergen> getList() {
+        List<Allergen> allergens = new ArrayList<>();
+        for (Allergen allergen : Allergen.values()) {
+            if (isAllergicTo(allergen)) {
+                allergens.add(allergen);
+            }
+        }
+        allergens.sort((a, b) -> Integer.compare(a.getScore(), b.getScore()));
+        return allergens;
+    }
+}

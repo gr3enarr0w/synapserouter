@@ -1,0 +1,26 @@
+package spaceage
+
+import (
+	"math"
+	"testing"
+)
+
+func TestAge(t *testing.T) {
+	const precision = 0.01
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			actual := Age(tc.seconds, tc.planet)
+			if math.Abs(actual-tc.expected) > precision {
+				t.Fatalf("Age(%f, %q) = %f, want: %f", tc.seconds, tc.planet, actual, tc.expected)
+			}
+		})
+	}
+}
+
+func BenchmarkAge(b *testing.B) {
+	for range b.N {
+		for _, tc := range testCases {
+			Age(tc.seconds, tc.planet)
+		}
+	}
+}

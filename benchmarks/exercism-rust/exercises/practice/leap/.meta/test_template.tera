@@ -1,0 +1,13 @@
+use leap::*;
+
+{% for test in cases %}
+#[test]
+#[ignore]
+fn {{ test.description | make_ident }}() {
+{%- if test.expected %}
+    assert!(is_leap_year({{ test.input.year }}));
+{% else %}
+    assert!(!is_leap_year({{ test.input.year }}));
+{% endif -%}
+}
+{% endfor -%}

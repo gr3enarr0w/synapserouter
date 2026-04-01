@@ -1,0 +1,54 @@
+#!/usr/bin/expect -f
+set timeout 60
+log_user 1
+
+spawn env NO_COLOR=1 ./synroute code
+
+expect {
+    "synroute>" {}
+    timeout {
+        puts "FAIL: prompt never appeared"
+        exit 1
+    }
+}
+
+send "hello\r"
+
+expect {
+    "synroute>" {
+        puts "PASS_1_GREETING: got response and prompt returned"
+    }
+    timeout {
+        puts "FAIL: no response to hello"
+        exit 1
+    }
+}
+
+send "/help\r"
+
+expect {
+    "Ctrl-" {
+        puts "PASS_2_HELP: /help shows keyboard shortcuts"
+    }
+    timeout {
+        puts "FAIL: /help did not show shortcuts"
+        exit 1
+    }
+}
+
+expect "synroute>"
+
+send "/exit\r"
+
+expect {
+    "bye" {
+        puts "PASS_3_EXIT: /exit produced bye"
+    }
+    timeout {
+        puts "FAIL: /exit did not produce bye"
+        exit 1
+    }
+}
+
+expect eof
+puts "Phase 1.1 COMPLETE - ALL PASS"

@@ -1,0 +1,28 @@
+use allergies::*;
+
+{% for test_group in cases %}
+{% for test in test_group.cases %}
+#[test]
+#[ignore]
+{%- if test.property == "allergicTo" %}
+{#- canonical data contains multiple cases named "allergic to everything" for different items #}
+fn {{ test.description | make_ident }}_{{ test.input.item }}() {
+    let allergies = Allergies::new({{ test.input.score }});
+{%- if test.expected %}
+    assert!(allergies.is_allergic_to(&Allergen::{{ test.input.item | title }}))
+{% else %}
+    assert!(!allergies.is_allergic_to(&Allergen::{{ test.input.item | title }}))
+{% endif -%}
+{% else %}
+fn {{ test.description | make_ident }}() {
+    let allergies = Allergies::new({{ test.input.score }}).allergies();
+    let expected = &[
+        {% for allergen in test.expected %}
+            Allergen::{{ allergen | title }},
+        {% endfor %}
+    ];
+    assert_eq!(&allergies, expected);
+{% endif -%}
+}
+{% endfor -%}
+{% endfor -%}

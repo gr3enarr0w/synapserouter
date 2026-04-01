@@ -1,0 +1,8 @@
+for i := range length {
+		letter := phrase[i]
+		if letter > 96 && letter < 123 {
+			phrasemask |= 1 << (letter - 97)
+		} else if letter > 64 && letter < 91 {
+			phrasemask |= 1 << (letter - 65)
+		}
+	}

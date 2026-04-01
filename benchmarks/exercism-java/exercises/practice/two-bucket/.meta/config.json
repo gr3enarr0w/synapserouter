@@ -1,0 +1,41 @@
+{
+  "authors": [
+    "jssander"
+  ],
+  "contributors": [
+    "FridaTveit",
+    "jagdish-15",
+    "jmrunkle",
+    "kahgoh",
+    "lemoncurry",
+    "LoadingBG",
+    "mirkoperillo",
+    "msomji",
+    "muzimuzhi",
+    "sjwarner-bp",
+    "SleeplessByte",
+    "sshine",
+    "Xinri"
+  ],
+  "files": {
+    "solution": [
+      "src/main/java/TwoBucket.java",
+      "src/main/java/Result.java",
+      "src/main/java/UnreachableGoalException.java"
+    ],
+    "test": [
+      "src/test/java/TwoBucketTest.java"
+    ],
+    "example": [
+      ".meta/src/reference/java/TwoBucket.java",
+      ".meta/src/reference/java/Result.java",
+      ".meta/src/reference/java/UnreachableGoalException.java"
+    ],
+    "invalidator": [
+      "build.gradle"
+    ]
+  },
+  "blurb": "Given two buckets of different size, demonstrate how to measure an exact number of liters.",
+  "source": "Water Pouring Problem",
+  "source_url": "https://demonstrations.wolfram.com/WaterPouringProblem/"
+}

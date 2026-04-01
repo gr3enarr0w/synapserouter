@@ -1,0 +1,46 @@
+package allergies
+
+var allergiesMap = map[string]uint{
+	"eggs":          1,
+	"peanuts":      2,
+	"shellfish":    4,
+	"strawberries": 8,
+	"tomatoes":     16,
+	"chocolate":    32,
+	"pollen":       64,
+	"cats":         128,
+}
+
+func Allergies(score uint) []string {
+	var result []string
+	
+	for allergen, value := range allergiesMap {
+		if score&value == value {
+			result = append(result, allergen)
+		}
+	}
+	
+	return result
+}
+
+func AllergicTo(score uint, allergen string) bool {
+	value, exists := getAllergenValue(allergen)
+	if !exists {
+		return false
+	}
+	return score&value == value
+}
+
+func getAllergenName(value uint) string {
+	for allergen, val := range allergiesMap {
+		if val == value {
+			return allergen
+		}
+	}
+	return ""
+}
+
+func getAllergenValue(allergen string) (uint, bool) {
+	value, exists := allergiesMap[allergen]
+	return value, exists
+}

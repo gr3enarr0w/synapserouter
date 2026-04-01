@@ -1,0 +1,14 @@
+use anagram::*;
+use std::collections::HashSet;
+
+{% for test in cases %}
+#[test]
+#[ignore]
+fn {{ test.description | make_ident }}() {
+    let word = {{ test.input.subject | json_encode() }};
+    let inputs = &{{ test.input.candidates | json_encode() }};
+    let output = anagrams_for(word, inputs);
+    let expected = HashSet::from_iter({{ test.expected | json_encode() }});
+    assert_eq!(output, expected);
+}
+{% endfor -%}

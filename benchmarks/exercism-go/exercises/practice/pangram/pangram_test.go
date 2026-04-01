@@ -1,0 +1,23 @@
+package pangram
+
+import (
+	"testing"
+)
+
+func TestPangram(t *testing.T) {
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			if actual := IsPangram(tc.input); actual != tc.expected {
+				t.Fatalf("IsPangram(%q) = %t, want: %t", tc.input, actual, tc.expected)
+			}
+		})
+	}
+}
+
+func BenchmarkPangram(b *testing.B) {
+	for range b.N {
+		for _, test := range testCases {
+			IsPangram(test.input)
+		}
+	}
+}

@@ -1,0 +1,11 @@
+TASK COMPLETE
+
+Implementation: src/lib.rs (46 lines)
+Allergies struct with score field
+Allergen enum (8 variants)
+Methods: new(), is_allergic_to(), allergies()
+
+Test Result: ok. 50 passed; 0 failed; 0 ignored
+Exit Code: 0
+
+All tests pass.

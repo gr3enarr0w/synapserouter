@@ -1,0 +1,25 @@
+{
+  "authors": [
+    "chgraef"
+  ],
+  "contributors": [
+    "elyashiv",
+    "KevinWMatthews",
+    "patricksjackson"
+  ],
+  "files": {
+    "solution": [
+      "robot_simulator.cpp",
+      "robot_simulator.h"
+    ],
+    "test": [
+      "robot_simulator_test.cpp"
+    ],
+    "example": [
+      ".meta/example.cpp",
+      ".meta/example.h"
+    ]
+  },
+  "blurb": "Write a robot simulator.",
+  "source": "Inspired by an interview question at a famous company."
+}

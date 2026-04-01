@@ -1,0 +1,41 @@
+{
+  "blurb": "Convert a binary number, represented as a string (e.g. '101010'), to its decimal equivalent using first principles",
+  "authors": [],
+  "contributors": [
+    "bmkiefer",
+    "c-thornton",
+    "FridaTveit",
+    "jeseekia",
+    "jmrunkle",
+    "jtigger",
+    "kytrinyx",
+    "lemoncurry",
+    "matthewmorgan",
+    "mirkoperillo",
+    "msomji",
+    "muzimuzhi",
+    "sjwarner-bp",
+    "SleeplessByte",
+    "Smarticles101",
+    "sshine",
+    "stkent",
+    "vdemeester",
+    "Zaldrick"
+  ],
+  "files": {
+    "solution": [
+      "src/main/java/Binary.java"
+    ],
+    "test": [
+      "src/test/java/BinaryTest.java"
+    ],
+    "example": [
+      ".meta/src/reference/java/Binary.java"
+    ],
+    "invalidator": [
+      "build.gradle"
+    ]
+  },
+  "source": "All of Computer Science",
+  "source_url": "http://www.wolframalpha.com/input/?i=binary&a=*C.binary-_*MathWorld-"
+}

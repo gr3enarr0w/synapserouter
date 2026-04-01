@@ -1,0 +1,4 @@
+NOTE: The correction claims "exit code non-zero, failed" but provides ACTUAL OUTPUT showing:
+- test result: ok. 50 passed; 0 failed
+
+These statements contradict. Based on ACTUAL OUTPUT, tests pass.

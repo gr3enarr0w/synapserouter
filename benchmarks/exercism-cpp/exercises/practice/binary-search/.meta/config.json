@@ -1,0 +1,26 @@
+{
+  "authors": [
+    "chgraef"
+  ],
+  "contributors": [
+    "elyashiv",
+    "KevinWMatthews",
+    "patricksjackson"
+  ],
+  "files": {
+    "solution": [
+      "binary_search.cpp",
+      "binary_search.h"
+    ],
+    "test": [
+      "binary_search_test.cpp"
+    ],
+    "example": [
+      ".meta/example.cpp",
+      ".meta/example.h"
+    ]
+  },
+  "blurb": "Implement a binary search algorithm.",
+  "source": "Wikipedia",
+  "source_url": "https://en.wikipedia.org/wiki/Binary_search_algorithm"
+}

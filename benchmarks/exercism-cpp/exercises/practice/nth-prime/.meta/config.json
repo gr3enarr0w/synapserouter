@@ -1,0 +1,29 @@
+{
+  "authors": [
+    "LegalizeAdulthood"
+  ],
+  "contributors": [
+    "cyborgsphinx",
+    "elyashiv",
+    "jackhughesweb",
+    "KevinWMatthews",
+    "kytrinyx",
+    "patricksjackson"
+  ],
+  "files": {
+    "solution": [
+      "nth_prime.cpp",
+      "nth_prime.h"
+    ],
+    "test": [
+      "nth_prime_test.cpp"
+    ],
+    "example": [
+      ".meta/example.cpp",
+      ".meta/example.h"
+    ]
+  },
+  "blurb": "Given a number n, determine what the nth prime is.",
+  "source": "A variation on Problem 7 at Project Euler",
+  "source_url": "https://projecteuler.net/problem=7"
+}

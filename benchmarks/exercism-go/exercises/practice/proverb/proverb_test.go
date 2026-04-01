@@ -1,0 +1,25 @@
+package proverb
+
+import (
+	"fmt"
+	"testing"
+)
+
+func TestProverb(t *testing.T) {
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			actual := Proverb(tc.input)
+			if fmt.Sprintf("%q", actual) != fmt.Sprintf("%q", tc.expected) {
+				t.Fatalf("Proverb(%#v)\n got:%#v\nwant:%#v", tc.input, actual, tc.expected)
+			}
+		})
+	}
+}
+
+func BenchmarkProverb(b *testing.B) {
+	for range b.N {
+		for _, test := range testCases {
+			Proverb(test.input)
+		}
+	}
+}

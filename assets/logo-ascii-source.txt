@@ -1,0 +1,6 @@
+Source ASCII art for SynRoute brain logo — black and white version.
+Use this to create the terminal banner at ~40-50 chars wide.
+Original provided by user 2026-03-30.
+
+The bottom section contains the "SynRoute" pixel text which should be
+preserved in the terminal rendering.

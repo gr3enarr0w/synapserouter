@@ -1,0 +1,13 @@
+    for (char ch : phrase) {
+        if (isalpha(ch)) {
+            word += toupper(ch);
+        } else if (ch == " " || ch == "-" || ch == "_") {
+            if (!word.empty()) {
+                acronym.push_back(word[0]);
+                word.clear();
+            }
+        } else if (ch == ") {
+            // Ignore apostrophes
+            continue;
+        }
+    }

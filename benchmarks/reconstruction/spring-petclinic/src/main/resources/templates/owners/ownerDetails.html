@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org"
+      th:replace="~{fragments/layout :: layout(~{::body/div}, 'Owner Details')}">
+<body>
+<div>
+  <h2>Owner Information</h2>
+  <table class="table table-striped" style="width:600px;">
+    <tr>
+      <th>Name</th>
+      <td th:text="${owner.firstName + ' ' + owner.lastName}">Name</td>
+    </tr>
+    <tr>
+      <th>Address</th>
+      <td th:text="${owner.address}">Address</td>
+    </tr>
+    <tr>
+      <th>City</th>
+      <td th:text="${owner.city}">City</td>
+    </tr>
+    <tr>
+      <th>Telephone</th>
+      <td th:text="${owner.telephone}">Phone</td>
+    </tr>
+  </table>
+
+  <a class="btn btn-primary btn-sm" th:href="@{/owners/{ownerId}/edit(ownerId=${owner.id})}">Edit Owner</a>
+  <a class="btn btn-success btn-sm" th:href="@{/owners/{ownerId}/pets/new(ownerId=${owner.id})}">Add New Pet</a>
+
+  <h3 class="mt-4">Pets and Visits</h3>
+  <table class="table table-striped" th:each="pet : ${owner.pets}">
+    <thead>
+    <tr>
+      <th colspan="3">
+        <span th:text="${pet.name}">Pet Name</span>
+      </th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+      <td><strong>Birth Date</strong></td>
+      <td th:text="${#temporals.format(pet.birthDate, 'yyyy-MM-dd')}">2010-01-01</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td><strong>Type</strong></td>
+      <td th:text="${pet.type}">dog</td>
+      <td></td>
+    </tr>
+    <tr th:each="visit : ${pet.visits}">
+      <td th:text="${#temporals.format(visit.date, 'yyyy-MM-dd')}">2013-01-01</td>
+      <td th:text="${visit.description}">Description</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td colspan="3">
+        <a class="btn btn-primary btn-sm"
+           th:href="@{/owners/{ownerId}/pets/{petId}/edit(ownerId=${owner.id}, petId=${pet.id})}">Edit Pet</a>
+        <a class="btn btn-success btn-sm"
+           th:href="@{/owners/{ownerId}/pets/{petId}/visits/new(ownerId=${owner.id}, petId=${pet.id})}">Add Visit</a>
+      </td>
+    </tr>
+    </tbody>
+  </table>
+</div>
+</body>
+</html>
