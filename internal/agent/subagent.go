@@ -62,7 +62,10 @@ func (a *Agent) SpawnChild(cfg SpawnConfig) *Agent {
 
 	// Tell sub-agents about parent's work and how to access it
 	sysPrompt += "\n\nPARENT SESSION CONTEXT: You were spawned by a parent agent. " +
-		"Use recall(query=\"...\") to access files, tool outputs, and findings from the parent session. " +
+		"Use the recall tool to access parent session context:\n" +
+		"- recall(query=\"search term\") — semantic search over past outputs\n" +
+		"- recall(tool_name=\"bash\") — filter by specific tool\n" +
+		"- recall(id=N) — retrieve full output by ID (from a previous recall search)\n" +
 		"Do NOT re-read files the parent already read — use recall instead."
 
 	// Inherit escalation chain so sub-agents use the same provider ordering.
