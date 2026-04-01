@@ -299,12 +299,12 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(secret=)[^\s&"']+`),
 	regexp.MustCompile(`(?i)(api[-_]?key[=:\s]+)[^\s"']+`),
 	regexp.MustCompile(`(?i)(authorization:\s+)[^\s"']+`),
-	regexp.MustCompile(`sk-[a-zA-Z0-9]{20,}`),                              // OpenAI API keys
+	regexp.MustCompile(`sk-[a-zA-Z0-9\-]{20,}`),                             // OpenAI API keys (sk-proj-... has hyphens)
 	regexp.MustCompile(`ghp_[a-zA-Z0-9]{36,}`),                            // GitHub personal access tokens
 	regexp.MustCompile(`gho_[a-zA-Z0-9]{36,}`),                            // GitHub OAuth tokens
 	regexp.MustCompile(`ghs_[a-zA-Z0-9]{36,}`),                            // GitHub server tokens
 	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),                                // AWS access key IDs
-	regexp.MustCompile(`(?i)-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----`),     // Private keys
+	regexp.MustCompile(`(?i)-----BEGIN\s+[\w\s]*PRIVATE\s+KEY-----`),       // Private keys (RSA, EC, DSA, OpenSSH, etc.)
 }
 
 // scrubSecrets redacts known credential patterns from text.

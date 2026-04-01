@@ -172,7 +172,10 @@ func TestScrubSecrets_ProviderTokens(t *testing.T) {
 		{"GitHub OAuth", "token: gho_ABCDEFghijklmnop1234567890abcdefghijkl", "gho_ABCDEFghijklmnop1234567890abcdefghijkl"},
 		{"GitHub server", "ghs_ABCDEFghijklmnop1234567890abcdefghijkl", "ghs_ABCDEFghijklmnop1234567890abcdefghijkl"},
 		{"AWS key", "aws_access_key_id = AKIAIOSFODNN7EXAMPLE", "AKIAIOSFODNN7EXAMPLE"},
-		{"private key", "-----BEGIN RSA PRIVATE KEY-----\nMIIEpA...", "-----BEGIN RSA PRIVATE KEY-----"},
+		{"private key RSA", "-----BEGIN RSA PRIVATE KEY-----\nMIIEpA...", "-----BEGIN RSA PRIVATE KEY-----"},
+		{"private key EC", "-----BEGIN EC PRIVATE KEY-----\nMHQC...", "-----BEGIN EC PRIVATE KEY-----"},
+		{"private key OpenSSH", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl...", "-----BEGIN OPENSSH PRIVATE KEY-----"},
+		{"standalone OpenAI key", "The key is sk-proj-abc123def456ghi789jkl012mno345pqr678 here", "sk-proj-abc123def456ghi789jkl012mno345pqr678"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
