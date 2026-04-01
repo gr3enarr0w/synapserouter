@@ -144,6 +144,73 @@ func TestDetectNothing(t *testing.T) {
 	}
 }
 
+func TestDetectSQLProject(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "schema.sql"), []byte("CREATE TABLE users (id INT);\n"), 0644)
+	os.Mkdir(filepath.Join(dir, ".git"), 0755)
+
+	env := Detect(dir)
+	if env == nil {
+		t.Fatal("expected SQL project detection")
+	}
+	if env.Language != "sql" {
+		t.Errorf("language = %q, want sql", env.Language)
+	}
+}
+
+func TestDetectSQLWithMigrations(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, "migrations"), 0755)
+	os.WriteFile(filepath.Join(dir, "schema.sql"), []byte("CREATE TABLE t (id INT);\n"), 0644)
+
+	env := Detect(dir)
+	if env == nil {
+		t.Fatal("expected SQL project detection with migrations dir")
+	}
+	if env.Language != "sql" {
+		t.Errorf("language = %q, want sql", env.Language)
+	}
+}
+
+func TestDetectSQLInSubdir(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, "sql"), 0755)
+	os.WriteFile(filepath.Join(dir, "sql", "queries.sql"), []byte("SELECT 1;\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# SQL Project\n"), 0644)
+
+	env := Detect(dir)
+	if env == nil {
+		t.Fatal("expected SQL project detection with sql/ subdir")
+	}
+	if env.Language != "sql" {
+		t.Errorf("language = %q, want sql", env.Language)
+	}
+}
+
+func TestDetectSQLFalsePositiveStrayFiles(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "jira_stats_1.sql"), []byte("SELECT * FROM jira;\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "jira_stats_2.sql"), []byte("SELECT * FROM jira;\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "jira_stats_3.sql"), []byte("SELECT * FROM jira;\n"), 0644)
+
+	env := Detect(dir)
+	if env != nil {
+		t.Errorf("expected nil for stray .sql files, got language=%q", env.Language)
+	}
+}
+
+func TestDetectSQLFalsePositiveHomeDir(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("some notes\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "export.sql"), []byte("SELECT 1;\n"), 0644)
+	os.Mkdir(filepath.Join(dir, "Documents"), 0755)
+
+	env := Detect(dir)
+	if env != nil {
+		t.Errorf("expected nil for home-like dir with stray .sql, got language=%q", env.Language)
+	}
+}
+
 func TestDetectAll(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\ngo 1.22\n"), 0644)
