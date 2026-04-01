@@ -75,6 +75,12 @@ var ambiguousWords = map[string]bool{
 	"java": true, // "JavaScript" contains "java"
 	"rust": true, // "trust", "frustrate" contain "rust"
 	"sql":  true, // "mysql", "nosql", "postgresql" contain "sql"
+	// Generic verbs that cause false positives in non-coding conversation (#55)
+	"build":  true, // "building relationships" vs "build the project"
+	"write":  true, // "writer's block" vs "write code"
+	"review": true, // "movie review" vs "review the code"
+	"clean":  true, // "clean the house" vs "clean code"
+	"check":  true, // "check the weather" vs "check the code"
 }
 
 // matchesTrigger checks if a trigger matches the goal text.
