@@ -36,6 +36,10 @@ type PermissionResult struct {
 // Check evaluates whether a tool call should be allowed.
 func (pc *PermissionChecker) Check(tool Tool, args map[string]interface{}) PermissionResult {
 	category := tool.Category()
+	// Use dynamic category if the tool supports it (e.g., git status=read_only, git push=dangerous)
+	if dyn, ok := tool.(DynamicCategoryTool); ok {
+		category = dyn.CategoryForArgs(args)
+	}
 
 	// Read-only tools are always allowed
 	if category == CategoryReadOnly {

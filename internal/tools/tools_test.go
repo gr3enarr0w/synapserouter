@@ -454,6 +454,66 @@ func TestGitTool(t *testing.T) {
 	})
 }
 
+func TestGitTool_DynamicCategory(t *testing.T) {
+	tool := &GitTool{}
+
+	tests := []struct {
+		subcommand string
+		expected   ToolCategory
+	}{
+		{"status", CategoryReadOnly},
+		{"diff", CategoryReadOnly},
+		{"log", CategoryReadOnly},
+		{"show", CategoryReadOnly},
+		{"rev-parse", CategoryReadOnly},
+		{"remote", CategoryReadOnly},
+		{"blame", CategoryReadOnly},
+		{"tag", CategoryReadOnly},
+		{"add", CategoryWrite},
+		{"branch", CategoryWrite},
+		{"checkout", CategoryWrite},
+		{"pull", CategoryWrite},
+		{"stash", CategoryWrite},
+		{"rm", CategoryWrite},
+		{"commit", CategoryDangerous},
+		{"push", CategoryDangerous},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.subcommand, func(t *testing.T) {
+			args := map[string]interface{}{"subcommand": tt.subcommand}
+			got := tool.CategoryForArgs(args)
+			if got != tt.expected {
+				t.Errorf("CategoryForArgs(%q) = %q, want %q", tt.subcommand, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGitTool_PermissionChecker_DynamicCategory(t *testing.T) {
+	tool := &GitTool{}
+	pc := NewPermissionChecker(ModeAutoApprove)
+
+	// Read-only subcommands should be allowed in auto_approve
+	for _, sub := range []string{"status", "diff", "log"} {
+		result := pc.Check(tool, map[string]interface{}{"subcommand": sub})
+		if !result.Allowed {
+			t.Errorf("auto_approve should allow git %s, got denied: %s", sub, result.Reason)
+		}
+	}
+
+	// Commit and push should require prompt even in auto_approve
+	for _, sub := range []string{"commit", "push"} {
+		result := pc.Check(tool, map[string]interface{}{"subcommand": sub})
+		if result.Allowed {
+			t.Errorf("auto_approve should NOT auto-allow git %s", sub)
+		}
+		if !result.Prompt {
+			t.Errorf("git %s should trigger prompt in auto_approve, got prompt=%v", sub, result.Prompt)
+		}
+	}
+}
+
 func TestPathContainment(t *testing.T) {
 	dir := t.TempDir()
 
