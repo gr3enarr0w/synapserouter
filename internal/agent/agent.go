@@ -2729,6 +2729,9 @@ func (a *Agent) compactConversation(completedPhase string) {
 	// Store dropped messages to DB for later recall (all roles including tool).
 	a.storeMessagesToDB(msgs[:dropCount], "compaction")
 
+	// Extract key context from dropped messages before compaction
+	summary := extractCompactionSummary(msgs[:dropCount], completedPhase, dropCount)
+
 	// Replace conversation with summary + recent messages
 	recent := make([]providers.Message, keepCount)
 	copy(recent, msgs[dropCount:])
@@ -2736,7 +2739,7 @@ func (a *Agent) compactConversation(completedPhase string) {
 	a.conversation.Clear()
 	a.conversation.Add(providers.Message{
 		Role:    "user",
-		Content: fmt.Sprintf("[Phase %s completed. %d earlier messages compacted to DB. Use recall tool to access past context.]", completedPhase, dropCount),
+		Content: summary,
 	})
 	for _, m := range recent {
 		a.conversation.Add(m)
@@ -2744,6 +2747,85 @@ func (a *Agent) compactConversation(completedPhase string) {
 
 	a.hasCompacted = true
 	log.Printf("[Agent] compacted conversation: dropped %d messages, kept %d + summary", dropCount, keepCount)
+}
+
+// extractCompactionSummary builds a context-rich summary from dropped messages.
+// Includes files modified, test results, and key decisions so post-compaction
+// conversation doesn't lose critical context.
+func extractCompactionSummary(msgs []providers.Message, phase string, count int) string {
+	var files []string
+	var testResults []string
+	filesSeen := make(map[string]bool)
+
+	for _, m := range msgs {
+		content := m.Content
+		// Extract file paths from tool call results
+		for _, path := range extractFilePaths(content) {
+			if !filesSeen[path] {
+				filesSeen[path] = true
+				files = append(files, path)
+			}
+		}
+		// Extract test results
+		if strings.Contains(content, "PASS") || strings.Contains(content, "FAIL") ||
+			strings.Contains(content, "ok  \t") || strings.Contains(content, "--- PASS") {
+			// Truncate long test output
+			lines := strings.Split(content, "\n")
+			for _, line := range lines {
+				if (strings.Contains(line, "PASS") || strings.Contains(line, "FAIL") ||
+					strings.Contains(line, "ok  \t")) && len(line) < 200 {
+					testResults = append(testResults, strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "[Phase %s completed. %d earlier messages compacted to DB.]\n", phase, count)
+
+	if len(files) > 0 {
+		b.WriteString("Files touched: ")
+		maxFiles := 10
+		if len(files) < maxFiles {
+			maxFiles = len(files)
+		}
+		b.WriteString(strings.Join(files[:maxFiles], ", "))
+		if len(files) > 10 {
+			fmt.Fprintf(&b, " (+%d more)", len(files)-10)
+		}
+		b.WriteString("\n")
+	}
+
+	if len(testResults) > 0 {
+		b.WriteString("Test results: ")
+		maxTests := 5
+		if len(testResults) < maxTests {
+			maxTests = len(testResults)
+		}
+		b.WriteString(strings.Join(testResults[:maxTests], "; "))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("Use recall tool to access full context from earlier messages.")
+	return b.String()
+}
+
+// extractFilePaths finds file paths in text (simple heuristic).
+func extractFilePaths(text string) []string {
+	var paths []string
+	for _, word := range strings.Fields(text) {
+		// Match paths like /foo/bar.go, ./src/main.py, internal/agent/agent.go
+		if (strings.Contains(word, "/") || strings.Contains(word, ".go") ||
+			strings.Contains(word, ".py") || strings.Contains(word, ".js")) &&
+			!strings.HasPrefix(word, "http") && len(word) < 200 {
+			// Clean trailing punctuation
+			word = strings.TrimRight(word, ",:;\"')")
+			if strings.Contains(word, ".") {
+				paths = append(paths, word)
+			}
+		}
+	}
+	return paths
 }
 
 // toolIdentityKeys defines which argument keys constitute the "identity" of a tool call.
