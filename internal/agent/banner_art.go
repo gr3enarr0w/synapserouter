@@ -13,6 +13,7 @@ func Banner() string {
 }
 
 // BannerForWidth returns a banner appropriate for the terminal width.
+// Currently returns the standard banner; width parameter reserved for future use.
 func BannerForWidth(width int, noColor bool) string {
 	return renderBanner(noColor)
 }
