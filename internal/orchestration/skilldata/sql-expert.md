@@ -16,12 +16,12 @@ language: sql
 mcp_tools:
   - "context7.query-docs"
 verify:
-  - name: "Constraint check"
-    command: "grep -i 'CHECK\\|UNIQUE\\|FOREIGN KEY' *.sql"
-    expect: "constraints defined"
-  - name: "Query plan review"
-    command: "echo 'EXPLAIN plan required for large table queries'"
-    expect: "EXPLAIN"
+  - name: "Constraint coverage"
+    command: "grep -iE '(CHECK|UNIQUE|FOREIGN KEY|NOT NULL|PRIMARY KEY)' *.sql | wc -l"
+    expect: "constraints found"
+  - name: "SQL statement structure"
+    command: "grep -cE '(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER)' *.sql"
+    expect: "SQL statements present"
 ---
 # Skill: SQL Expert
 

@@ -13,8 +13,11 @@ func TestIsCompletionSignal(t *testing.T) {
 		{"task is complete", "The task is complete and verified.", true},
 		{"task has been completed", "The task has been completed successfully.", true},
 		{"successfully completed", "I have successfully completed the implementation.", true},
-		{"all done", "All done! The tests pass.", true},
 		{"the fix is complete", "The fix is complete.", true},
+		{"i've completed the task", "I've completed the task and verified.", true},
+		{"work is finished", "The work is finished.", true},
+
+		// "all done" removed — too generic, causes false positives in conversation
 		{"changes are complete", "All changes are complete.", true},
 		{"implementation is complete", "The implementation is complete.", true},
 

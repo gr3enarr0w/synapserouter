@@ -439,7 +439,7 @@ func TestMemoryFlow_AutoContextInjection(t *testing.T) {
 			if strings.Contains(m.Content, "Retrieved context from earlier") {
 				foundRetrieved = true
 			}
-			if strings.Contains(m.Content, "retrieved context") && strings.Contains(m.Content, "recall()") {
+			if strings.Contains(m.Content, "retrieved context") && strings.Contains(m.Content, "recall tool") {
 				foundAck = true
 			}
 		}

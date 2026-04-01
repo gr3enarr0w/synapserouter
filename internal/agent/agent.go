@@ -1236,7 +1236,7 @@ func (a *Agent) buildMessages() []providers.Message {
 				})
 				msgs = append(msgs, providers.Message{
 					Role:    "assistant",
-					Content: "Understood, I have the retrieved context. I can also use recall() to access full tool outputs from earlier in the session.",
+					Content: "Understood, I have the retrieved context. I can also search for past tool outputs using the recall tool with queries or tool names.",
 				})
 			}
 		}
