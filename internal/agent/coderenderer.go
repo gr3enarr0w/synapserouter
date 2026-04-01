@@ -183,39 +183,10 @@ func (cr *CodeRenderer) Init() {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 
-	// Enterprise wordmark — clean single-line logo with subtle cyan→blue gradient.
-	// Aesthetic: terraform / kubectl / docker — no heavy block art, no boxes.
-	// "synroute" rendered letter-by-letter with per-character 24-bit color fade.
-	wordmark := "synroute"
-	subtitle := "neural routing engine"
-
 	fmt.Fprintln(cr.out)
 
-	if cr.noColor {
-		fmt.Fprintln(cr.out, "  "+wordmark)
-		fmt.Fprintln(cr.out, cr.color("\033[2m", "  "+subtitle))
-	} else {
-		// Gradient: electric-cyan (#00CFFF) → steel-blue (#4B8EF1)
-		// Calm, professional, readable on both dark and light terminals.
-		type rgb struct{ r, g, b int }
-		from := rgb{0, 207, 255}
-		to := rgb{75, 142, 241}
-
-		runes := []rune(wordmark)
-		n := len(runes)
-		var word strings.Builder
-		for j, ch := range runes {
-			t := float64(j) / float64(n-1)
-			r := int(float64(from.r)*(1-t) + float64(to.r)*t)
-			g := int(float64(from.g)*(1-t) + float64(to.g)*t)
-			b := int(float64(from.b)*(1-t) + float64(to.b)*t)
-			fmt.Fprintf(&word, "\033[1;38;2;%d;%d;%dm%c", r, g, b, ch)
-		}
-		word.WriteString("\033[0m")
-
-		fmt.Fprintf(cr.out, "  %s\n", word.String())
-		fmt.Fprintln(cr.out, "\033[2m  "+subtitle+"\033[0m")
-	}
+	// Brain logo with text — adapts to terminal width
+	fmt.Fprint(cr.out, BannerForWidth(cr.width, cr.noColor))
 
 	// Version + mode
 	ver := cr.version
