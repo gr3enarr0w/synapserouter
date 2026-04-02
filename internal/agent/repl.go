@@ -268,6 +268,23 @@ func RunOneShot(ctx context.Context, executor ChatExecutor, registry *tools.Regi
 	renderer := NewRenderer(os.Stderr) // tool output to stderr, final response to stdout
 	ag := New(executor, registry, renderer, config)
 
+	// Apply conversation tier — one-shot must match interactive mode behavior.
+	// Without this, one-shot always starts at L0 (cheapest) regardless of config.
+	convTier := TierFrontier
+	if tierEnv := strings.TrimSpace(strings.ToLower(os.Getenv("SYNROUTE_CONVERSATION_TIER"))); tierEnv != "" {
+		switch tierEnv {
+		case "cheap":
+			convTier = TierCheap
+		case "mid":
+			convTier = TierMid
+		case "frontier":
+			convTier = TierFrontier
+		}
+	} else if strings.EqualFold(os.Getenv("ACTIVE_PROFILE"), "work") {
+		convTier = TierMid
+	}
+	ag.SetMinProviderLevel(ag.ProviderLevelForTier(convTier))
+
 	// Start LogRenderer if event bus is configured
 	if config.EventBus != nil {
 		events := config.EventBus.Subscribe()
