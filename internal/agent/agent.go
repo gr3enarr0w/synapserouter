@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -410,6 +411,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		complexity := AssessComplexity(userMessage, a.config.SpecFilePath != "")
 		a.pipeline = AdaptPipeline(a.pipeline, complexity)
 		ApplyTierOverrides(a.pipeline)
+		ApplyKReviewOverrides(a.pipeline)
 		log.Printf("[Agent] adaptive pipeline: complexity=%s", complexity)
 
 		if a.pipeline == nil {
@@ -2153,6 +2155,11 @@ func (a *Agent) advancePipeline(content string) bool {
 // sequential review→fix stages: A reviews → B fixes → C reviews B's fix.
 // Returns the final sub-agent's result text.
 func (a *Agent) runSubAgentPhase(phase PipelinePhase) string {
+	// K-LLM gate: if this phase has K > 1 reviewers, use the parallel K-reviewer path.
+	if phase.KReview != nil && phase.KReview.K > 1 {
+		return a.runKReviewers(phase)
+	}
+
 	parentCtx := a.runCtx
 	if parentCtx == nil {
 		parentCtx = context.Background()
@@ -2446,6 +2453,213 @@ func (a *Agent) runParallelSubAgentPhases(phase1, phase2 PipelinePhase) (string,
 	log.Printf("[Agent] parallel verification complete: %s=%v, %s=%v",
 		phase1.Name, IsPassSignal(result1), phase2.Name, IsPassSignal(result2))
 	return result1, result2
+}
+
+// runKReviewers spawns K independent reviewers in parallel for a single review phase.
+// Each reviewer gets a shuffled file inspection order to reduce positional bias.
+// Findings are merged by file+root cause with agreement scoring.
+func (a *Agent) runKReviewers(phase PipelinePhase) string {
+	parentCtx := a.runCtx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, 20*time.Minute)
+	defer cancel()
+
+	k := phase.KReview.K
+	threshold := phase.KReview.AgreementThresh
+
+	// Build skill context and verification commands (shared across all reviewers)
+	skillContext := a.matchedSkillContext()
+	query := a.originalRequest
+	if query == "" {
+		query = a.conversation.LastUserMessage()
+	}
+	matched := orchestration.MatchSkillsForLanguage(query, a.config.Skills, a.config.ProjectLanguage)
+	chain := orchestration.BuildSkillChain(matched)
+	verifyCommands := orchestration.VerifyCommandsForChain(chain)
+	verifySection := ""
+	if verifyCommands != "" {
+		verifySection = fmt.Sprintf(`
+VERIFICATION COMMANDS — Run ALL of these using bash and report PASS/FAIL for each.
+Commands marked [MANUAL] require reading code instead of running a command.
+%s`, verifyCommands)
+	}
+
+	constraintsBlock := a.formatConstraintsBlock()
+
+	// Collect changed files for shuffle ordering
+	changedFiles := a.getChangedFiles()
+
+	// Build K tasks with shuffled file orders
+	tasks := make([]DelegateTask, k)
+	for i := 0; i < k; i++ {
+		shuffled := ShuffleFileOrder(changedFiles, int64(i)*1000003+7)
+		fileOrderHint := ""
+		if len(shuffled) > 0 {
+			fileOrderHint = "\nSUGGESTED FILE INSPECTION ORDER (start with these, inspect ALL):\n  - " +
+				strings.Join(shuffled, "\n  - ") + "\n"
+		}
+
+		provider := a.selectReviewerProvider(i, k)
+
+		task := fmt.Sprintf(`You are REVIEWER %d/%d — an INDEPENDENT reviewer with NO context from the implementation.
+You must evaluate the work FRESH — do not assume anything is correct.
+%s
+ORIGINAL REQUEST:
+---
+%s
+---
+
+ACCEPTANCE CRITERIA:
+---
+%s
+---
+
+%s%s
+%s
+
+INSTRUCTIONS:
+1. Fetch ALL real results — do NOT trust the previous model's claims
+2. For each criterion: PASS or FAIL with evidence
+3. Check for things the implementer missed:
+   - Null/empty/zero values where real data is expected
+   - End-user experience — would a human say this is right?
+   - Edge cases, missing structure, completeness gaps
+4. SPEC COMPLIANCE: verify implementation matches the original spec's scope,
+   directory structure, and constraints. Flag any out-of-scope additions.
+
+FORMAT YOUR FINDINGS as structured items:
+  [FILE: path/to/file.go:LINE] CATEGORY: description
+This format enables automated finding aggregation across reviewers.
+
+Say VERIFIED_CORRECT if all criteria met, or NEEDS_FIX with every issue listed.`,
+			i+1, k, fileOrderHint,
+			a.originalRequest, a.acceptanceCriteria,
+			skillContext, verifySection,
+			constraintsBlock)
+
+		tasks[i] = DelegateTask{
+			Config: SpawnConfig{
+				Role:     fmt.Sprintf("%s-reviewer-%d", phase.Name, i+1),
+				Model:    "auto",
+				Provider: provider,
+				Tier:     phase.Tier,
+				Budget:   &AgentBudget{MaxTurns: a.maxPhaseTurns()},
+			},
+			Task: task,
+		}
+	}
+
+	// Emit start event and run K reviewers in parallel
+	log.Printf("[Agent] K-LLM: spawning %d parallel reviewers for %s", k, phase.Name)
+	a.emit(EventKReviewStart, "", map[string]any{
+		"phase": phase.Name, "k": k,
+	})
+	results := a.RunChildrenParallel(ctx, tasks, k)
+
+	// Parse findings from each reviewer
+	var allFindings []ReviewFinding
+	reviewerOutputs := make([]string, k)
+	for i, r := range results {
+		output := r.Result
+		if r.Error != "" {
+			output = fmt.Sprintf("NEEDS_FIX: reviewer %d error: %s", i+1, r.Error)
+		}
+		reviewerOutputs[i] = output
+		findings := ParseFindings(i, output)
+		allFindings = append(allFindings, findings...)
+	}
+
+	// Cluster and merge findings
+	clusters := ClusterFindings(allFindings, k, threshold)
+
+	// Build merged result
+	merged := KReviewResult{
+		K:               k,
+		ReviewerResults: reviewerOutputs,
+		Clusters:        clusters,
+	}
+	for _, c := range clusters {
+		if c.Agreement > threshold {
+			merged.HighConfidence = append(merged.HighConfidence, c)
+		} else {
+			merged.Disagreements = append(merged.Disagreements, c)
+		}
+	}
+
+	passCount := 0
+	for _, output := range reviewerOutputs {
+		if IsPassSignal(output) {
+			passCount++
+		}
+	}
+	merged.AllPassed = passCount == k
+	merged.MajorityPassed = float64(passCount)/float64(k) > 0.5
+
+	// Emit merge event
+	a.emit(EventKReviewMerge, "", map[string]any{
+		"phase":            phase.Name,
+		"k":                k,
+		"pass_count":       passCount,
+		"high_confidence":  len(merged.HighConfidence),
+		"disagreements":    len(merged.Disagreements),
+		"total_findings":   len(allFindings),
+	})
+
+	formatted := FormatMergedReview(merged)
+	log.Printf("[Agent] K-LLM: %d/%d passed, %d high-confidence findings, %d disagreements",
+		passCount, k, len(merged.HighConfidence), len(merged.Disagreements))
+
+	return formatted
+}
+
+// selectReviewerProvider picks a provider for reviewer i out of k reviewers.
+// Round-robins across available providers at the current escalation level.
+func (a *Agent) selectReviewerProvider(reviewerIdx, k int) string {
+	if a.providerIdx >= len(a.config.EscalationChain) {
+		return ""
+	}
+	levelProviders := a.config.EscalationChain[a.providerIdx].Providers
+	if len(levelProviders) == 0 {
+		return ""
+	}
+	return levelProviders[reviewerIdx%len(levelProviders)]
+}
+
+// getChangedFiles returns a list of files changed in the working directory
+// (via git diff or staged changes).
+func (a *Agent) getChangedFiles() []string {
+	workDir := a.config.WorkDir
+	if workDir == "" {
+		workDir = "."
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", "HEAD")
+	cmd.Dir = workDir
+	out, err := cmd.Output()
+	if err != nil {
+		// Fallback to staged changes
+		cmd = exec.CommandContext(ctx, "git", "diff", "--name-only", "--cached")
+		cmd.Dir = workDir
+		out, err = cmd.Output()
+		if err != nil {
+			log.Printf("[Agent] K-LLM: could not get changed files (no git repo?): %v", err)
+			return nil
+		}
+	}
+
+	var files []string
+	for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		f = strings.TrimSpace(f)
+		if f != "" {
+			files = append(files, f)
+		}
+	}
+	return files
 }
 
 // runSingleReviewer runs one independent reviewer sub-agent (used when level has 1 provider).

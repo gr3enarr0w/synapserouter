@@ -3,6 +3,7 @@ package agent
 import (
 	"log"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -27,6 +28,12 @@ type PipelinePhase struct {
 	// MergeProvider: after parallel sub-agents complete, a third model merges
 	// their outputs. Used for plan phase only (planners are unique).
 	MergeProvider string
+
+	// KReview enables K-LLM parallel verification for this phase.
+	// When K > 1, spawns K independent reviewers with shuffled file orders,
+	// merges findings by file+root cause, and scores by agreement.
+	// Nil or K <= 1 uses the existing single-reviewer path.
+	KReview *KReviewConfig
 }
 
 // Pipeline defines the ordered phases for a project type.
@@ -131,6 +138,7 @@ If anything fails and you can't fix it, say SELF_CHECK_FAIL.`,
 			Escalate:     true, // force escalation — reviewer must be a DIFFERENT (bigger) model than implementer
 			MinToolCalls: 2,
 			UseSubAgent:  true,
+			KReview:      &KReviewConfig{K: 2, AgreementThresh: 0.5},
 			Prompt: `PHASE: CODE REVIEW (independent reviewer)
 You are a DIFFERENT model reviewing work done by a previous model.
 Check against these acceptance criteria:
@@ -394,6 +402,38 @@ func ApplyTierOverrides(p *Pipeline) {
 			log.Printf("[Pipeline] Phase %s tier overridden: %s → %s (via %s)",
 				p.Phases[i].Name, p.Phases[i].Tier, tier, envVar)
 			p.Phases[i].Tier = tier
+		}
+	}
+}
+
+// ApplyKReviewOverrides reads SYNROUTE_REVIEW_K and SYNROUTE_REVIEW_AGREEMENT
+// env vars and overrides KReview config on phases that have it set.
+func ApplyKReviewOverrides(p *Pipeline) {
+	if p == nil {
+		return
+	}
+
+	if kStr := os.Getenv("SYNROUTE_REVIEW_K"); kStr != "" {
+		if k, err := strconv.Atoi(kStr); err == nil && k >= 1 {
+			for i := range p.Phases {
+				if p.Phases[i].KReview != nil {
+					if k != p.Phases[i].KReview.K {
+						log.Printf("[Pipeline] Phase %s K-review K overridden: %d → %d (via SYNROUTE_REVIEW_K)",
+							p.Phases[i].Name, p.Phases[i].KReview.K, k)
+					}
+					p.Phases[i].KReview.K = k
+				}
+			}
+		}
+	}
+
+	if threshStr := os.Getenv("SYNROUTE_REVIEW_AGREEMENT"); threshStr != "" {
+		if thresh, err := strconv.ParseFloat(threshStr, 64); err == nil && thresh > 0 && thresh <= 1 {
+			for i := range p.Phases {
+				if p.Phases[i].KReview != nil {
+					p.Phases[i].KReview.AgreementThresh = thresh
+				}
+			}
 		}
 	}
 }

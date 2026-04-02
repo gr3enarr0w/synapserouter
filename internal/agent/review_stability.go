@@ -71,6 +71,18 @@ func (r *ReviewCycleTracker) CheckDivergence(reviewOutput string) bool {
 	return r.divergeCount >= 2
 }
 
+// CheckDivergenceCount uses an explicit finding count instead of text parsing.
+// Used by K-LLM merge to provide accurate structured counts.
+func (r *ReviewCycleTracker) CheckDivergenceCount(findingCount int) bool {
+	if r.prevFindingCount > 0 && findingCount > r.prevFindingCount {
+		r.divergeCount++
+	} else {
+		r.divergeCount = 0
+	}
+	r.prevFindingCount = findingCount
+	return r.divergeCount >= 2
+}
+
 func countFindings(output string) int {
 	count := 0
 	for _, line := range strings.Split(output, "\n") {

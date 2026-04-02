@@ -26,6 +26,8 @@ const (
 	EventBudgetUpdate                    // Budget state change
 	EventError                           // Error occurred
 	EventTokenStream                     // Streamed token chunk from LLM
+	EventKReviewStart                    // K-LLM parallel review phase begins
+	EventKReviewMerge                    // K-LLM findings merged
 )
 
 var eventTypeNames = map[EventType]string{
@@ -46,6 +48,8 @@ var eventTypeNames = map[EventType]string{
 	EventBudgetUpdate:     "budget_update",
 	EventError:            "error",
 	EventTokenStream:      "token_stream",
+	EventKReviewStart:     "k_review_start",
+	EventKReviewMerge:     "k_review_merge",
 }
 
 // String returns the event type name.
