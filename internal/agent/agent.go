@@ -108,6 +108,10 @@ type Agent struct {
 	// Context retrieval after compaction
 	hasCompacted bool // set true after compactConversation; triggers auto-context injection
 
+	// PASTE speculative execution
+	speculator  *SpeculativeCache  // pre-executes predicted read-only tools while LLM thinks
+	toolHistory []toolCallRecord   // recent tool calls for pattern prediction (last 10)
+
 	// Hallucination detection
 	factTracker              *FactTracker // in-memory ground-truth accumulator
 	hallucinationRecallCount int          // consecutive auto-corrections (rate limited at 3)
@@ -135,7 +139,7 @@ type Agent struct {
 
 // New creates an agent with the given executor, tool registry, and config.
 func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRenderer, config Config) *Agent {
-	return &Agent{
+	a := &Agent{
 		executor:          executor,
 		registry:          registry,
 		permissions:       tools.NewPermissionChecker(tools.ModeAutoApprove),
@@ -147,6 +151,10 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRende
 		cachedPromptLevel: -1, // force rebuild on first call
 		reviewTracker:     &ReviewCycleTracker{},
 	}
+	if isSpeculationEnabled() {
+		a.speculator = NewSpeculativeCache()
+	}
+	return a
 }
 
 // SetPermissions sets the permission checker for tool execution.
@@ -886,6 +894,15 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 
 		a.executeToolCalls(ctx, msg.ToolCalls)
 
+		// PASTE: launch speculative execution for predicted next tools while LLM thinks.
+		// Predictions based on patterns in recent tool history (grep→file_read, etc.)
+		if a.speculator != nil && len(a.toolHistory) > 0 {
+			predictions := PredictNextTools(a.toolHistory)
+			if len(predictions) > 0 {
+				a.speculator.Speculate(ctx, a.registry, a.config.WorkDir, predictions)
+			}
+		}
+
 		// Proactive context compression: trigger at 70% fill to prevent overflow.
 		// Runs mid-phase (not just between phases) for long-running tasks.
 		if a.contextFillRatio() > 0.70 {
@@ -1020,12 +1037,28 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			}
 		}
 
+		// PASTE: check speculative cache for read-only tools before executing
+		var result *tools.ToolResult
+		var execErr error
+		specHit := false
+		if a.speculator != nil {
+			if tool, ok := a.registry.Get(name); ok && tool.Category() == tools.CategoryReadOnly {
+				if cached, ok := a.speculator.Get(name, args); ok {
+					result = cached
+					specHit = true
+					log.Printf("[Speculator] cache hit: %s (skipped execution)", name)
+				}
+			}
+		}
+
 		// Per-tool-call timeout as a safety net. Even if the bash tool's internal
 		// timeout fails, the agent won't hang forever on a single tool call.
-		toolCtx, toolCancel := context.WithTimeout(ctx, 5*time.Minute)
 		toolStart := time.Now()
-		result, execErr := a.registry.ExecuteWithPrompt(toolCtx, name, args, a.config.WorkDir, a.permissions, a.permissionPrompt)
-		toolCancel()
+		if !specHit {
+			toolCtx, toolCancel := context.WithTimeout(ctx, 5*time.Minute)
+			result, execErr = a.registry.ExecuteWithPrompt(toolCtx, name, args, a.config.WorkDir, a.permissions, a.permissionPrompt)
+			toolCancel()
+		}
 		toolDuration := time.Since(toolStart)
 
 		if a.trace != nil {
@@ -1140,6 +1173,20 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			ToolCallID: callID,
 			Content:    conversationContent,
 		})
+
+		// Track tool call history for PASTE speculative predictions
+		outputPreview := conversationContent
+		if len(outputPreview) > 500 {
+			outputPreview = outputPreview[:500]
+		}
+		a.toolHistory = append(a.toolHistory, toolCallRecord{
+			Name:   name,
+			Args:   args,
+			Output: outputPreview,
+		})
+		if len(a.toolHistory) > 10 {
+			a.toolHistory = a.toolHistory[len(a.toolHistory)-10:]
+		}
 
 		// File read cache: populate on successful read, invalidate on write/edit.
 		// Cache key includes path@offset:limit so different ranges of the same file
