@@ -116,7 +116,7 @@ func detectSearchBackend() SearchBackend {
 
 func (t *WebSearchTool) Name() string     { return "web_search" }
 func (t *WebSearchTool) Description() string {
-	return "Search the web and return top results. Supports Serper, Brave, Exa, Tavily, SearXNG, and DuckDuckGo backends."
+	return "Search the web and return top results. 19 backends: Brave, Tavily, Serper, Exa, SearXNG, DuckDuckGo, Perplexity, You.com, SerpAPI, Google CSE, Jina, Kagi, Yandex, Linkup, Semantic Scholar, OpenAlex, GitHub, Sourcegraph, NewsAPI. Multiple backends fused via RRF."
 }
 func (t *WebSearchTool) Category() ToolCategory { return CategoryReadOnly }
 
@@ -654,6 +654,49 @@ func detectAllBackends() []SearchBackend {
 	if u := os.Getenv("SEARXNG_URL"); u != "" {
 		backends = append(backends, &SearXNGBackend{baseURL: u})
 	}
+	// Tier 1: Large user bases
+	if key := os.Getenv("PERPLEXITY_API_KEY"); key != "" {
+		backends = append(backends, &PerplexityBackend{apiKey: key})
+	}
+	if key := os.Getenv("YOU_API_KEY"); key != "" {
+		backends = append(backends, &YouBackend{apiKey: key})
+	}
+	if key := os.Getenv("SERPAPI_KEY"); key != "" {
+		backends = append(backends, &SerpAPIBackend{apiKey: key})
+	}
+	if key := os.Getenv("GOOGLE_CSE_KEY"); key != "" {
+		if cx := os.Getenv("GOOGLE_CSE_CX"); cx != "" {
+			backends = append(backends, &GoogleCSEBackend{apiKey: key, cx: cx})
+		}
+	}
+	if key := os.Getenv("JINA_API_KEY"); key != "" {
+		backends = append(backends, &JinaBackend{apiKey: key})
+	}
+	// Tier 2: Regional/niche
+	if key := os.Getenv("KAGI_API_KEY"); key != "" {
+		backends = append(backends, &KagiBackend{apiKey: key})
+	}
+	if key := os.Getenv("YANDEX_API_KEY"); key != "" {
+		backends = append(backends, &YandexBackend{apiKey: key})
+	}
+	if key := os.Getenv("LINKUP_API_KEY"); key != "" {
+		backends = append(backends, &LinkupBackend{apiKey: key})
+	}
+	// Tier 3: Specialized (academic — no keys needed)
+	backends = append(backends, &SemanticScholarBackend{})
+	backends = append(backends, &OpenAlexBackend{})
+	// Tier 3: Code (optional keys)
+	if key := os.Getenv("GITHUB_TOKEN"); key != "" {
+		backends = append(backends, &GitHubSearchBackend{token: key})
+	}
+	if key := os.Getenv("SOURCEGRAPH_TOKEN"); key != "" {
+		backends = append(backends, &SourcegraphBackend{token: key})
+	}
+	// Tier 3: News
+	if key := os.Getenv("NEWSAPI_KEY"); key != "" {
+		backends = append(backends, &NewsAPIBackend{apiKey: key})
+	}
+	// DuckDuckGo always last (free fallback)
 	backends = append(backends, &DuckDuckGoBackend{})
 	return backends
 }
