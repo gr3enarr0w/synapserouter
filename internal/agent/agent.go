@@ -2245,9 +2245,22 @@ Commands marked [MANUAL] require reading code instead of running a command.
 		provIdx := (startIdx + step) % n
 		provider := levelProviders[provIdx]
 
+		// Get diff context for review steps (saves 60-80% tokens)
+		diffSection := ""
+		if step == 0 || step%2 == 0 {
+			if diffs := a.getChangedDiffs(); len(diffs) > 0 {
+				diffSection = fmt.Sprintf(`
+GIT DIFF (focus your review on these changes):
+---
+%s
+---
+`, formatDiffContext(diffs, maxDiffLinesTotal))
+			}
+		}
+
 		var task string
 		if step == 0 {
-			// First provider: review (same as single reviewer)
+			// First provider: review with diff context
 			task = fmt.Sprintf(`You are an INDEPENDENT reviewer (agent %d/%d) with NO context from the implementation.
 You must evaluate the work FRESH — do not assume anything is correct.
 
@@ -2260,7 +2273,7 @@ ACCEPTANCE CRITERIA:
 ---
 %s
 ---
-
+%s
 SKILLS TO CHECK AGAINST:
 %s
 %s
@@ -2269,14 +2282,14 @@ EXTRACTED SPEC CONSTRAINTS (MANDATORY — flag any violations):
 
 Your job:
 1. Run EVERY verification command listed above. Report the output and PASS/FAIL for each.
-2. Use tools (file_read, grep, bash) to inspect ALL actual outputs. Trust NOTHING without evidence.
+2. Review the git diff above for correctness. Use file_read only if you need more context.
 3. Compare each output against the original request and acceptance criteria.
 4. For [MANUAL] checks: read the relevant code and verify the stated condition.
 5. Check for: null values, zero values, empty fields, missing structure.
 6. Check all spec constraints above — any violation is a FAIL.
 7. Say VERIFIED_CORRECT only if ALL verification commands pass AND all criteria are met.
    Otherwise say NEEDS_FIX with every specific issue listed.`,
-				step+1, n, a.originalRequest, a.acceptanceCriteria, skillContext, verifySection, a.formatConstraintsBlock())
+				step+1, n, a.originalRequest, a.acceptanceCriteria, diffSection, skillContext, verifySection, a.formatConstraintsBlock())
 		} else if step%2 == 1 {
 			// Odd steps: fix issues found by previous reviewer
 			prevReview := lastResult
@@ -2495,24 +2508,31 @@ Commands marked [MANUAL] require reading code instead of running a command.
 
 	constraintsBlock := a.formatConstraintsBlock()
 
-	// Collect changed files for shuffle ordering
-	changedFiles := a.getChangedFiles()
+	// Get diffs for review context (saves 60-80% tokens vs tool-based file reads)
+	allDiffs := a.getChangedDiffs()
 
-	// Build K tasks with shuffled file orders
+	// Build K tasks with shuffled diff orders (reduces positional bias)
 	tasks := make([]DelegateTask, k)
 	for i := 0; i < k; i++ {
-		shuffled := ShuffleFileOrder(changedFiles, int64(i)*1000003+7)
-		fileOrderHint := ""
-		if len(shuffled) > 0 {
-			fileOrderHint = "\nSUGGESTED FILE INSPECTION ORDER (start with these, inspect ALL):\n  - " +
-				strings.Join(shuffled, "\n  - ") + "\n"
+		// Shuffle diffs per reviewer for bias reduction
+		reviewerDiffs := shuffleDiffs(allDiffs, int64(i)*1000003+7)
+		diffSection := ""
+		if len(reviewerDiffs) > 0 {
+			diffSection = fmt.Sprintf(`
+GIT DIFF (focus your review on these changes):
+---
+%s
+---
+For new files, review the full content shown above.
+For changed files, focus on the diff but use file_read if you need surrounding context.
+`, formatDiffContext(reviewerDiffs, maxDiffLinesTotal))
 		}
 
 		provider := a.selectReviewerProvider(i, k)
 
 		task := fmt.Sprintf(`You are REVIEWER %d/%d — an INDEPENDENT reviewer with NO context from the implementation.
 You must evaluate the work FRESH — do not assume anything is correct.
-%s
+
 ORIGINAL REQUEST:
 ---
 %s
@@ -2522,13 +2542,13 @@ ACCEPTANCE CRITERIA:
 ---
 %s
 ---
-
+%s
 %s%s
 %s
 
 INSTRUCTIONS:
-1. Fetch ALL real results — do NOT trust the previous model's claims
-2. For each criterion: PASS or FAIL with evidence
+1. Review the git diff above for correctness — focus on what changed.
+2. Run verification commands and report PASS/FAIL for each.
 3. Check for things the implementer missed:
    - Null/empty/zero values where real data is expected
    - End-user experience — would a human say this is right?
@@ -2541,9 +2561,9 @@ FORMAT YOUR FINDINGS as structured items:
 This format enables automated finding aggregation across reviewers.
 
 Say VERIFIED_CORRECT if all criteria met, or NEEDS_FIX with every issue listed.`,
-			i+1, k, fileOrderHint,
+			i+1, k,
 			a.originalRequest, a.acceptanceCriteria,
-			skillContext, verifySection,
+			diffSection, skillContext, verifySection,
 			constraintsBlock)
 
 		tasks[i] = DelegateTask{
@@ -2671,6 +2691,19 @@ func (a *Agent) getChangedFiles() []string {
 
 // runSingleReviewer runs one independent reviewer sub-agent (used when level has 1 provider).
 func (a *Agent) runSingleReviewer(ctx context.Context, phase PipelinePhase, model, provider, skillContext, verifySection string) (string, error) {
+	// Get diff context for the review (saves 60-80% tokens vs full-file reads)
+	diffSection := ""
+	if diffs := a.getChangedDiffs(); len(diffs) > 0 {
+		diffSection = fmt.Sprintf(`
+GIT DIFF (focus your review on these changes):
+---
+%s
+---
+For new files, review the full content shown above.
+For changed files, focus on the diff but use file_read if you need surrounding context.
+`, formatDiffContext(diffs, maxDiffLinesTotal))
+	}
+
 	task := fmt.Sprintf(`You are an INDEPENDENT reviewer with NO context from the implementation.
 You must evaluate the work FRESH — do not assume anything is correct.
 
@@ -2683,7 +2716,7 @@ ACCEPTANCE CRITERIA:
 ---
 %s
 ---
-
+%s
 SKILLS TO CHECK AGAINST:
 %s
 %s
@@ -2692,14 +2725,15 @@ EXTRACTED SPEC CONSTRAINTS (MANDATORY — flag any violations):
 
 Your job:
 1. Run EVERY verification command listed above. Report the output and PASS/FAIL for each.
-2. Use tools (file_read, grep, bash) to inspect ALL actual outputs. Trust NOTHING without evidence.
+2. Review the git diff above for correctness. Use file_read only if you need more context.
 3. Compare each output against the original request and acceptance criteria.
 4. For [MANUAL] checks: read the relevant code and verify the stated condition.
 5. Check for: null values, zero values, empty fields, missing structure.
 6. Check all spec constraints above — any violation is a FAIL.
 7. Say VERIFIED_CORRECT only if ALL verification commands pass AND all criteria are met.
    Otherwise say NEEDS_FIX with every specific issue listed.`,
-		a.originalRequest, a.acceptanceCriteria, skillContext, verifySection, a.formatConstraintsBlock())
+		a.originalRequest, a.acceptanceCriteria, diffSection,
+		skillContext, verifySection, a.formatConstraintsBlock())
 
 	log.Printf("[Agent] spawning independent %s sub-agent (no shared context)", phase.Name)
 
