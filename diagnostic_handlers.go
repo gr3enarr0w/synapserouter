@@ -248,6 +248,7 @@ func agentChatHandler(registry *tools.Registry) http.HandlerFunc {
 		// Wire memory systems for unlimited context + recall + hallucination detection
 		config.VectorMemory = vectorMemory
 		config.ToolStore = agent.NewToolOutputStore(db)
+		config.PlanCache = agent.NewPlanCache(db)
 
 		// Create agent with tracing enabled
 		ag := agent.New(proxyRouter, registry, nil, config)

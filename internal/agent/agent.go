@@ -453,19 +453,46 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 			firstPhase := a.pipeline.Phases[a.pipelinePhase]
 			if a.pipelinePhase == 0 && firstPhase.Name == "plan" &&
 				firstPhase.ParallelSubAgents > 0 && len(firstPhase.CoderProviders) > 0 && a.hasProviders(firstPhase.CoderProviders) {
-				log.Printf("[Agent] pipeline: firing parallel %s phase immediately", firstPhase.Name)
-				parallelResult := a.runParallelPhase(firstPhase)
+
+				// Plan cache check: reuse cached plan for similar tasks
+				var planResult string
+				cacheHit := false
+				if a.config.PlanCache != nil && a.originalRequest != "" {
+					key := ExtractCacheKey(a.originalRequest)
+					if cached, err := a.config.PlanCache.Lookup(key, a.config.Model); err == nil && cached != nil {
+						log.Printf("[Agent] plan cache hit: %q (key=%s, hits=%d)", cached.OriginalRequest, key[:8], cached.HitCount)
+						a.config.PlanCache.RecordHit(cached.ID)
+						planResult = cached.AcceptanceCriteria
+						cacheHit = true
+					}
+				}
+
+				if !cacheHit {
+					log.Printf("[Agent] pipeline: firing parallel %s phase immediately", firstPhase.Name)
+					planResult = a.runParallelPhase(firstPhase)
+				}
+
 				if firstPhase.StoreAs == "criteria" {
-					a.acceptanceCriteria = parallelResult
+					a.acceptanceCriteria = planResult
+					// Store to cache on miss
+					if !cacheHit && a.config.PlanCache != nil && a.originalRequest != "" {
+						key := ExtractCacheKey(a.originalRequest)
+						a.config.PlanCache.Store(key, a.config.Model, a.originalRequest, planResult)
+					}
 				}
 				// Advance past the plan phase
 				a.pipelinePhase = 1
 				a.phaseToolCalls = 0
+
+				label := "merged plan"
+				if cacheHit {
+					label = "cached plan (reused from similar task)"
+				}
 				// Inject the plan result + next phase prompt into conversation
 				a.conversation.Add(providers.Message{
 					Role:    "user",
-					Content: fmt.Sprintf("The planning phase is complete. Here is the merged plan and acceptance criteria:\n\n%s\n\nNow proceed to implement. %s",
-						parallelResult, a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)),
+					Content: fmt.Sprintf("The planning phase is complete. Here is the %s and acceptance criteria:\n\n%s\n\nNow proceed to implement. %s",
+						label, planResult, a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)),
 				})
 			} else {
 				// No parallel plan phase (or intent skipped it) — inject the current
@@ -1784,6 +1811,11 @@ func (a *Agent) advancePipeline(content string) bool {
 		// Store acceptance criteria if this phase produces them
 		if currentPhase.StoreAs == "criteria" {
 			a.acceptanceCriteria = content
+			// Cache the plan for reuse in future similar tasks
+			if a.config.PlanCache != nil && a.originalRequest != "" {
+				key := ExtractCacheKey(a.originalRequest)
+				a.config.PlanCache.Store(key, a.config.Model, a.originalRequest, content)
+			}
 		}
 
 		// Advance to next phase

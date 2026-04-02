@@ -56,9 +56,10 @@ type Config struct {
 	MaxPhaseTurns int // Hard cap on LLM calls per pipeline phase (0 = auto-detect from spec complexity)
 
 	// State persistence
-	DB        *sql.DB // SQLite database for session persistence
-	Resume    bool    // Resume most recent session on startup
-	SessionID string  // Resume a specific session ID
+	DB        *sql.DB    // SQLite database for session persistence
+	PlanCache *PlanCache // Plan caching for reuse across sessions
+	Resume    bool       // Resume most recent session on startup
+	SessionID string     // Resume a specific session ID
 
 	// Non-interactive mode (--message flag) — suppresses follow-up questions
 	NonInteractive bool

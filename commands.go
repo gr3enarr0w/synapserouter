@@ -507,6 +507,7 @@ func cmdChat(args []string) {
 	config.MaxAgents = *maxAgents
 	config.DB = ac.DB
 	config.ToolStore = agent.NewToolOutputStore(ac.DB)
+	config.PlanCache = agent.NewPlanCache(ac.DB)
 	config.VectorMemory = ac.VectorMemory
 	if *system != "" {
 		config.SystemPrompt = *system
