@@ -5,19 +5,39 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
 )
 
 const (
-	defaultSearchTimeout = 15 * time.Second
-	maxSearchResults     = 10
-	duckDuckGoURL        = "https://html.duckduckgo.com/html/"
+	defaultSearchTimeout    = 15 * time.Second
+	fusionTimeoutPerBackend = 2 * time.Second
+	maxSearchResults        = 10
+	rrfK                    = 60 // standard RRF constant (Cormack et al. 2009)
+	duckDuckGoURL           = "https://html.duckduckgo.com/html/"
 )
+
+// backendResult holds one backend's ranked results alongside metadata.
+type backendResult struct {
+	backendName string
+	results     []SearchResult
+	err         error
+}
+
+// ChatCompleter is a minimal interface for LLM re-ranking.
+// Defined locally to avoid import cycles (tools ↔ agent/orchestration).
+type ChatCompleter interface {
+	ChatCompletion(ctx context.Context, req providers.ChatRequest, sessionID string) (providers.ChatResponse, error)
+}
 
 // SearchResult represents a single search result.
 type SearchResult struct {
@@ -33,14 +53,42 @@ type SearchBackend interface {
 }
 
 // WebSearchTool searches the web using a configurable backend.
-// Default: DuckDuckGo. Set TAVILY_API_KEY for Tavily. Set SEARXNG_URL for SearXNG.
+// When multiple backends are configured, queries all in parallel and merges
+// results via Reciprocal Rank Fusion (RRF) for better coverage.
 type WebSearchTool struct {
-	backend SearchBackend
+	backend   SearchBackend   // single-backend mode (backward compat)
+	backends  []SearchBackend // all configured backends for fusion mode
+	fusion    bool            // whether fusion is active
+	completer ChatCompleter   // optional, for LLM re-ranking; nil = skip
 }
 
-// NewWebSearchTool creates a web search tool with auto-detected backend.
-func NewWebSearchTool() *WebSearchTool {
-	return &WebSearchTool{backend: detectSearchBackend()}
+// NewWebSearchTool creates a web search tool with auto-detected backend(s).
+// Pass an optional ChatCompleter to enable LLM re-ranking of fused results.
+func NewWebSearchTool(completer ...ChatCompleter) *WebSearchTool {
+	backends := detectAllBackends()
+	fusion := isFusionEnabled(len(backends))
+
+	var comp ChatCompleter
+	if len(completer) > 0 {
+		comp = completer[0]
+	}
+
+	if fusion {
+		names := make([]string, len(backends))
+		for i, b := range backends {
+			names[i] = b.Name()
+		}
+		log.Printf("[SearchFusion] enabled with %d backends: %s", len(backends), strings.Join(names, ", "))
+		return &WebSearchTool{
+			backends:  backends,
+			fusion:    true,
+			completer: comp,
+		}
+	}
+	return &WebSearchTool{
+		backend: detectSearchBackend(),
+		fusion:  false,
+	}
 }
 
 // detectSearchBackend selects the search backend by quality ranking.
@@ -103,6 +151,12 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]interface{}
 		maxResults = 1
 	}
 
+	// Fusion mode: query all configured backends in parallel, merge via RRF
+	if t.fusion && len(t.backends) >= 2 {
+		return t.executeFusion(ctx, query, maxResults)
+	}
+
+	// Single-backend mode (backward compatible)
 	ctx, cancel := context.WithTimeout(ctx, defaultSearchTimeout)
 	defer cancel()
 
@@ -120,6 +174,63 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]interface{}
 	}
 
 	return &ToolResult{Output: formatSearchResults(results)}, nil
+}
+
+// executeFusion queries all backends in parallel and merges results via RRF.
+func (t *WebSearchTool) executeFusion(ctx context.Context, query string, maxResults int) (*ToolResult, error) {
+	backendResults := searchAllBackends(ctx, t.backends, query, maxResults)
+
+	// Count successes
+	successCount := 0
+	for _, br := range backendResults {
+		if br.err == nil && len(br.results) > 0 {
+			successCount++
+			log.Printf("[SearchFusion] %s: %d results", br.backendName, len(br.results))
+		} else if br.err != nil {
+			log.Printf("[SearchFusion] %s: failed: %v", br.backendName, br.err)
+		}
+	}
+
+	if successCount == 0 {
+		var errs []string
+		for _, br := range backendResults {
+			if br.err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %v", br.backendName, br.err))
+			}
+		}
+		if len(errs) > 0 {
+			return &ToolResult{Error: fmt.Sprintf("all search backends failed: %s", strings.Join(errs, "; "))}, nil
+		}
+		return &ToolResult{Output: "no results found"}, nil
+	}
+
+	// Single success: skip RRF, return directly
+	if successCount == 1 {
+		for _, br := range backendResults {
+			if br.err == nil && len(br.results) > 0 {
+				trimmed := br.results
+				if len(trimmed) > maxResults {
+					trimmed = trimmed[:maxResults]
+				}
+				return &ToolResult{Output: formatSearchResults(trimmed)}, nil
+			}
+		}
+	}
+
+	// Merge via RRF
+	merged := mergeRRF(backendResults, maxResults)
+
+	// Optional LLM re-rank when 2+ backends contributed
+	if t.completer != nil && successCount >= 2 && len(merged) > 1 {
+		merged = llmRerank(ctx, t.completer, query, merged)
+	}
+
+	if len(merged) == 0 {
+		return &ToolResult{Output: "no results found"}, nil
+	}
+
+	log.Printf("[SearchFusion] merged %d results from %d backends", len(merged), successCount)
+	return &ToolResult{Output: formatSearchResults(merged)}, nil
 }
 
 // --- DuckDuckGo Backend ---
@@ -520,4 +631,207 @@ func formatSearchResults(results []SearchResult) string {
 		}
 	}
 	return sb.String()
+}
+
+// --- Search Fusion: RRF Multi-Backend Merge ---
+
+// detectAllBackends returns all configured search backends.
+// DuckDuckGo is always included as the last fallback (no API key needed).
+func detectAllBackends() []SearchBackend {
+	var backends []SearchBackend
+	if key := os.Getenv("BRAVE_API_KEY"); key != "" {
+		backends = append(backends, &BraveBackend{apiKey: key})
+	}
+	if key := os.Getenv("TAVILY_API_KEY"); key != "" {
+		backends = append(backends, &TavilyBackend{apiKey: key})
+	}
+	if key := os.Getenv("SERPER_API_KEY"); key != "" {
+		backends = append(backends, &SerperBackend{apiKey: key})
+	}
+	if key := os.Getenv("EXA_API_KEY"); key != "" {
+		backends = append(backends, &ExaBackend{apiKey: key})
+	}
+	if u := os.Getenv("SEARXNG_URL"); u != "" {
+		backends = append(backends, &SearXNGBackend{baseURL: u})
+	}
+	backends = append(backends, &DuckDuckGoBackend{})
+	return backends
+}
+
+// isFusionEnabled checks whether search fusion should be active.
+// Auto-enables when 2+ backends are configured, unless SYNROUTE_SEARCH_FUSION=false.
+func isFusionEnabled(backendCount int) bool {
+	switch strings.ToLower(os.Getenv("SYNROUTE_SEARCH_FUSION")) {
+	case "false", "0", "no":
+		return false
+	case "true", "1", "yes":
+		return backendCount >= 2
+	default:
+		return backendCount >= 2
+	}
+}
+
+// searchAllBackends queries all backends in parallel with per-backend timeouts.
+func searchAllBackends(ctx context.Context, backends []SearchBackend, query string, maxResults int) []backendResult {
+	results := make([]backendResult, len(backends))
+	var wg sync.WaitGroup
+
+	for i, b := range backends {
+		wg.Add(1)
+		go func(idx int, backend SearchBackend) {
+			defer wg.Done()
+			bctx, cancel := context.WithTimeout(ctx, fusionTimeoutPerBackend)
+			defer cancel()
+			res, err := backend.Search(bctx, query, maxResults)
+			results[idx] = backendResult{
+				backendName: backend.Name(),
+				results:     res,
+				err:         err,
+			}
+		}(i, b)
+	}
+
+	wg.Wait()
+	return results
+}
+
+// normalizeURL produces a canonical form for URL deduplication.
+// Lowercases scheme+host, strips www., trailing slash, fragments, and tracking params.
+func normalizeURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = strings.ToLower(u.Host)
+	u.Host = strings.TrimPrefix(u.Host, "www.")
+	u.Fragment = ""
+
+	// Strip tracking parameters
+	q := u.Query()
+	for key := range q {
+		lower := strings.ToLower(key)
+		if strings.HasPrefix(lower, "utm_") || lower == "ref" || lower == "source" {
+			q.Del(key)
+		}
+	}
+	u.RawQuery = q.Encode()
+	u.Path = strings.TrimRight(u.Path, "/")
+	if u.Path == "" {
+		u.Path = "/"
+	}
+	return u.String()
+}
+
+// mergeRRF merges results from multiple backends using Reciprocal Rank Fusion.
+// score(doc) = sum(1 / (k + rank_i)) for each backend that returned the doc.
+// Documents appearing in multiple backends naturally rise to the top.
+func mergeRRF(backendResults []backendResult, maxResults int) []SearchResult {
+	type candidate struct {
+		bestResult SearchResult
+		bestRank   int
+		score      float64
+	}
+	urlMap := make(map[string]*candidate)
+
+	for _, br := range backendResults {
+		if br.err != nil || len(br.results) == 0 {
+			continue
+		}
+		for rank, sr := range br.results {
+			normURL := normalizeURL(sr.URL)
+			rrfScore := 1.0 / float64(rrfK+rank+1) // rank+1 for 1-based
+
+			if c, exists := urlMap[normURL]; exists {
+				c.score += rrfScore
+				if rank < c.bestRank {
+					c.bestResult = sr
+					c.bestRank = rank
+				}
+			} else {
+				urlMap[normURL] = &candidate{
+					bestResult: sr,
+					bestRank:   rank,
+					score:      rrfScore,
+				}
+			}
+		}
+	}
+
+	sorted := make([]*candidate, 0, len(urlMap))
+	for _, c := range urlMap {
+		sorted = append(sorted, c)
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].score > sorted[j].score
+	})
+
+	results := make([]SearchResult, 0, maxResults)
+	for i, c := range sorted {
+		if i >= maxResults {
+			break
+		}
+		results = append(results, c.bestResult)
+	}
+	return results
+}
+
+// llmRerank optionally re-ranks search results using the router's cheapest model.
+// Uses model "auto" so the router picks from whatever's configured (provider-agnostic).
+// On any failure (timeout, parse error, nil completer), returns results unchanged.
+func llmRerank(ctx context.Context, completer ChatCompleter, query string, results []SearchResult) []SearchResult {
+	if completer == nil || len(results) <= 1 {
+		return results
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Rank these search results by relevance to: %q\n\n", query))
+	for i, r := range results {
+		sb.WriteString(fmt.Sprintf("%d. [%s] %s\n", i, r.Title, r.Snippet))
+	}
+	sb.WriteString("\nReturn ONLY a JSON array of indices in order of relevance, e.g. [2,0,1,3]")
+
+	resp, err := completer.ChatCompletion(ctx, providers.ChatRequest{
+		Model:       "auto",
+		Messages:    []providers.Message{{Role: "user", Content: sb.String()}},
+		Temperature: 0,
+		MaxTokens:   100,
+		SkipMemory:  true,
+	}, "")
+	if err != nil || len(resp.Choices) == 0 {
+		return results
+	}
+
+	content := strings.TrimSpace(resp.Choices[0].Message.Content)
+	// Extract JSON array from response (may have surrounding text)
+	start := strings.Index(content, "[")
+	end := strings.LastIndex(content, "]")
+	if start < 0 || end < 0 || end <= start {
+		return results
+	}
+	content = content[start : end+1]
+
+	var indices []int
+	if err := json.Unmarshal([]byte(content), &indices); err != nil {
+		return results
+	}
+
+	seen := make(map[int]bool)
+	reranked := make([]SearchResult, 0, len(results))
+	for _, idx := range indices {
+		if idx >= 0 && idx < len(results) && !seen[idx] {
+			reranked = append(reranked, results[idx])
+			seen[idx] = true
+		}
+	}
+	// Append any results the LLM missed
+	for i, r := range results {
+		if !seen[i] {
+			reranked = append(reranked, r)
+		}
+	}
+	return reranked
 }
