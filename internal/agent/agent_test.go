@@ -163,7 +163,7 @@ func TestREPLCommands(t *testing.T) {
 	repl.out = &replOut
 
 	// Test /help command
-	done := repl.handleCommand("/help")
+	done := repl.handleCommand(context.Background(), "/help")
 	if done {
 		t.Error("/help should not exit")
 	}
@@ -173,27 +173,27 @@ func TestREPLCommands(t *testing.T) {
 
 	// Test /model command
 	replOut.Reset()
-	repl.handleCommand("/model claude-sonnet-4-6")
+	repl.handleCommand(context.Background(), "/model claude-sonnet-4-6")
 	if agent.config.Model != "claude-sonnet-4-6" {
 		t.Errorf("expected model claude-sonnet-4-6, got %s", agent.config.Model)
 	}
 
 	// Test /tools command
 	replOut.Reset()
-	repl.handleCommand("/tools")
+	repl.handleCommand(context.Background(), "/tools")
 	if !bytes.Contains(replOut.Bytes(), []byte("bash")) {
 		t.Error("tools output should list bash")
 	}
 
 	// Test /clear command
 	agent.conversation.Add(providers.Message{Role: "user", Content: "test"})
-	repl.handleCommand("/clear")
+	repl.handleCommand(context.Background(), "/clear")
 	if len(agent.conversation.Messages()) != 0 {
 		t.Error("clear should empty conversation")
 	}
 
 	// Test /exit command
-	done = repl.handleCommand("/exit")
+	done = repl.handleCommand(context.Background(), "/exit")
 	if !done {
 		t.Error("/exit should return true")
 	}

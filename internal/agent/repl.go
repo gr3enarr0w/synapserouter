@@ -21,7 +21,6 @@ type REPL struct {
 	renderer TerminalRenderer
 	in       io.Reader
 	out      io.Writer
-	ctx      context.Context // parent context for phase commands
 }
 
 // NewREPL creates a new REPL for the given agent.
@@ -36,7 +35,6 @@ func NewREPL(agent *Agent, renderer TerminalRenderer) *REPL {
 
 // Run starts the interactive REPL loop. Blocks until exit.
 func (r *REPL) Run(ctx context.Context) error {
-	r.ctx = ctx
 	// Brand name — logo image planned for v1.01
 	noColor := os.Getenv("NO_COLOR") != ""
 	if noColor {
@@ -86,7 +84,7 @@ func (r *REPL) Run(ctx context.Context) error {
 
 		// Handle REPL commands
 		if strings.HasPrefix(input, "/") {
-			if done := r.handleCommand(input); done {
+			if done := r.handleCommand(ctx, input); done {
 				mu.Lock()
 				reqCancel()
 				mu.Unlock()
@@ -115,7 +113,7 @@ func (r *REPL) Run(ctx context.Context) error {
 	}
 }
 
-func (r *REPL) handleCommand(input string) bool {
+func (r *REPL) handleCommand(ctx context.Context, input string) bool {
 	parts := strings.Fields(input)
 	cmd := parts[0]
 
@@ -195,7 +193,7 @@ func (r *REPL) handleCommand(input string) bool {
 			msg = "Generate a plan with acceptance criteria for the current project"
 		}
 		fmt.Fprintf(r.out, "Running plan phase...\n")
-		response, err := r.agent.RunPhase(r.ctx, "plan", msg)
+		response, err := r.agent.RunPhase(ctx, "plan", msg)
 		if err != nil {
 			fmt.Fprintf(r.out, "error: %s\n", err)
 		} else if response != "" {
@@ -208,7 +206,7 @@ func (r *REPL) handleCommand(input string) bool {
 			msg = "Review the code in the current working directory. Read files, run tests, identify issues."
 		}
 		fmt.Fprintf(r.out, "Running code review...\n")
-		response, err := r.agent.RunPhase(r.ctx, "code-review", msg)
+		response, err := r.agent.RunPhase(ctx, "code-review", msg)
 		if err != nil {
 			fmt.Fprintf(r.out, "error: %s\n", err)
 		} else if response != "" {
@@ -221,7 +219,7 @@ func (r *REPL) handleCommand(input string) bool {
 			msg = "Run verification: build the code, run tests, check against acceptance criteria."
 		}
 		fmt.Fprintf(r.out, "Running self-check...\n")
-		response, err := r.agent.RunPhase(r.ctx, "self-check", msg)
+		response, err := r.agent.RunPhase(ctx, "self-check", msg)
 		if err != nil {
 			fmt.Fprintf(r.out, "error: %s\n", err)
 		} else if response != "" {
@@ -234,7 +232,7 @@ func (r *REPL) handleCommand(input string) bool {
 			fmt.Fprintln(r.out, "usage: /fix <description of what to fix>")
 		} else {
 			fmt.Fprintf(r.out, "Running targeted fix...\n")
-			response, err := r.agent.RunPhase(r.ctx, "implement", msg)
+			response, err := r.agent.RunPhase(ctx, "implement", msg)
 			if err != nil {
 				fmt.Fprintf(r.out, "error: %s\n", err)
 			} else if response != "" {

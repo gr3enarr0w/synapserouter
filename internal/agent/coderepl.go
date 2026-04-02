@@ -22,7 +22,6 @@ type CodeREPL struct {
 	agent    *Agent
 	renderer *CodeRenderer
 	out      io.Writer
-	ctx      context.Context // parent context for phase commands
 }
 
 // NewCodeREPL creates a code mode REPL. The Terminal parameter is accepted
@@ -46,8 +45,6 @@ func slashCommands() []string {
 
 // Run starts the code mode REPL. Blocks until exit.
 func (cr *CodeREPL) Run(ctx context.Context) error {
-	cr.ctx = ctx
-
 	// Initialize the screen layout (prints launch banner)
 	cr.renderer.Init()
 
@@ -204,7 +201,7 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 			if restoreTerminal != nil {
 				restoreTerminal()
 			}
-			if done := cr.handleCommand(input); done {
+			if done := cr.handleCommand(ctx, input); done {
 				return nil
 			}
 			// Re-enter raw mode
@@ -505,7 +502,7 @@ func (cr *CodeREPL) detectProjectFiles() {
 	}
 }
 
-func (cr *CodeREPL) handleCommand(input string) bool {
+func (cr *CodeREPL) handleCommand(ctx context.Context, input string) bool {
 	parts := strings.Fields(input)
 	cmd := parts[0]
 
@@ -601,7 +598,7 @@ func (cr *CodeREPL) handleCommand(input string) bool {
 		cr.renderer.mu.Lock()
 		cr.renderer.writeContent(cr.renderer.color("\033[35m", "  running plan phase..."))
 		cr.renderer.mu.Unlock()
-		response, err := cr.agent.RunPhase(cr.ctx, "plan", msg)
+		response, err := cr.agent.RunPhase(ctx, "plan", msg)
 		if err != nil {
 			cr.renderer.Error(err.Error())
 		} else if response != "" {
@@ -616,7 +613,7 @@ func (cr *CodeREPL) handleCommand(input string) bool {
 		cr.renderer.mu.Lock()
 		cr.renderer.writeContent(cr.renderer.color("\033[35m", "  running code review..."))
 		cr.renderer.mu.Unlock()
-		response, err := cr.agent.RunPhase(cr.ctx, "code-review", msg)
+		response, err := cr.agent.RunPhase(ctx, "code-review", msg)
 		if err != nil {
 			cr.renderer.Error(err.Error())
 		} else if response != "" {
@@ -631,7 +628,7 @@ func (cr *CodeREPL) handleCommand(input string) bool {
 		cr.renderer.mu.Lock()
 		cr.renderer.writeContent(cr.renderer.color("\033[35m", "  running self-check..."))
 		cr.renderer.mu.Unlock()
-		response, err := cr.agent.RunPhase(cr.ctx, "self-check", msg)
+		response, err := cr.agent.RunPhase(ctx, "self-check", msg)
 		if err != nil {
 			cr.renderer.Error(err.Error())
 		} else if response != "" {
@@ -648,7 +645,7 @@ func (cr *CodeREPL) handleCommand(input string) bool {
 			cr.renderer.mu.Lock()
 			cr.renderer.writeContent(cr.renderer.color("\033[35m", "  running targeted fix..."))
 			cr.renderer.mu.Unlock()
-			response, err := cr.agent.RunPhase(cr.ctx, "implement", msg)
+			response, err := cr.agent.RunPhase(ctx, "implement", msg)
 			if err != nil {
 				cr.renderer.Error(err.Error())
 			} else if response != "" {
