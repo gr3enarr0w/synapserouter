@@ -21,10 +21,24 @@ triggers:
   - "dataset"
   - "data analysis"
   - "machine learning"
+  - "tidyverse"
+  - "dplyr"
+  - "ggplot"
+  - "ggplot2"
+  - "data.table"
+  - "rmarkdown"
+  - "Rmd"
+  - "qmd"
+  - "quarto"
+  - "tibble"
+  - "R script"
+  - "R analysis"
 role: analyst
 phase: analyze
-language: python
+language: python,r
 pipeline: data-science
+mcp_tools:
+  - "context7.query-docs"
 ---
 # Skill: EDA Explorer (Global)
 
@@ -107,6 +121,94 @@ When creating or editing .ipynb files, use `notebook_edit` tool to write code in
 5. **STOP after each major section** — return to user for feedback before continuing
 
 **IMPORTANT:** Do not loop on analysis. Complete one pass through the data, report findings, then STOP. The user will ask for more if needed.
+
+---
+
+## R EDA Patterns (tidyverse)
+
+### 1. Dataset overview
+```r
+library(tidyverse)
+
+df <- read_csv("data.csv")
+glimpse(df)           # structure + types
+summary(df)           # five-number summary for numerics
+df |> summarise(across(everything(), ~sum(is.na(.))))  # missing values
+```
+
+### 2. Distribution analysis
+```r
+# Categorical distributions
+df |>
+  select(where(is.character)) |>
+  pivot_longer(everything()) |>
+  count(name, value, sort = TRUE)
+
+# Numeric distributions
+df |>
+  select(where(is.numeric)) |>
+  pivot_longer(everything()) |>
+  group_by(name) |>
+  summarise(mean = mean(value, na.rm = TRUE),
+            sd = sd(value, na.rm = TRUE),
+            median = median(value, na.rm = TRUE))
+```
+
+### 3. Outlier detection (IQR method)
+```r
+find_outliers <- function(x) {
+  q <- quantile(x, c(0.25, 0.75), na.rm = TRUE)
+  iqr <- q[2] - q[1]
+  x[x < q[1] - 1.5 * iqr | x > q[2] + 1.5 * iqr]
+}
+```
+
+### 4. Correlation analysis
+```r
+df |>
+  select(where(is.numeric)) |>
+  cor(use = "complete.obs") |>
+  as.data.frame() |>
+  rownames_to_column("var1") |>
+  pivot_longer(-var1, names_to = "var2", values_to = "corr") |>
+  filter(abs(corr) > 0.7, var1 != var2)
+```
+
+### 5. Visualization (ggplot2)
+```r
+# Distribution
+ggplot(df, aes(x = numeric_col)) +
+  geom_histogram(bins = 30, fill = "steelblue") +
+  theme_minimal()
+
+# Scatter with trend
+ggplot(df, aes(x = var1, y = var2)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm") +
+  theme_minimal()
+```
+
+### 6. Time-series patterns
+```r
+df |>
+  mutate(date = as.Date(date_col)) |>
+  count(date) |>
+  mutate(ma_7 = zoo::rollmean(n, 7, fill = NA, align = "right")) |>
+  ggplot(aes(x = date)) +
+  geom_line(aes(y = n), alpha = 0.3) +
+  geom_line(aes(y = ma_7), color = "red") +
+  theme_minimal()
+```
+
+### R Markdown / Quarto Workflow
+
+When creating .Rmd or .qmd files, write R code into code chunks. Use `file_write` to create the document, then `bash Rscript -e "rmarkdown::render('file.Rmd')"` to verify it knits.
+
+**Best practices:**
+- Use native pipe `|>` (R 4.1+) over `%>%`
+- Use `across()` for column-wise operations
+- Use `renv` for reproducible environments
+- Use `janitor::clean_names()` for messy column names
 
 ---
 
