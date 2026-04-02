@@ -244,7 +244,7 @@ func checkMemory(ac *AppContext) []DiagnosticCheck {
 	}
 
 	var msgCount int
-	err := ac.DB.QueryRow(`SELECT COUNT(*) FROM vector_messages`).Scan(&msgCount)
+	err := ac.DB.QueryRow(`SELECT COUNT(*) FROM memory`).Scan(&msgCount)
 	if err != nil {
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "no such table") {
@@ -252,7 +252,7 @@ func checkMemory(ac *AppContext) []DiagnosticCheck {
 				Category: "memory",
 				Name:     "messages",
 				Status:   "warn",
-				Message:  "vector_messages table not found",
+				Message:  "memory table not found",
 			})
 		} else {
 			checks = append(checks, DiagnosticCheck{
@@ -266,7 +266,7 @@ func checkMemory(ac *AppContext) []DiagnosticCheck {
 	}
 
 	var sessionCount int
-	_ = ac.DB.QueryRow(`SELECT COUNT(DISTINCT session_id) FROM vector_messages`).Scan(&sessionCount)
+	_ = ac.DB.QueryRow(`SELECT COUNT(DISTINCT session_id) FROM memory`).Scan(&sessionCount)
 
 	checks = append(checks, DiagnosticCheck{
 		Category: "memory",
