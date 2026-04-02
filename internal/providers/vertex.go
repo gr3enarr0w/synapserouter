@@ -323,7 +323,16 @@ func (p *VertexProvider) geminiGenerateContent(ctx context.Context, req ChatRequ
 		}
 		parts := make([]map[string]interface{}, 0, 1)
 		if strings.TrimSpace(msg.Content) != "" {
-			parts = append(parts, map[string]interface{}{"text": msg.Content})
+			textPart := map[string]interface{}{"text": msg.Content}
+			// Round-trip thoughtSignature for Gemini thinking model continuity.
+			// Per Gemini API: thoughtSignature must be echoed back on model turns
+			// in the active loop, or the API returns 400.
+			if role == "model" && msg.ProviderMeta != nil {
+				if sig, ok := msg.ProviderMeta["thoughtSignature"].(string); ok && sig != "" {
+					textPart["thoughtSignature"] = sig
+				}
+			}
+			parts = append(parts, textPart)
 		}
 		if len(parts) > 0 {
 			contents = append(contents, map[string]interface{}{
