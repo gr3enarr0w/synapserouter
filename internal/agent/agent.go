@@ -141,7 +141,7 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRende
 		conversation:      NewConversation(),
 		renderer:          renderer,
 		config:            config,
-		sessionID:         fmt.Sprintf("agent-%d", uniqueID()),
+		sessionID:         fmt.Sprintf("agent-%d", time.Now().UnixNano()),
 		bus:               config.EventBus,
 		cachedPromptLevel: -1, // force rebuild on first call
 		reviewTracker:     &ReviewCycleTracker{},

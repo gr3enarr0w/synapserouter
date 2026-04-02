@@ -61,6 +61,7 @@ var allowedGitSubcommands = map[string]bool{
 	"commit": true, "branch": true, "checkout": true, "push": true,
 	"pull": true, "stash": true, "show": true, "rev-parse": true,
 	"remote": true, "rm": true, "tag": true, "blame": true,
+	"reset": true,
 }
 
 // dangerousGitFlags lists flags that require explicit approval via the bash tool.
