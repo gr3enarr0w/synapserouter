@@ -223,13 +223,21 @@ func (c *MCPClient) CallTool(ctx context.Context, call ToolCall) (*ToolResult, e
 	}
 	defer resp.Body.Close()
 
-	var result ToolResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+	// Check HTTP status — 4xx/5xx indicate server-level errors
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("MCP server returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
+	var result ToolResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode MCP response: %w", err)
+	}
+
+	// Propagate tool execution errors — the LLM needs to see these to self-correct
 	if !result.Success && result.Error != "" {
 		log.Printf("[MCP] Tool call failed: %s - %s", call.ToolName, result.Error)
+		return &result, fmt.Errorf("MCP tool %s failed: %s", call.ToolName, result.Error)
 	}
 
 	return &result, nil
