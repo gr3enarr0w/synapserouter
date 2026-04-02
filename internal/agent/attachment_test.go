@@ -135,8 +135,15 @@ func TestParseAttachments_BinaryFile(t *testing.T) {
 	if len(attachments) != 1 {
 		t.Fatalf("expected 1 attachment, got %d", len(attachments))
 	}
-	if attachments[0].Content != "[binary file, use appropriate tool to process]" {
-		t.Errorf("expected binary file notice, got: %q", attachments[0].Content)
+	// PNG files are now detected as images and base64-encoded
+	if !attachments[0].IsImage {
+		t.Error("expected PNG to be detected as image")
+	}
+	if attachments[0].Base64Data == "" {
+		t.Error("expected base64 data for image attachment")
+	}
+	if !strings.Contains(attachments[0].Content, "[image:") {
+		t.Errorf("expected image notice, got: %q", attachments[0].Content)
 	}
 }
 

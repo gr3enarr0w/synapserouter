@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"os"
@@ -10,17 +11,22 @@ import (
 	"unicode/utf8"
 )
 
+// maxImageSize is the maximum image file size for base64 encoding (5MB).
+const maxImageSize = 5 * 1024 * 1024
+
 // maxAttachmentSize is the maximum file size to include inline.
 // Files larger than this are truncated with a hint to use file_read.
 const maxAttachmentSize = 10 * 1024 // 10KB
 
 // Attachment represents a file attached to a user message.
 type Attachment struct {
-	Path     string // absolute path to the file
-	Content  string // file content (possibly truncated)
-	MimeType string // detected MIME type
-	Truncated bool  // true if content was truncated
-	Error    string // non-empty if file could not be read
+	Path      string // absolute path to the file
+	Content   string // file content (possibly truncated)
+	MimeType  string // detected MIME type
+	Truncated bool   // true if content was truncated
+	Error     string // non-empty if file could not be read
+	IsImage   bool   // true if file is an image (base64 encoded in Base64Data)
+	Base64Data string // base64-encoded image data (only set for images)
 }
 
 // atReferencePattern matches @filename patterns. Supports:
@@ -168,7 +174,40 @@ func readAttachment(absPath string) Attachment {
 	// Detect MIME type from content
 	att.MimeType = detectMimeType(absPath, buf)
 
-	// Check for binary content
+	// Check for image files — base64 encode for multimodal models
+	if isImageMimeType(att.MimeType) {
+		if info.Size() > maxImageSize {
+			att.Content = fmt.Sprintf("[image too large: %dMB, max %dMB]", info.Size()/(1024*1024), maxImageSize/(1024*1024))
+			return att
+		}
+		// Read full image file for base64 encoding
+		imgData, err := os.ReadFile(absPath)
+		if err != nil {
+			att.Error = fmt.Sprintf("cannot read image: %v", err)
+			return att
+		}
+		att.IsImage = true
+		att.Base64Data = base64.StdEncoding.EncodeToString(imgData)
+		att.Content = fmt.Sprintf("[image: %s, %d bytes]", filepath.Base(absPath), info.Size())
+		return att
+	}
+
+	// Check for PDF files — extract text via pdftotext if available
+	if att.MimeType == "application/pdf" {
+		text, err := extractPDFText(absPath)
+		if err == nil && text != "" {
+			att.Content = text
+			if len(att.Content) > maxAttachmentSize {
+				att.Content = att.Content[:maxAttachmentSize] + "\n\n[PDF truncated at 10KB, use file_read for full content]"
+				att.Truncated = true
+			}
+			return att
+		}
+		att.Content = "[PDF file — install pdftotext for text extraction]"
+		return att
+	}
+
+	// Check for binary content (non-image, non-PDF)
 	if isBinaryContent(buf) {
 		att.Content = "[binary file, use appropriate tool to process]"
 		return att
@@ -257,6 +296,15 @@ func detectMimeType(path string, content []byte) string {
 	}
 
 	return "application/octet-stream"
+}
+
+// isImageMimeType returns true if the MIME type is a supported image format.
+func isImageMimeType(mime string) bool {
+	switch mime {
+	case "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml":
+		return true
+	}
+	return false
 }
 
 // isBinaryContent checks if content appears to be binary by looking for null bytes
