@@ -1,0 +1,70 @@
+version: 2
+
+project_name: synroute
+
+before:
+  hooks:
+    - go mod tidy
+    - go vet ./...
+
+builds:
+  - id: synroute
+    main: .
+    binary: synroute
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+    ignore:
+      - goos: linux
+        goarch: arm64  # CGO cross-compile needs special setup
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE*
+      - README*
+      - .env.example
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^Merge"
+
+brews:
+  - repository:
+      owner: gr3enarr0w
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/gr3enarr0w/synapserouter"
+    description: "LLM proxy router and coding agent"
+    license: "MIT"
+    install: |
+      bin.install "synroute"
+    test: |
+      system "#{bin}/synroute", "version"
+
+release:
+  github:
+    owner: gr3enarr0w
+    name: synapserouter
+  draft: false
+  prerelease: auto
