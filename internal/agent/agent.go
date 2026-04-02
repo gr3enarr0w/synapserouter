@@ -141,7 +141,7 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRende
 		conversation:      NewConversation(),
 		renderer:          renderer,
 		config:            config,
-		sessionID:         fmt.Sprintf("agent-%d", uniqueID()),
+		sessionID:         fmt.Sprintf("agent-%d", time.Now().UnixNano()),
 		bus:               config.EventBus,
 		cachedPromptLevel: -1, // force rebuild on first call
 		reviewTracker:     &ReviewCycleTracker{},
@@ -409,6 +409,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		// Must run before intent detection and phase initialization since it may nil out the pipeline.
 		complexity := AssessComplexity(userMessage, a.config.SpecFilePath != "")
 		a.pipeline = AdaptPipeline(a.pipeline, complexity)
+		ApplyTierOverrides(a.pipeline)
 		log.Printf("[Agent] adaptive pipeline: complexity=%s", complexity)
 
 		if a.pipeline == nil {
@@ -1445,12 +1446,20 @@ const toolBlock = `AVAILABLE TOOLS (use exact names):
 - file_read: Read file. Args: path (string), offset (int, optional), limit (int, optional).
 - file_write: Create/overwrite file. Args: path (string), content (string).
 - file_edit: Edit text in file. Args: path (string), old_text (string), new_text (string).
-- grep: Search files. Args: pattern (string), path (string, optional), include (string, optional).
-- glob: Find files. Args: pattern (string), path (string, optional).
-- git: Git ops. Args: subcommand (string), args ([]string).
+- grep: Search files in the project. Args: pattern (string), path (string, optional), include (string, optional).
+- glob: Find files by pattern. Args: pattern (string), path (string, optional).
+- git: Git ops (commit and push require user approval). Args: subcommand (string), args (string).
+- web_search: Search the web for current information. Args: query (string), max_results (int, optional).
+- web_fetch: Fetch and extract content from a URL. Args: url (string).
+
+TOOL ROUTING:
+- When the user says "search", "look up", "find online", or asks about current events: use web_search.
+- When the user gives a URL or says "fetch", "read this page": use web_fetch.
+- When the user asks about files in the project: use file_read, grep, or glob.
+- web_search returns titles + URLs + snippets. Use web_fetch to read full page content.
 
 DO NOT call: str_replace_editor, read_file, write_file, execute_command, list_files,
-search_files, browser, computer, text_editor, or any unlisted tool.
+search_files, browser, computer, text_editor, or any tool not listed above.
 
 EXECUTION RULES:
 - Use bash ONLY for: mkdir, pip/npm install, quick smoke tests (< 10 seconds).

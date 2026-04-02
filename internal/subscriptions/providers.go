@@ -617,8 +617,10 @@ type geminiChatResponse struct {
 	Candidates []struct {
 		Content struct {
 			Parts []struct {
-				Text         string                 `json:"text,omitempty"`
-				FunctionCall map[string]interface{} `json:"functionCall,omitempty"`
+				Text             string                 `json:"text,omitempty"`
+				FunctionCall     map[string]interface{} `json:"functionCall,omitempty"`
+				Thought          bool                   `json:"thought,omitempty"`
+				ThoughtSignature string                 `json:"thoughtSignature,omitempty"`
 			} `json:"parts"`
 		} `json:"content"`
 	} `json:"candidates"`
@@ -765,7 +767,19 @@ func (p *geminiProvider) ChatCompletion(ctx context.Context, req providers.ChatR
 		}
 		responseText := ""
 		toolCalls := make([]map[string]interface{}, 0)
+		var providerMeta map[string]interface{}
 		for _, part := range upstreamResp.Candidates[0].Content.Parts {
+			// Preserve thoughtSignature for multi-turn thinking model continuity
+			if part.ThoughtSignature != "" {
+				if providerMeta == nil {
+					providerMeta = make(map[string]interface{})
+				}
+				providerMeta["thoughtSignature"] = part.ThoughtSignature
+			}
+			// Skip thinking parts — they're internal reasoning, not the answer
+			if part.Thought {
+				continue
+			}
 			if len(part.FunctionCall) > 0 {
 				name := stringValue(part.FunctionCall["name"])
 				args := "{}"
@@ -798,9 +812,10 @@ func (p *geminiProvider) ChatCompletion(ctx context.Context, req providers.ChatR
 				{
 					Index: 0,
 					Message: providers.Message{
-						Role:      "assistant",
-						Content:   responseText,
-						ToolCalls: toolCalls,
+						Role:         "assistant",
+						Content:      responseText,
+						ToolCalls:    toolCalls,
+						ProviderMeta: providerMeta,
 					},
 					FinishReason: finishReason,
 				},

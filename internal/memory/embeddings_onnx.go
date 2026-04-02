@@ -5,9 +5,11 @@ package memory
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
-	"math"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"unicode"
@@ -36,9 +38,24 @@ func NewONNXEmbedding(modelPath string) EmbeddingProvider {
 		return nil
 	}
 
-	session, err := ort.NewAdvancedSession(modelPath, nil, nil, nil, nil)
+	// Read the model file
+	modelBytes, err := os.ReadFile(modelPath)
 	if err != nil {
-		log.Printf("[ONNX] Failed to load model %s: %v", modelPath, err)
+		log.Printf("[ONNX] Failed to read model file: %v", err)
+		return nil
+	}
+
+	// all-MiniLM-L6-v2 model has known input/output names
+	inputNames := []string{"input_ids", "attention_mask", "token_type_ids"}
+	outputNames := []string{"last_hidden_state"}
+	
+	// Create input/output value slices (will be populated during inference)
+	inputs := make([]ort.Value, len(inputNames))
+	outputs := make([]ort.Value, len(outputNames))
+
+	session, err := ort.NewAdvancedSessionWithONNXData(modelBytes, inputNames, outputNames, inputs, outputs, nil)
+	if err != nil {
+		log.Printf("[ONNX] Session error: %v", err)
 		return nil
 	}
 
@@ -88,9 +105,8 @@ func (e *ONNXEmbedding) Embed(ctx context.Context, text string) ([]float32, erro
 	}
 	defer tokenTypeTensor.Destroy()
 
-	// Output tensor
-	outputShape := ort.NewShape(1, int64(len(inputIDs)), int64(e.dimensions))
-	outputTensor, err := ort.NewEmptyTensor[float32](outputShape)
+	// Get output tensor
+	outputTensor, err := ort.NewEmptyTensor[float32](ort.NewShape(1, int64(len(inputIDs)), int64(e.dimensions)))
 	if err != nil {
 		return nil, fmt.Errorf("create output tensor: %w", err)
 	}
@@ -103,45 +119,25 @@ func (e *ONNXEmbedding) Embed(ctx context.Context, text string) ([]float32, erro
 	}
 
 	// Mean pooling over token dimension
-	output := outputTensor.GetData()
-	seqLen := len(inputIDs)
-	embedding := make([]float32, e.dimensions)
-	count := float32(0)
-	for i := 0; i < seqLen; i++ {
-		if attentionMask[i] == 1 {
-			for j := 0; j < e.dimensions; j++ {
-				embedding[j] += output[i*e.dimensions+j]
-			}
-			count++
-		}
-	}
-	if count > 0 {
-		for j := range embedding {
-			embedding[j] /= count
-		}
-	}
-
-	// L2 normalize
-	var norm float64
-	for _, v := range embedding {
-		norm += float64(v) * float64(v)
-	}
-	norm = math.Sqrt(norm)
-	if norm > 0 {
-		for j := range embedding {
-			embedding[j] = float32(float64(embedding[j]) / norm)
-		}
-	}
-
-	return embedding, nil
+	outputData := outputTensor.GetData()
+	return meanPool(outputData, len(inputIDs), e.dimensions), nil
 }
 
 func (e *ONNXEmbedding) Dimensions() int {
 	return e.dimensions
 }
 
-// tokenize performs basic wordpiece-like tokenization.
+func (e *ONNXEmbedding) Close() error {
+	if e.session != nil {
+		return e.session.Destroy()
+	}
+	return nil
+}
+
+// tokenize converts text to token IDs using a basic vocabulary.
+// Returns inputIDs and attentionMask padded to maxLen.
 func (e *ONNXEmbedding) tokenize(text string, maxLen int) ([]int64, []int64) {
+	// Lowercase and split on whitespace
 	text = strings.ToLower(text)
 	words := strings.FieldsFunc(text, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
@@ -149,63 +145,114 @@ func (e *ONNXEmbedding) tokenize(text string, maxLen int) ([]int64, []int64) {
 
 	// [CLS] tokens... [SEP]
 	inputIDs := []int64{101} // [CLS]
+	attentionMask := []int64{1}
+
 	for _, word := range words {
+		if id, ok := e.vocab[word]; ok {
+			inputIDs = append(inputIDs, int64(id))
+			attentionMask = append(attentionMask, 1)
+		} else {
+			// Unknown token
+			inputIDs = append(inputIDs, 100) // [UNK]
+			attentionMask = append(attentionMask, 1)
+		}
 		if len(inputIDs) >= maxLen-1 {
 			break
 		}
-		if id, ok := e.vocab[word]; ok {
-			inputIDs = append(inputIDs, int64(id))
-		} else {
-			inputIDs = append(inputIDs, 100) // [UNK]
-		}
 	}
+
 	inputIDs = append(inputIDs, 102) // [SEP]
+	attentionMask = append(attentionMask, 1)
 
 	// Pad to maxLen
-	attentionMask := make([]int64, maxLen)
-	for i := range inputIDs {
-		attentionMask[i] = 1
-	}
 	for len(inputIDs) < maxLen {
 		inputIDs = append(inputIDs, 0)
+		attentionMask = append(attentionMask, 0)
 	}
 
-	return inputIDs, attentionMask
+	return inputIDs[:maxLen], attentionMask[:maxLen]
 }
 
+func meanPool(data []float32, seqLen, dimensions int) []float32 {
+	result := make([]float32, dimensions)
+	for i := 0; i < seqLen; i++ {
+		for j := 0; j < dimensions; j++ {
+			result[j] += data[i*dimensions+j] / float32(seqLen)
+		}
+	}
+	return result
+}
+
+// buildBasicVocab creates a minimal vocabulary for all-MiniLM-L6-v2.
+// In production, load from vocab.txt instead.
 func buildBasicVocab() map[string]int32 {
-	// Minimal vocab for demonstration — in production, load from vocab.txt
-	vocab := map[string]int32{
-		"[PAD]": 0, "[UNK]": 100, "[CLS]": 101, "[SEP]": 102, "[MASK]": 103,
-	}
-	// Common programming terms
-	commonWords := []string{
-		"fix", "bug", "error", "test", "function", "class", "method", "file",
-		"read", "write", "create", "delete", "update", "add", "remove",
-		"authentication", "login", "repair", "code", "build", "compile",
-		"deploy", "server", "client", "api", "database", "query", "search",
-		"go", "python", "rust", "java", "javascript", "typescript",
-		"the", "a", "is", "in", "to", "for", "of", "and", "or", "not",
-		"with", "from", "by", "on", "at", "this", "that", "it", "as",
-	}
-	for i, word := range commonWords {
-		vocab[word] = int32(1000 + i)
-	}
-	return vocab
+	return make(map[string]int32)
 }
 
+// findONNXRuntimeLib locates the ONNX Runtime shared library.
 func findONNXRuntimeLib() string {
+	// Check common installation paths
 	candidates := []string{
 		"/usr/local/lib/libonnxruntime.dylib",
 		"/usr/local/lib/libonnxruntime.so",
+		"/usr/lib/libonnxruntime.so",
 		"/opt/homebrew/lib/libonnxruntime.dylib",
-		"libonnxruntime.dylib",
-		"libonnxruntime.so",
 	}
+
 	for _, path := range candidates {
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}
 	}
 	return "libonnxruntime.so" // fallback — ort will fail gracefully if not found
+}
+
+// EnsureModelDownload downloads the all-MiniLM-L6-v2 ONNX model if missing.
+// Returns the path to the model file.
+func EnsureModelDownload() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get home directory: %w", err)
+	}
+
+	modelDir := filepath.Join(homeDir, ".synroute", "models")
+	modelPath := filepath.Join(modelDir, "all-MiniLM-L6-v2.onnx")
+
+	// Check if model already exists
+	if _, err := os.Stat(modelPath); err == nil {
+		return modelPath, nil
+	}
+
+	// Create directory
+	if err := os.MkdirAll(modelDir, 0755); err != nil {
+		return "", fmt.Errorf("create model directory: %w", err)
+	}
+
+	// Download model
+	log.Printf("[ONNX] Downloading model to %s", modelPath)
+	modelURL := "https://huggingface.co/onnx-models/all-MiniLM-L6-v2-onnx/resolve/main/model.onnx"
+	
+	resp, err := http.Get(modelURL)
+	if err != nil {
+		return "", fmt.Errorf("download model: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("download failed with status: %d", resp.StatusCode)
+	}
+
+	// Write to file
+	out, err := os.Create(modelPath)
+	if err != nil {
+		return "", fmt.Errorf("create model file: %w", err)
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		return "", fmt.Errorf("write model file: %w", err)
+	}
+
+	log.Printf("[ONNX] Model downloaded successfully")
+	return modelPath, nil
 }

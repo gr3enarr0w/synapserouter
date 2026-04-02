@@ -793,14 +793,18 @@ func decodeGeminiSSEResponse(resp *http.Response) (geminiChatResponse, error) {
 	var candidate struct {
 		Content struct {
 			Parts []struct {
-				Text         string                 `json:"text,omitempty"`
-				FunctionCall map[string]interface{} `json:"functionCall,omitempty"`
+				Text             string                 `json:"text,omitempty"`
+				FunctionCall     map[string]interface{} `json:"functionCall,omitempty"`
+				Thought          bool                   `json:"thought,omitempty"`
+				ThoughtSignature string                 `json:"thoughtSignature,omitempty"`
 			} `json:"parts"`
 		} `json:"content"`
 	}
 	candidate.Content.Parts = append(candidate.Content.Parts, struct {
-		Text         string                 `json:"text,omitempty"`
-		FunctionCall map[string]interface{} `json:"functionCall,omitempty"`
+		Text             string                 `json:"text,omitempty"`
+		FunctionCall     map[string]interface{} `json:"functionCall,omitempty"`
+		Thought          bool                   `json:"thought,omitempty"`
+		ThoughtSignature string                 `json:"thoughtSignature,omitempty"`
 	}{Text: strings.Join(textParts, "")})
 	assembled.Candidates = append(assembled.Candidates, candidate)
 

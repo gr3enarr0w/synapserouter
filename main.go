@@ -98,6 +98,8 @@ func main() {
 			cmdMCP(os.Args[2:])
 		case "mcp-serve":
 			cmdMCPServe(os.Args[2:])
+		case "worktree":
+			cmdWorktree(os.Args[2:])
 		case "auth":
 			cmdAuth(os.Args[2:])
 		case "version":

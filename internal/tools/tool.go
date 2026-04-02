@@ -20,6 +20,12 @@ type Tool interface {
 	Execute(ctx context.Context, args map[string]interface{}, workDir string) (*ToolResult, error)
 }
 
+// DynamicCategoryTool is an optional interface for tools whose risk level
+// depends on the specific arguments (e.g., git status vs git push).
+type DynamicCategoryTool interface {
+	CategoryForArgs(args map[string]interface{}) ToolCategory
+}
+
 // ToolResult is the outcome of executing a tool.
 type ToolResult struct {
 	Output   string `json:"output"`

@@ -43,9 +43,22 @@ func NewWebSearchTool() *WebSearchTool {
 	return &WebSearchTool{backend: detectSearchBackend()}
 }
 
+// detectSearchBackend selects the search backend by quality ranking.
+// Priority based on AIMultiple agentic search benchmark (2026):
+// Brave (14.89 score, 669ms) > Tavily (LangChain default) >
+// Serper ($0.30/1K, Google) > Exa (semantic) > SearXNG > DuckDuckGo.
 func detectSearchBackend() SearchBackend {
+	if key := os.Getenv("BRAVE_API_KEY"); key != "" {
+		return &BraveBackend{apiKey: key}
+	}
 	if key := os.Getenv("TAVILY_API_KEY"); key != "" {
 		return &TavilyBackend{apiKey: key}
+	}
+	if key := os.Getenv("SERPER_API_KEY"); key != "" {
+		return &SerperBackend{apiKey: key}
+	}
+	if key := os.Getenv("EXA_API_KEY"); key != "" {
+		return &ExaBackend{apiKey: key}
 	}
 	if url := os.Getenv("SEARXNG_URL"); url != "" {
 		return &SearXNGBackend{baseURL: url}
@@ -55,7 +68,7 @@ func detectSearchBackend() SearchBackend {
 
 func (t *WebSearchTool) Name() string     { return "web_search" }
 func (t *WebSearchTool) Description() string {
-	return "Search the web using DuckDuckGo and return top results with title, URL, and snippet"
+	return "Search the web and return top results. Supports Serper, Brave, Exa, Tavily, SearXNG, and DuckDuckGo backends."
 }
 func (t *WebSearchTool) Category() ToolCategory { return CategoryReadOnly }
 
@@ -357,6 +370,139 @@ func (b *SearXNGBackend) Search(ctx context.Context, query string, maxResults in
 			URL:     r.URL,
 			Snippet: r.Content,
 		})
+	}
+	return results, nil
+}
+
+// --- Serper Backend (serper.dev — Google Search results) ---
+
+type SerperBackend struct{ apiKey string }
+
+func (b *SerperBackend) Name() string { return "serper" }
+
+func (b *SerperBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
+	reqBody, _ := json.Marshal(map[string]interface{}{"q": query, "num": maxResults})
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://google.serper.dev/search", strings.NewReader(string(reqBody)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-KEY", b.apiKey)
+
+	resp, err := ssrfSafeClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("serper API error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var serperResp struct {
+		Organic []struct {
+			Title   string `json:"title"`
+			Link    string `json:"link"`
+			Snippet string `json:"snippet"`
+		} `json:"organic"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&serperResp); err != nil {
+		return nil, fmt.Errorf("parse serper response: %w", err)
+	}
+	results := make([]SearchResult, 0, len(serperResp.Organic))
+	for _, r := range serperResp.Organic {
+		results = append(results, SearchResult{Title: r.Title, URL: r.Link, Snippet: r.Snippet})
+	}
+	return results, nil
+}
+
+// --- Brave Search Backend (brave.com — independent web index) ---
+
+type BraveBackend struct{ apiKey string }
+
+func (b *BraveBackend) Name() string { return "brave" }
+
+func (b *BraveBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
+	u, _ := url.Parse("https://api.search.brave.com/res/v1/web/search")
+	params := url.Values{}
+	params.Set("q", query)
+	params.Set("count", fmt.Sprintf("%d", maxResults))
+	u.RawQuery = params.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Subscription-Token", b.apiKey)
+
+	resp, err := ssrfSafeClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("brave API error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var braveResp struct {
+		Web struct {
+			Results []struct {
+				Title       string `json:"title"`
+				URL         string `json:"url"`
+				Description string `json:"description"`
+			} `json:"results"`
+		} `json:"web"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&braveResp); err != nil {
+		return nil, fmt.Errorf("parse brave response: %w", err)
+	}
+	results := make([]SearchResult, 0, len(braveResp.Web.Results))
+	for _, r := range braveResp.Web.Results {
+		results = append(results, SearchResult{Title: r.Title, URL: r.URL, Snippet: r.Description})
+	}
+	return results, nil
+}
+
+// --- Exa AI Backend (exa.ai — semantic/neural search) ---
+
+type ExaBackend struct{ apiKey string }
+
+func (b *ExaBackend) Name() string { return "exa" }
+
+func (b *ExaBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
+	reqBody, _ := json.Marshal(map[string]interface{}{"query": query, "numResults": maxResults, "type": "auto"})
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.exa.ai/search", strings.NewReader(string(reqBody)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+b.apiKey)
+
+	resp, err := ssrfSafeClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("exa API error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var exaResp struct {
+		Results []struct {
+			Title string `json:"title"`
+			URL   string `json:"url"`
+			Text  string `json:"text"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&exaResp); err != nil {
+		return nil, fmt.Errorf("parse exa response: %w", err)
+	}
+	results := make([]SearchResult, 0, len(exaResp.Results))
+	for _, r := range exaResp.Results {
+		results = append(results, SearchResult{Title: r.Title, URL: r.URL, Snippet: r.Text})
 	}
 	return results, nil
 }

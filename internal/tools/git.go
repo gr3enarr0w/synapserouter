@@ -11,9 +11,25 @@ import (
 // GitTool provides git operations: status, diff, log, add, commit, branch, push, stash.
 type GitTool struct{}
 
-func (t *GitTool) Name() string        { return "git" }
-func (t *GitTool) Description() string { return "Run git operations (status, diff, log, add, commit, branch, push, stash)" }
+func (t *GitTool) Name() string { return "git" }
+func (t *GitTool) Description() string {
+	return "Run git operations (status, diff, log, add, commit, branch, push, stash). Commit and push require user approval."
+}
 func (t *GitTool) Category() ToolCategory { return CategoryWrite }
+
+// CategoryForArgs returns the effective category based on the git subcommand.
+// Read-only ops (status, diff, log) are always allowed.
+// Commit and push are dangerous and require approval even in auto_approve mode.
+func (t *GitTool) CategoryForArgs(args map[string]interface{}) ToolCategory {
+	sub := stringArg(args, "subcommand")
+	if readOnlyGitSubcommands[sub] {
+		return CategoryReadOnly
+	}
+	if approvalRequiredSubcommands[sub] {
+		return CategoryDangerous
+	}
+	return CategoryWrite
+}
 
 func (t *GitTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
@@ -21,8 +37,8 @@ func (t *GitTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"subcommand": map[string]interface{}{
 				"type":        "string",
-				"description": "Git subcommand: status, diff, log, add, commit, branch, checkout, push, pull, stash, show, rev-parse",
-				"enum":        []string{"status", "diff", "log", "add", "commit", "branch", "checkout", "push", "pull", "stash", "show", "rev-parse"},
+				"description": "Git subcommand: status, diff, log, add, commit, branch, checkout, push, pull, stash, show, rev-parse, remote, rm, tag, blame",
+				"enum":        []string{"status", "diff", "log", "add", "commit", "branch", "checkout", "push", "pull", "stash", "show", "rev-parse", "remote", "rm", "tag", "blame"},
 			},
 			"args": map[string]interface{}{
 				"type":        "string",
@@ -33,11 +49,19 @@ func (t *GitTool) InputSchema() map[string]interface{} {
 	}
 }
 
+// readOnlyGitSubcommands are git subcommands that never modify state.
+var readOnlyGitSubcommands = map[string]bool{
+	"status": true, "diff": true, "log": true, "show": true,
+	"rev-parse": true, "remote": true, "blame": true, "tag": true,
+}
+
 // allowedGitSubcommands is the set of git subcommands the tool will execute.
 var allowedGitSubcommands = map[string]bool{
 	"status": true, "diff": true, "log": true, "add": true,
 	"commit": true, "branch": true, "checkout": true, "push": true,
 	"pull": true, "stash": true, "show": true, "rev-parse": true,
+	"remote": true, "rm": true, "tag": true, "blame": true,
+	"reset": true,
 }
 
 // dangerousGitFlags lists flags that require explicit approval via the bash tool.
@@ -48,6 +72,13 @@ var dangerousGitFlags = map[string][]string{
 	"reset":    {"--hard"},
 	"clean":    {"-f", "-fd", "-fdx"},
 	"stash":    {"drop", "clear"},
+}
+
+// approvalRequiredSubcommands are git subcommands classified as CategoryDangerous.
+// They require user approval even in auto_approve mode.
+var approvalRequiredSubcommands = map[string]bool{
+	"commit": true,
+	"push":   true,
 }
 
 func (t *GitTool) Execute(ctx context.Context, args map[string]interface{}, workDir string) (*ToolResult, error) {

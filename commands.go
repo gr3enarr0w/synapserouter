@@ -787,6 +787,50 @@ func hasExistingProject(dir string) bool {
 }
 
 // cmdAuth handles subscription provider authentication.
+// cmdWorktree manages git worktrees created by synroute chat --worktree.
+// Usage: synroute worktree list
+//
+//	synroute worktree delete <id>
+func cmdWorktree(args []string) {
+	if len(args) == 0 {
+		fmt.Println("Usage: synroute worktree <list|delete> [id]")
+		return
+	}
+
+	mgr, err := worktree.NewManager(worktree.Config{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	switch args[0] {
+	case "list":
+		trees := mgr.List()
+		if len(trees) == 0 {
+			fmt.Println("No active worktrees.")
+			return
+		}
+		for _, wt := range trees {
+			fmt.Printf("  %s  %s  (branch: %s, session: %s, expires: %s)\n",
+				wt.ID, wt.Path, wt.Branch, wt.SessionID,
+				wt.ExpiresAt.Format("2006-01-02 15:04"))
+		}
+	case "delete":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: synroute worktree delete <id>")
+			os.Exit(1)
+		}
+		if err := mgr.Delete(args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error deleting worktree: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Worktree %s deleted.\n", args[1])
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown worktree subcommand: %s\nUsage: synroute worktree <list|delete> [id]\n", args[0])
+		os.Exit(1)
+	}
+}
+
 // Usage: synroute auth login codex|gemini
 //
 //	synroute auth status

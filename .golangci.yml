@@ -1,35 +1,61 @@
-# golangci-lint configuration
-# Suppresses false positive warnings from the verification gate
+version: "2"
+
+# golangci-lint configuration for synapserouter
+# Based on 2025-2026 Go community consensus (errcheck, staticcheck, gosec, revive)
 
 linters:
   enable:
-    - govet
-    - race
+    - errcheck      # unchecked errors — Go's #1 bug source
+    - staticcheck   # 150+ checks, gold standard
+    - govet         # go vet checks
+    - gosec         # security: SQL injection, hardcoded creds, weak crypto
+    - revive        # replaces deprecated golint
+    - ineffassign   # detects useless assignments
+    - misspell      # catches typos in comments/strings
+    - unconvert     # removes unnecessary type conversions
+
+linters-settings:
+  errcheck:
+    # Don't flag ignored errors on these functions (common in CLI tools)
+    exclude-functions:
+      - fmt.Fprintf
+      - fmt.Fprintln
+      - fmt.Fprint
+      - fmt.Printf
+      - fmt.Println
+      - io.Copy
+      - (io.Closer).Close
+      - (*os.File).Close
+      - (*net/http.Response).Body.Close
+      - (net/http.ResponseWriter).Write
+      - (*database/sql.DB).Close
+      - (*database/sql.Rows).Close
+      - (*database/sql.Stmt).Close
+      - (*encoding/json.Encoder).Encode
+      - (*encoding/json.Decoder).Decode
+  revive:
+    rules:
+      - name: exported
+        disabled: true  # don't require comments on all exported types
+  gosec:
+    excludes:
+      - G104  # audit errors not checked (covered by errcheck)
+      - G304  # file inclusion via variable (agent tools must read user paths)
+      - G204  # subprocess launched with variable (agent bash tool by design)
 
 issues:
   exclude-rules:
-    # False positive: defer inside loop
-    # These are legitimate patterns where defer is registered ONCE before a loop
-    # not inside the loop iteration
     - text: "defer inside loop"
-      linters:
-        - govet
-
-    # False positive: naked goroutines
-    # These goroutines are properly managed with channels, WaitGroups, or context
+      linters: [govet]
     - text: "go func"
-      linters:
-        - govet
+      linters: [govet]
 
-    # False positive: error handling
-    # Standard Go error checking patterns are being flagged incorrectly
-    - text: "if err != nil"
-      linters:
-        - govet
-
-  # Don't warn on test files
   exclude-dirs:
     - benchmarks
+
+  # Show max 50 issues per linter (avoid overwhelming output)
+  max-issues-per-linter: 50
+  max-same-issues: 5
 
 run:
   timeout: 5m

@@ -306,9 +306,18 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),                                // AWS access key IDs
 	regexp.MustCompile(`(?i)-----BEGIN\s+[\w\s]*PRIVATE\s+KEY-----`),       // Private keys (RSA, EC, DSA, OpenSSH, etc.)
 	regexp.MustCompile(`sk_(?:live|test)_[a-zA-Z0-9]{20,}`),               // Stripe API keys
-	regexp.MustCompile(`xox[bpoa]-[a-zA-Z0-9\-]{10,}`),                   // Slack tokens (bot, user, app, admin)
+	regexp.MustCompile(`[sr]k_live_[0-9a-zA-Z]{24,}`),                    // Stripe restricted live keys
+	regexp.MustCompile(`xox[bpoas]-[a-zA-Z0-9\-]{10,}`),                  // Slack tokens (bot, user, app, admin, session)
+	regexp.MustCompile(`xapp-[0-9]+-[A-Za-z0-9\-]{10,}`),                 // Slack app-level tokens
 	regexp.MustCompile(`SG\.[a-zA-Z0-9_\-]{20,}`),                        // SendGrid API keys
 	regexp.MustCompile(`(?:AC|SK)[a-f0-9]{32}`),                           // Twilio Account SID / Auth tokens
+	regexp.MustCompile(`AIza[0-9A-Za-z\-_]{35}`),                          // Google API keys
+	regexp.MustCompile(`github_pat_[0-9a-zA-Z_]{22,}`),                    // GitHub fine-grained PATs
+	regexp.MustCompile(`hf_[a-zA-Z0-9]{20,}`),                             // Hugging Face tokens
+	regexp.MustCompile(`key-[0-9a-zA-Z]{32}`),                             // Mailgun API keys
+	regexp.MustCompile(`(?i)(database_url=)[^\s"']+`),                     // Database connection strings
+	regexp.MustCompile(`(?:mongodb\+srv|mongodb|postgres|postgresql|mysql|redis)://[^\s"']+`), // Database URIs with credentials
+	regexp.MustCompile(`eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`),     // JWT tokens (header.payload.signature)
 }
 
 // scrubSecrets redacts known credential patterns from text.
