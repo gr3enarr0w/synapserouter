@@ -859,6 +859,13 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 
 		a.executeToolCalls(ctx, msg.ToolCalls)
 
+		// Proactive context compression: trigger at 70% fill to prevent overflow.
+		// Runs mid-phase (not just between phases) for long-running tasks.
+		if a.contextFillRatio() > 0.70 {
+			log.Printf("[Agent] context fill at %.0f%% — triggering mid-phase compression", a.contextFillRatio()*100)
+			a.compactConversation("mid-phase")
+		}
+
 		// Action repetition detection: fingerprint each tool call and detect loops.
 		// Uses intent-based fingerprinting (path-only for file ops, normalized bash)
 		// plus a cumulative warning counter that escalates even when per-window
@@ -2957,26 +2964,36 @@ func extractToolCallNameArgs(tc map[string]interface{}) (string, map[string]inte
 }
 
 // compactConversation stores old messages to DB and keeps only recent context.
-// Called between pipeline phases to prevent context overflow in long sessions.
+// Uses structured compression: keeps recent 10% verbatim (min 20), extracts
+// structured summary (decisions, rationale, files, errors, open items) from
+// dropped messages, and applies observation masking to kept messages.
 func (a *Agent) compactConversation(completedPhase string) {
 	msgs := a.conversation.Messages()
 	if len(msgs) <= 30 {
 		return // not enough to compact
 	}
 
-	keepCount := 20 // keep last 20 messages
+	// Dynamic keep count: 10% of messages, minimum 20
+	keepCount := len(msgs) * 10 / 100
+	if keepCount < 20 {
+		keepCount = 20
+	}
+	if keepCount >= len(msgs) {
+		return
+	}
 	dropCount := len(msgs) - keepCount
 
 	// Store dropped messages to DB for later recall (all roles including tool).
 	a.storeMessagesToDB(msgs[:dropCount], "compaction")
 
-	// Extract key context from dropped messages before compaction
-	summary := extractCompactionSummary(msgs[:dropCount], completedPhase, dropCount)
+	// Extract structured summary from dropped messages (no LLM calls)
+	cc := ExtractStructuredSummary(msgs[:dropCount], completedPhase)
+	summary := FormatCompressedContext(cc)
 
-	// Replace conversation with summary + recent messages
-	recent := make([]providers.Message, keepCount)
-	copy(recent, msgs[dropCount:])
+	// Apply observation masking to kept messages (replace large tool outputs with placeholders)
+	recent := MaskObservations(msgs[dropCount:])
 
+	// Replace conversation with structured summary + masked recent messages
 	a.conversation.Clear()
 	a.conversation.Add(providers.Message{
 		Role:    "user",
@@ -2987,68 +3004,38 @@ func (a *Agent) compactConversation(completedPhase string) {
 	}
 
 	a.hasCompacted = true
-	log.Printf("[Agent] compacted conversation: dropped %d messages, kept %d + summary", dropCount, keepCount)
+	log.Printf("[Agent] compacted conversation: dropped %d messages, kept %d (masked), "+
+		"extracted %d decisions, %d errors, %d files",
+		dropCount, keepCount, len(cc.Decisions), len(cc.Errors), len(cc.FilesChanged))
 }
 
-// extractCompactionSummary builds a context-rich summary from dropped messages.
-// Includes files modified, test results, and key decisions so post-compaction
-// conversation doesn't lose critical context.
-func extractCompactionSummary(msgs []providers.Message, phase string, count int) string {
-	var files []string
-	var testResults []string
-	filesSeen := make(map[string]bool)
+// contextFillRatio estimates the current context usage as a ratio of the model's window.
+// Returns 0.0 to 1.0+. Used to trigger proactive compression at 70% fill.
+func (a *Agent) contextFillRatio() float64 {
+	// Estimate tokens in all messages
+	totalChars := 0
+	for _, msg := range a.conversation.Messages() {
+		totalChars += len(msg.Content)
+	}
+	estimatedTokens := totalChars / 4 // 1 token ≈ 4 chars
 
-	for _, m := range msgs {
-		content := m.Content
-		// Extract file paths from tool call results
-		for _, path := range extractFilePaths(content) {
-			if !filesSeen[path] {
-				filesSeen[path] = true
-				files = append(files, path)
-			}
-		}
-		// Extract test results
-		if strings.Contains(content, "PASS") || strings.Contains(content, "FAIL") ||
-			strings.Contains(content, "ok  \t") || strings.Contains(content, "--- PASS") {
-			// Truncate long test output
-			lines := strings.Split(content, "\n")
-			for _, line := range lines {
-				if (strings.Contains(line, "PASS") || strings.Contains(line, "FAIL") ||
-					strings.Contains(line, "ok  \t")) && len(line) < 200 {
-					testResults = append(testResults, strings.TrimSpace(line))
-				}
-			}
-		}
+	// Model context windows (tokens)
+	contextWindow := 32000 // default
+	model := strings.ToLower(a.config.Model)
+	switch {
+	case strings.Contains(model, "gemini"):
+		contextWindow = 1000000
+	case strings.Contains(model, "claude"):
+		contextWindow = 200000
+	case strings.Contains(model, "deepseek"):
+		contextWindow = 128000
+	case strings.Contains(model, "qwen"):
+		contextWindow = 128000
+	case strings.Contains(model, "gpt"):
+		contextWindow = 128000
 	}
 
-	var b strings.Builder
-	fmt.Fprintf(&b, "[Phase %s completed. %d earlier messages compacted to DB.]\n", phase, count)
-
-	if len(files) > 0 {
-		b.WriteString("Files touched: ")
-		maxFiles := 10
-		if len(files) < maxFiles {
-			maxFiles = len(files)
-		}
-		b.WriteString(strings.Join(files[:maxFiles], ", "))
-		if len(files) > 10 {
-			fmt.Fprintf(&b, " (+%d more)", len(files)-10)
-		}
-		b.WriteString("\n")
-	}
-
-	if len(testResults) > 0 {
-		b.WriteString("Test results: ")
-		maxTests := 5
-		if len(testResults) < maxTests {
-			maxTests = len(testResults)
-		}
-		b.WriteString(strings.Join(testResults[:maxTests], "; "))
-		b.WriteString("\n")
-	}
-
-	b.WriteString("Use recall tool to access full context from earlier messages.")
-	return b.String()
+	return float64(estimatedTokens) / float64(contextWindow)
 }
 
 // extractFilePaths finds file paths in text (simple heuristic).
