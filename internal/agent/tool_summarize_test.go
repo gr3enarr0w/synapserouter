@@ -181,6 +181,11 @@ func TestScrubSecrets_ProviderTokens(t *testing.T) {
 		{"Slack bot token", "SLACK_TOKEN=xoxb-TESTONLY-NOTREAL-TESTONLYforverification", "xoxb-TESTONLY-NOTREAL-TESTONLYforverification"},
 		{"SendGrid key", "SG.TESTONLYnotarealSendGridkey00", "SG.TESTONLYnotarealSendGridkey00"},
 		{"Twilio SID", "TWILIO_SID=AC00112233445566778899aabbccddeeff", "AC00112233445566778899aabbccddeeff"},
+		{"Google API key", "GOOGLE_API_KEY=AIzaSyTESTONLYnotarealGoogleAPIkey00", "AIzaSyTESTONLYnotarealGoogleAPIkey00"},
+		{"GitHub fine-grained PAT", "github_pat_TESTONLYnotarealpat0000", "github_pat_TESTONLYnotarealpat0000"},
+		{"Hugging Face token", "HF_TOKEN=hf_TESTONLYnotarealtoken00", "hf_TESTONLYnotarealtoken00"},
+		{"Database URI", "postgres://admin:secretpass@db.example.com:5432/mydb", "postgres://admin:secretpass@db.example.com:5432/mydb"},
+		{"JWT token", "token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
