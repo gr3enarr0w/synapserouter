@@ -409,6 +409,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		// Must run before intent detection and phase initialization since it may nil out the pipeline.
 		complexity := AssessComplexity(userMessage, a.config.SpecFilePath != "")
 		a.pipeline = AdaptPipeline(a.pipeline, complexity)
+		ApplyTierOverrides(a.pipeline)
 		log.Printf("[Agent] adaptive pipeline: complexity=%s", complexity)
 
 		if a.pipeline == nil {

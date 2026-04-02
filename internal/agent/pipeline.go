@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"log"
+	"os"
 	"strings"
 )
 
@@ -342,4 +344,56 @@ func IsFailSignal(content string) bool {
 		}
 	}
 	return false
+}
+
+// phaseTierEnvVars maps phase names to environment variable names for tier overrides.
+var phaseTierEnvVars = map[string]string{
+	"plan":            "SYNROUTE_PLAN_TIER",
+	"implement":       "SYNROUTE_IMPLEMENT_TIER",
+	"self-check":      "SYNROUTE_CHECK_TIER",
+	"code-review":     "SYNROUTE_REVIEW_TIER",
+	"acceptance-test": "SYNROUTE_ACCEPTANCE_TIER",
+	"deploy":          "SYNROUTE_DEPLOY_TIER",
+	"eda":             "SYNROUTE_EDA_TIER",
+	"data-prep":       "SYNROUTE_DATAPREP_TIER",
+	"model":           "SYNROUTE_MODEL_TIER",
+}
+
+// ApplyTierOverrides reads per-phase tier environment variables and overrides
+// the pipeline's default tier assignments. This allows users to configure
+// which model tier runs each pipeline phase.
+//
+// Environment variables: SYNROUTE_PLAN_TIER, SYNROUTE_IMPLEMENT_TIER,
+// SYNROUTE_CHECK_TIER, SYNROUTE_REVIEW_TIER, etc.
+// Values: "cheap", "mid", "frontier" (case-insensitive).
+func ApplyTierOverrides(p *Pipeline) {
+	if p == nil {
+		return
+	}
+	for i := range p.Phases {
+		envVar, ok := phaseTierEnvVars[p.Phases[i].Name]
+		if !ok {
+			continue
+		}
+		tierStr := strings.TrimSpace(strings.ToLower(os.Getenv(envVar)))
+		if tierStr == "" {
+			continue
+		}
+		var tier ModelTier
+		switch tierStr {
+		case "cheap":
+			tier = TierCheap
+		case "mid":
+			tier = TierMid
+		case "frontier":
+			tier = TierFrontier
+		default:
+			continue
+		}
+		if tier != p.Phases[i].Tier {
+			log.Printf("[Pipeline] Phase %s tier overridden: %s → %s (via %s)",
+				p.Phases[i].Name, p.Phases[i].Tier, tier, envVar)
+			p.Phases[i].Tier = tier
+		}
+	}
 }
