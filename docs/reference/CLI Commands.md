@@ -602,6 +602,79 @@ curl -X POST localhost:8090/mcp/tools/call -d '{
 
 ---
 
+## synroute recommend (v1.05)
+
+Detects available providers and suggests optimal tier configurations based on bundled benchmark scores and pricing data.
+
+```bash
+synroute recommend              # Show tier recommendations
+synroute recommend --json       # JSON output
+```
+
+Output includes per-tier model suggestions with coding scores, planning scores, cost per query, and a suggested OLLAMA_CHAIN string.
+
+---
+
+## synroute config (v1.05)
+
+Manage YAML tier configuration as an alternative to OLLAMA_CHAIN env var.
+
+```bash
+synroute config show            # Show current effective config (YAML or env)
+synroute config generate        # Generate ~/.synroute/config.yaml from OLLAMA_CHAIN
+```
+
+### Config File Locations (priority order)
+1. `.synroute.yaml` in current directory (project-level)
+2. `~/.synroute/config.yaml` (user-level)
+3. `OLLAMA_CHAIN` env var (fallback)
+
+### YAML Format
+```yaml
+tiers:
+  cheap:
+    - ministral-3:14b-cloud
+    - gemma3:12b-cloud
+  mid:
+    - nemotron-3-super:cloud
+    - qwen3.5:cloud
+  frontier:
+    - deepseek-v3.1:671b-cloud
+    - kimi-k2.5:cloud
+```
+
+---
+
+## REPL Commands (v1.05)
+
+Available in code mode and chat mode:
+
+```
+/research [quick|standard|deep] <query>  — Multi-round web research with citations
+/plan <description>                      — Generate plan with acceptance criteria
+/review                                  — Code review current changes
+/check                                   — Self-check against criteria
+/fix <description>                       — Targeted fix
+/exit                                    — Exit REPL
+/clear                                   — Clear conversation
+/model [name]                            — Show or switch model
+/tools                                   — List available tools
+/history                                 — Show conversation history
+/agents                                  — Show sub-agent pool status
+/budget                                  — Show budget usage
+/help                                    — Show available commands
+```
+
+### /research Depth Tiers
+
+| Tier | Rounds | Backends | Max API Calls | Est. Cost |
+|------|--------|----------|---------------|-----------|
+| quick | 1 | Free only | 3 | $0 |
+| standard | 2-3 | Free + cheap paid | 15-30 | <$0.05 |
+| deep | 3-5 | All configured | 50-100 | <$0.50 |
+
+---
+
 ## Related Pages
 
 - [[User Guide]] -- Getting started and daily usage
