@@ -3,7 +3,6 @@
 package tools
 
 import (
-	"os"
 	"os/exec"
 	"strings"
 )

@@ -22,6 +22,7 @@ import (
 	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
 	"github.com/gr3enarr0w/synapserouter/internal/providers"
 	"github.com/gr3enarr0w/synapserouter/internal/tools"
+	"github.com/gr3enarr0w/synapserouter/internal/worktree"
 )
 
 // ChatExecutor can execute chat completions against the LLM provider chain.
@@ -139,6 +140,11 @@ type Agent struct {
 
 	// Event bus for real-time observability
 	bus *EventBus
+
+	// Worktree management for isolated code modifications
+	worktreeID     string
+	worktreeManager *worktree.Manager
+	lockPath       string
 }
 
 // New creates an agent with the given executor, tool registry, and config.
@@ -260,6 +266,35 @@ func (a *Agent) setupTrimHook() {
 // Run processes a user message through the agent loop and returns the final text response.
 func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 	a.runCtx = ctx // store for sub-agent context inheritance
+
+	// Lock file handling: acquire lock or auto-create worktree if held by another process
+	if a.config.WorkDir != "" {
+		locked, pid, err := IsLockHeld(a.config.WorkDir)
+		if err == nil && locked {
+			// Lock is held by another alive process - auto-create worktree for this agent
+			fmt.Printf("[INFO] WorkDir locked by PID %d, creating isolated worktree for this agent\n", pid)
+			if wtManager, wtErr := worktree.NewManager(worktree.Config{}); wtErr == nil {
+				if wt, createErr := wtManager.Create(a.config.WorkDir, a.sessionID); createErr == nil {
+					a.config.WorkDir = wt.Path
+					a.worktreeID = wt.ID
+					a.worktreeManager = wtManager
+					fmt.Printf("[INFO] Agent running in isolated worktree: %s\n", wt.Path)
+				} else {
+					fmt.Printf("[WARN] Worktree creation failed: %v. Proceeding with shared WorkDir.\n", createErr)
+				}
+			} else {
+				fmt.Printf("[WARN] Worktree manager creation failed: %v. Proceeding with shared WorkDir.\n", wtErr)
+			}
+		} else {
+			// No lock or stale lock - acquire lock for this agent
+			lockPath, lockErr := AcquireLock(a.config.WorkDir)
+			if lockErr != nil {
+				fmt.Printf("[WARN] Failed to acquire lock: %v\n", lockErr)
+			} else {
+				a.lockPath = lockPath
+			}
+		}
+	}
 
 	// Protect spec file from agent overwrite (tool-layer enforcement)
 	if a.config.SpecFilePath != "" {

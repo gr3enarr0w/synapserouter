@@ -3,10 +3,13 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/gr3enarr0w/synapserouter/internal/tools"
+	"github.com/gr3enarr0w/synapserouter/internal/worktree"
 )
 
 // SpawnConfig configures a child agent.
@@ -192,6 +195,7 @@ func (a *Agent) ParentID() string {
 
 // RunChildrenParallel spawns multiple child agents and runs them concurrently.
 // Returns results indexed by role. Respects the provided concurrency limit.
+// Each child automatically gets its own git worktree for isolation.
 func (a *Agent) RunChildrenParallel(ctx context.Context, tasks []DelegateTask, maxConcurrent int) []DelegateResult {
 	if maxConcurrent <= 0 {
 		maxConcurrent = 5
@@ -208,7 +212,43 @@ func (a *Agent) RunChildrenParallel(ctx context.Context, tasks []DelegateTask, m
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			// Create worktree for child isolation
+			var worktreeID string
+			var worktreePath string
+			var wtManager *worktree.Manager
+			var err error
+
+			// Try to create worktree, fall back to parent WorkDir if it fails
+			if wtManager, err = worktree.NewManager(worktree.Config{}); err == nil {
+				wt, wtErr := wtManager.Create(a.config.WorkDir, fmt.Sprintf("child-%d-%s", idx, dt.Config.Role))
+				if wtErr == nil {
+					worktreeID = wt.ID
+					worktreePath = wt.Path
+					// Override child's WorkDir with worktree path
+					dt.Config.WorkDir = worktreePath
+				} else {
+					// Worktree creation failed, fall back to parent WorkDir with warning
+					fmt.Printf("[WARN] Worktree creation failed for child %d (%s): %v. Using parent WorkDir.\n", idx, dt.Config.Role, wtErr)
+				}
+			} else {
+				fmt.Printf("[WARN] Worktree manager creation failed: %v. Using parent WorkDir.\n", err)
+			}
+
 			result, err := a.RunChild(ctx, dt.Config, dt.Task)
+
+			// After child completes: sync files back and cleanup worktree
+			if worktreePath != "" && worktreeID != "" {
+				// Copy changed files from worktree back to parent WorkDir
+				if syncErr := syncWorktreeToParent(worktreePath, a.config.WorkDir); syncErr != nil {
+					fmt.Printf("[WARN] Failed to sync worktree files back to parent: %v\n", syncErr)
+				}
+
+				// Remove the worktree
+				if rmErr := wtManager.Delete(worktreeID); rmErr != nil {
+					fmt.Printf("[WARN] Failed to remove worktree %s: %v\n", worktreeID, rmErr)
+				}
+			}
+
 			results[idx] = DelegateResult{
 				Role:   dt.Config.Role,
 				Task:   dt.Task,
@@ -222,6 +262,49 @@ func (a *Agent) RunChildrenParallel(ctx context.Context, tasks []DelegateTask, m
 
 	wg.Wait()
 	return results
+}
+
+// syncWorktreeToParent copies changed files from worktree back to parent directory.
+func syncWorktreeToParent(worktreePath, parentPath string) error {
+	return filepath.Walk(worktreePath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip .git directory
+		if info.Name() == ".git" && info.IsDir() {
+			return filepath.SkipDir
+		}
+
+		// Calculate relative path from worktree
+		relPath, err := filepath.Rel(worktreePath, path)
+		if err != nil {
+			return err
+		}
+
+		destPath := filepath.Join(parentPath, relPath)
+
+		if info.IsDir() {
+			// Create directory if it doesn't exist
+			if _, err := os.Stat(destPath); os.IsNotExist(err) {
+				return os.MkdirAll(destPath, 0755)
+			}
+			return nil
+		}
+
+		// Copy file
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		// Ensure parent directory exists
+		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			return err
+		}
+
+		return os.WriteFile(destPath, data, info.Mode())
+	})
 }
 
 // DelegateTask pairs a spawn config with a task prompt.
