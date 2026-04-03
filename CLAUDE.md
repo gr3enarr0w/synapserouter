@@ -178,6 +178,36 @@ When multiple backends are configured, all are queried in parallel and results m
 - Vertex Claude: use model names without dates (e.g. `claude-sonnet-4-6`)
 - Default subscription provider order: `gemini,openai,anthropic` (configurable via env)
 
+### v1.05 Speed Optimizations
+- **K-LLM Parallel Verification** (`internal/agent/review_merge.go`): Spawns K independent reviewers with shuffled file orders, merges findings by file+root cause via agreement scoring. Default K=2, configurable via `SYNROUTE_REVIEW_K`
+- **Context Compression** (`internal/agent/compressor.go`): Structured summaries (decisions/rationale/files/errors/open items), observation masking (~52% token savings), proactive 70% fill trigger
+- **Diff-Based Review** (`internal/agent/diff_review.go`): Sends git diffs to reviewers instead of full files (60-80% token savings). New files get content previews. Diffs capped at 500 lines
+- **Plan Caching** (`internal/agent/plan_cache.go`): Keyword-based SQLite cache. Reuses plans for similar tasks (~50% cost savings). Model-scoped invalidation. Configurable via `SYNROUTE_REVIEW_K`
+- **PASTE Speculative Execution** (`internal/agent/speculator.go`): Predicts next tool calls from patterns (grep→file_read, web_search→web_fetch), pre-executes read-only tools while LLM thinks. Configurable via `SYNROUTE_SPECULATE`
+
+### v1.05 Deep Research Pipeline (`internal/agent/research.go`, `research_runner.go`)
+- `/research [quick|standard|deep] <query>` command in REPL
+- Multi-round search with dynamic backend selection from configured backends
+- Query classification (code/academic/news/general) routes to matching backends
+- Free backends first, paid backends only when needed
+- 3 depth tiers: quick ($0, free only), standard (<$0.05), deep (<$0.50)
+- Budget enforcement via `SYNROUTE_RESEARCH_BUDGET` (default 50 API calls)
+- Saturation detection: stops when <10% new unique URLs
+- Citation-aware synthesis with inline [1] [2] references
+
+### v1.05 Model Recommendation + Config
+- **Model Catalog** (`internal/agent/model_catalog.go`, `model_catalog.json`): Bundled reference benchmark scores + pricing for ~30 models. Fuzzy matching for Ollama naming
+- **`synroute recommend`** (`internal/agent/recommend.go`): Detects available models, matches against catalog, suggests 3-tier config with scores and costs
+- **YAML Tier Config** (`internal/app/config.go`): `~/.synroute/config.yaml` or `.synroute.yaml` with named tiers (cheap/mid/frontier). Takes priority over OLLAMA_CHAIN
+- **`synroute config show`** / **`synroute config generate`**: Display/generate tier config
+
+### v1.05 Benchmark Tooling
+- Latency percentiles (p50/p95/p99) in eval results and comparisons
+- Cost tracking per exercise (tokens × provider pricing)
+- Cost efficiency ratio (pass_rate / cost)
+- Config-vs-config A/B testing via `--config` flag
+- Extended `synroute eval compare` with percentile + cost deltas
+
 ### Agent Pipeline (`internal/agent/pipeline.go`)
 - **Software pipeline**: Plan → Implement → Self-Check → Code Review → Acceptance Test → Deploy
 - **Data science pipeline**: EDA → Data Prep → Model → Review → Deploy → Verify
@@ -268,6 +298,22 @@ go vet ./...                               # Lint
 ./synroute chat --session <id>             # Resume specific session
 ./synroute mcp-serve                       # Start standalone MCP server
 ./synroute mcp-serve --addr :9090          # Custom port
+./synroute recommend                       # Model tier recommendations
+./synroute recommend --json                # JSON output
+./synroute config show                     # Show current tier config (YAML or env)
+./synroute config generate                 # Generate YAML from OLLAMA_CHAIN
+```
+
+### REPL Commands (in code/chat mode)
+```bash
+/research quick <query>                    # Quick research (free backends, 1 round)
+/research standard <query>                 # Standard research (2-3 rounds, ~$0.05)
+/research deep <query>                     # Deep research (3-5 rounds, all backends)
+/plan <description>                        # Generate plan with acceptance criteria
+/review                                    # Code review of current changes
+/check                                     # Self-check against criteria
+/fix <description>                         # Targeted fix
+/help                                      # Show available commands
 ```
 
 ## API Endpoints (Diagnostic)
