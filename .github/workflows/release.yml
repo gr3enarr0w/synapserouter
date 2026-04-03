@@ -9,8 +9,26 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    runs-on: macos-latest  # CGO_ENABLED=1 needs native build (sqlite3)
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,16 +40,74 @@ jobs:
           cache: true
 
       - name: Run tests
+        if: matrix.goos != 'windows'
         run: go test -race -timeout 5m ./...
 
+      - name: Run tests (Windows)
+        if: matrix.goos == 'windows'
+        run: go test -timeout 5m ./...
+
       - name: Clean test artifacts
+        if: matrix.goos != 'windows'
         run: git checkout -- . && git clean -fd
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+      - name: Clean test artifacts (Windows)
+        if: matrix.goos == 'windows'
+        run: git checkout -- . && git clean -fd
+        shell: bash
+
+      - name: Build
+        env:
+          CGO_ENABLED: 1
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          BINARY=synroute
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY=synroute.exe
+          fi
+          go build -ldflags "-s -w -X main.version=${{ github.ref_name }} -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o dist/${BINARY} .
+        shell: bash
+
+      - name: Package
+        run: |
+          cd dist
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip synroute_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.zip synroute.exe
+          else
+            tar czf synroute_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz synroute
+          fi
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          version: "~> v2"
-          args: release --clean
+          name: synroute-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/synroute_*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum synroute_* > checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/synroute_*
+            dist/checksums.txt
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
