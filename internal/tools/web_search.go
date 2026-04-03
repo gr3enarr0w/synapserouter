@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,6 +62,7 @@ type SearchBackend interface {
 // When multiple backends are configured, queries all in parallel and merges
 // results via Reciprocal Rank Fusion (RRF) for better coverage.
 type WebSearchTool struct {
+	db        *sql.DB         // for persistent circuit breaker state
 	backend   SearchBackend   // single-backend mode (backward compat)
 	backends  []SearchBackend // all configured backends for fusion mode
 	fusion    bool            // whether fusion is active
@@ -69,7 +71,8 @@ type WebSearchTool struct {
 
 // NewWebSearchTool creates a web search tool with auto-detected backend(s).
 // Pass an optional ChatCompleter to enable LLM re-ranking of fused results.
-func NewWebSearchTool(completer ...ChatCompleter) *WebSearchTool {
+// Pass db for persistent circuit breaker state across CLI invocations.
+func NewWebSearchTool(db *sql.DB, completer ...ChatCompleter) *WebSearchTool {
 	backends := detectAllBackends()
 	fusion := isFusionEnabled(len(backends))
 
@@ -85,12 +88,14 @@ func NewWebSearchTool(completer ...ChatCompleter) *WebSearchTool {
 		}
 		log.Printf("[SearchFusion] enabled with %d backends: %s", len(backends), strings.Join(names, ", "))
 		return &WebSearchTool{
+			db:        db,
 			backends:  backends,
 			fusion:    true,
 			completer: comp,
 		}
 	}
 	return &WebSearchTool{
+		db:      db,
 		backend: detectSearchBackend(),
 		fusion:  false,
 	}
@@ -181,6 +186,105 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]interface{}
 	return &ToolResult{Output: formatSearchResults(results)}, nil
 }
 
+// isBackendCircuitOpen checks if a search backend's circuit breaker is open
+func (t *WebSearchTool) isBackendCircuitOpen(backendName string) bool {
+	if t.db == nil {
+		return false
+	}
+	var state string
+	var cooldownUntil sql.NullTime
+	err := t.db.QueryRow(`
+		SELECT state, cooldown_until
+		FROM search_circuit_breakers
+		WHERE backend_name = ?
+	`, backendName).Scan(&state, &cooldownUntil)
+
+	if err == sql.ErrNoRows {
+		return false
+	}
+	if err != nil {
+		log.Printf("[SearchCircuit] Error checking state for %s: %v", backendName, err)
+		return false
+	}
+
+	if state != "open" {
+		return false
+	}
+
+	if cooldownUntil.Valid && time.Now().After(cooldownUntil.Time) {
+		// Cooldown expired, circuit should close
+		t.resetBackendCircuit(backendName)
+		return false
+	}
+
+	return true
+}
+
+// recordBackendFailure records a failure for a search backend
+func (t *WebSearchTool) recordBackendFailure(backendName string) {
+	if t.db == nil {
+		return
+	}
+	cooldownUntil := time.Now().Add(1 * time.Hour)
+	_, err := t.db.Exec(`
+		INSERT INTO search_circuit_breakers (backend_name, state, failure_count, last_failure, cooldown_until)
+		VALUES (?, 'open', 1, ?, ?)
+		ON CONFLICT(backend_name) DO UPDATE SET
+			state = 'open',
+			failure_count = search_circuit_breakers.failure_count + 1,
+			last_failure = ?,
+			cooldown_until = ?
+	`, backendName, time.Now(), cooldownUntil, time.Now(), cooldownUntil)
+	if err != nil {
+		log.Printf("[SearchCircuit] Error recording failure for %s: %v", backendName, err)
+	}
+	log.Printf("[SearchCircuit] %s circuit breaker: FAILURE (cooldown until %s)", backendName, cooldownUntil.Format(time.RFC3339))
+}
+
+// recordBackendSuccess records a success for a search backend
+func (t *WebSearchTool) recordBackendSuccess(backendName string) {
+	if t.db == nil {
+		return
+	}
+	_, err := t.db.Exec(`
+		DELETE FROM search_circuit_breakers WHERE backend_name = ?
+	`, backendName)
+	if err != nil {
+		log.Printf("[SearchCircuit] Error resetting circuit for %s: %v", backendName, err)
+	}
+	log.Printf("[SearchCircuit] %s circuit breaker: SUCCESS (reset)", backendName)
+}
+
+// resetBackendCircuit resets a backend's circuit breaker to closed state
+func (t *WebSearchTool) resetBackendCircuit(backendName string) {
+	if t.db == nil {
+		return
+	}
+	_, err := t.db.Exec(`
+		UPDATE search_circuit_breakers SET state = 'closed', failure_count = 0, cooldown_until = NULL
+		WHERE backend_name = ?
+	`, backendName)
+	if err != nil {
+		log.Printf("[SearchCircuit] Error resetting circuit for %s: %v", backendName, err)
+	}
+}
+
+// filterAvailableBackends returns backends with closed circuit breakers
+func (t *WebSearchTool) filterAvailableBackends(backends []SearchBackend) []SearchBackend {
+	if t.db == nil {
+		return backends
+	}
+	var available []SearchBackend
+	for _, b := range backends {
+		if !t.isBackendCircuitOpen(b.Name()) {
+			available = append(available, b)
+		} else {
+			log.Printf("[SearchCircuit] Skipping %s (circuit open)", b.Name())
+		}
+	}
+	return available
+}
+
 // executeFusion queries all backends in parallel and merges results via RRF.
 func (t *WebSearchTool) executeFusion(ctx context.Context, query string, maxResults int) (*ToolResult, error) {
 	// Determine max backends from env var (default 3)
@@ -198,6 +302,12 @@ func (t *WebSearchTool) executeFusion(ctx context.Context, query string, maxResu
 	sort.Slice(sortedBackends, func(i, j int) bool {
 		return costOrder[sortedBackends[i].CostTier()] < costOrder[sortedBackends[j].CostTier()]
 	})
+
+	// Filter out backends with open circuit breakers
+	sortedBackends = t.filterAvailableBackends(sortedBackends)
+	if len(sortedBackends) == 0 {
+		return &ToolResult{Error: "all search backends are temporarily unavailable (circuit breakers open)"}, nil
+	}
 
 	// Cap to max backends
 	cappedBackends := sortedBackends

@@ -64,6 +64,14 @@ func (t *FileWriteTool) Execute(ctx context.Context, args map[string]interface{}
 		return &ToolResult{Error: err.Error()}, nil
 	}
 
+	// Auto-format Go files with goimports
+	if strings.HasSuffix(path, ".go") {
+		if _, err := exec.LookPath("goimports"); err == nil {
+			cmd := exec.Command("goimports", "-w", path)
+			cmd.Run() // ignore errors, fail silently
+		}
+	}
+
 	output := fmt.Sprintf("wrote %d bytes to %s", len(content), path)
 	if warningMsg != "" {
 		output += warningMsg

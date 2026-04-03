@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -95,6 +96,14 @@ func (t *FileEditTool) Execute(ctx context.Context, args map[string]interface{},
 
 	if err := os.WriteFile(path, []byte(result), fileMode); err != nil { //nolint:G703 // path validated by agent tool permission system
 		return &ToolResult{Error: err.Error()}, nil
+	}
+
+	// Auto-format Go files with goimports
+	if strings.HasSuffix(path, ".go") {
+		if _, err := exec.LookPath("goimports"); err == nil {
+			cmd := exec.Command("goimports", "-w", path)
+			cmd.Run() // ignore errors, fail silently
+		}
 	}
 
 	replacements := 1
