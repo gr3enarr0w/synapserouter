@@ -75,10 +75,10 @@ type YouBackend struct{ apiKey string }
 func (b *YouBackend) Name() string { return "you" }
 
 func (b *YouBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
-	u, _ := url.Parse("https://api.ydc-index.io/search")
+	u, _ := url.Parse("https://api.you.com/v1/search")
 	params := url.Values{}
 	params.Set("query", query)
-	params.Set("num_web_results", fmt.Sprintf("%d", maxResults))
+	params.Set("count", fmt.Sprintf("%d", maxResults))
 	u.RawQuery = params.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
@@ -98,19 +98,21 @@ func (b *YouBackend) Search(ctx context.Context, query string, maxResults int) (
 	}
 
 	var yResp struct {
-		Hits []struct {
-			Title       string   `json:"title"`
-			URL         string   `json:"url"`
-			Description string   `json:"description"`
-			Snippets    []string `json:"snippets"`
-		} `json:"hits"`
+		Results struct {
+			Web []struct {
+				Title       string   `json:"title"`
+				URL         string   `json:"url"`
+				Description string   `json:"description"`
+				Snippets    []string `json:"snippets"`
+			} `json:"web"`
+		} `json:"results"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&yResp); err != nil {
 		return nil, fmt.Errorf("parse you.com response: %w", err)
 	}
 
 	var results []SearchResult
-	for _, hit := range yResp.Hits {
+	for _, hit := range yResp.Results.Web {
 		snippet := hit.Description
 		if snippet == "" && len(hit.Snippets) > 0 {
 			snippet = hit.Snippets[0]
@@ -164,57 +166,6 @@ func (b *SerpAPIBackend) Search(ctx context.Context, query string, maxResults in
 	var results []SearchResult
 	for _, r := range sResp.OrganicResults {
 		results = append(results, SearchResult{Title: r.Title, URL: r.Link, Snippet: r.Snippet})
-	}
-	return results, nil
-}
-
-// --- Google Custom Search Backend (programmablesearchengine.google.com) ---
-
-type GoogleCSEBackend struct {
-	apiKey string
-	cx     string // Custom Search Engine ID
-}
-
-func (b *GoogleCSEBackend) Name() string { return "google-cse" }
-
-func (b *GoogleCSEBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
-	u, _ := url.Parse("https://www.googleapis.com/customsearch/v1")
-	params := url.Values{}
-	params.Set("q", query)
-	params.Set("key", b.apiKey)
-	params.Set("cx", b.cx)
-	params.Set("num", fmt.Sprintf("%d", maxResults))
-	u.RawQuery = params.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := ssrfSafeClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("google CSE error %d: %s", resp.StatusCode, string(body))
-	}
-
-	var gResp struct {
-		Items []struct {
-			Title   string `json:"title"`
-			Link    string `json:"link"`
-			Snippet string `json:"snippet"`
-		} `json:"items"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&gResp); err != nil {
-		return nil, fmt.Errorf("parse google CSE response: %w", err)
-	}
-
-	var results []SearchResult
-	for _, item := range gResp.Items {
-		results = append(results, SearchResult{Title: item.Title, URL: item.Link, Snippet: item.Snippet})
 	}
 	return results, nil
 }
@@ -320,54 +271,6 @@ func (b *KagiBackend) Search(ctx context.Context, query string, maxResults int) 
 	return results, nil
 }
 
-// --- Yandex Backend (yandex.cloud — Russia/CIS/Turkey) ---
-
-type YandexBackend struct{ apiKey string }
-
-func (b *YandexBackend) Name() string { return "yandex" }
-
-func (b *YandexBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
-	u, _ := url.Parse("https://yandex.com/search/xml")
-	params := url.Values{}
-	params.Set("query", query)
-	params.Set("apikey", b.apiKey)
-	params.Set("format", "json")
-	params.Set("numdoc", fmt.Sprintf("%d", maxResults))
-	u.RawQuery = params.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := ssrfSafeClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("yandex API error %d: %s", resp.StatusCode, string(body))
-	}
-
-	var yResp struct {
-		Results []struct {
-			Title   string `json:"title"`
-			URL     string `json:"url"`
-			Snippet string `json:"snippet"`
-		} `json:"results"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&yResp); err != nil {
-		return nil, fmt.Errorf("parse yandex response: %w", err)
-	}
-
-	var results []SearchResult
-	for _, r := range yResp.Results {
-		results = append(results, SearchResult{Title: r.Title, URL: r.URL, Snippet: r.Snippet})
-	}
-	return results, nil
-}
-
 // --- Linkup Backend (linkup.so — AI-native search) ---
 
 type LinkupBackend struct{ apiKey string }
@@ -420,7 +323,9 @@ func (b *LinkupBackend) Search(ctx context.Context, query string, maxResults int
 
 // --- Semantic Scholar Backend (semanticscholar.org — 200M academic papers, free) ---
 
-type SemanticScholarBackend struct{}
+type SemanticScholarBackend struct {
+	apiKey string // optional — higher rate limits with key
+}
 
 func (b *SemanticScholarBackend) Name() string { return "semantic-scholar" }
 
@@ -437,8 +342,8 @@ func (b *SemanticScholarBackend) Search(ctx context.Context, query string, maxRe
 		return nil, err
 	}
 	// Optional API key for higher rate limits
-	if key := strings.TrimSpace(strings.ToLower(fmt.Sprintf("%s", ctx.Value("semantic_scholar_key")))); key != "" {
-		req.Header.Set("x-api-key", key)
+	if b.apiKey != "" {
+		req.Header.Set("x-api-key", b.apiKey)
 	}
 
 	resp, err := ssrfSafeClient.Do(req)
@@ -592,13 +497,18 @@ type SourcegraphBackend struct{ token string }
 func (b *SourcegraphBackend) Name() string { return "sourcegraph" }
 
 func (b *SourcegraphBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
-	body := fmt.Sprintf(`{"query":"type:file %s count:%d"}`, query, maxResults)
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://sourcegraph.com/.api/search/stream", strings.NewReader(body))
+	u, _ := url.Parse("https://sourcegraph.com/.api/search/stream")
+	params := url.Values{}
+	params.Set("q", fmt.Sprintf("type:file %s count:%d", query, maxResults))
+	params.Set("v", "V3")
+	u.RawQuery = params.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "token "+b.token)
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
 
 	resp, err := ssrfSafeClient.Do(req)
 	if err != nil {
@@ -610,28 +520,35 @@ func (b *SourcegraphBackend) Search(ctx context.Context, query string, maxResult
 		return nil, fmt.Errorf("sourcegraph error %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	// Sourcegraph stream API returns newline-delimited JSON events
+	// SSE stream: parse "event: matches" followed by "data: [...]"
 	var results []SearchResult
-	decoder := json.NewDecoder(resp.Body)
-	for decoder.More() && len(results) < maxResults {
-		var event struct {
-			Type string `json:"type"`
-			Data []struct {
-				Repository string `json:"repository"`
-				Path       string `json:"path"`
-			} `json:"data"`
-		}
-		if err := decoder.Decode(&event); err != nil {
-			break
-		}
-		if event.Type != "content" {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	lines := strings.Split(string(body), "\n")
+	for i, line := range lines {
+		// Look for "event: matches" then grab the next "data: " line
+		if line != "event: matches" {
 			continue
 		}
-		for _, match := range event.Data {
+		if i+1 >= len(lines) || !strings.HasPrefix(lines[i+1], "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(lines[i+1], "data: ")
+		var matches []struct {
+			Type       string `json:"type"`
+			Repository string `json:"repository"`
+			Path       string `json:"path"`
+		}
+		if json.Unmarshal([]byte(data), &matches) != nil {
+			continue
+		}
+		for _, m := range matches {
+			if len(results) >= maxResults {
+				break
+			}
 			results = append(results, SearchResult{
-				Title:   match.Path,
-				URL:     fmt.Sprintf("https://sourcegraph.com/%s/-/blob/%s", match.Repository, match.Path),
-				Snippet: match.Repository,
+				Title:   m.Path,
+				URL:     fmt.Sprintf("https://sourcegraph.com/%s/-/blob/%s", m.Repository, m.Path),
+				Snippet: m.Repository,
 			})
 		}
 	}
@@ -682,6 +599,150 @@ func (b *NewsAPIBackend) Search(ctx context.Context, query string, maxResults in
 	var results []SearchResult
 	for _, a := range nResp.Articles {
 		results = append(results, SearchResult{Title: a.Title, URL: a.URL, Snippet: a.Description})
+	}
+	return results, nil
+}
+
+// --- SearchAPI.io Backend (searchapi.io — Google, Bing, Baidu, Naver, DuckDuckGo) ---
+
+type SearchAPIBackend struct{ apiKey string }
+
+func (b *SearchAPIBackend) Name() string { return "searchapi" }
+
+func (b *SearchAPIBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
+	u, _ := url.Parse("https://www.searchapi.io/api/v1/search")
+	params := url.Values{}
+	params.Set("q", query)
+	params.Set("api_key", b.apiKey)
+	params.Set("engine", "google")
+	params.Set("num", fmt.Sprintf("%d", maxResults))
+	u.RawQuery = params.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := ssrfSafeClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("searchapi error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var sResp struct {
+		OrganicResults []struct {
+			Title   string `json:"title"`
+			Link    string `json:"link"`
+			Snippet string `json:"snippet"`
+		} `json:"organic_results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&sResp); err != nil {
+		return nil, fmt.Errorf("parse searchapi response: %w", err)
+	}
+
+	var results []SearchResult
+	for _, r := range sResp.OrganicResults {
+		results = append(results, SearchResult{Title: r.Title, URL: r.Link, Snippet: r.Snippet})
+	}
+	return results, nil
+}
+
+// --- Newsdata.io Backend (newsdata.io — 79K+ news sources, 206 countries) ---
+
+type NewsdataBackend struct{ apiKey string }
+
+func (b *NewsdataBackend) Name() string { return "newsdata" }
+
+func (b *NewsdataBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
+	u, _ := url.Parse("https://newsdata.io/api/1/latest")
+	params := url.Values{}
+	params.Set("q", query)
+	params.Set("apikey", b.apiKey)
+	params.Set("language", "en")
+	params.Set("size", fmt.Sprintf("%d", maxResults))
+	u.RawQuery = params.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := ssrfSafeClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("newsdata error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var nResp struct {
+		Results []struct {
+			Title       string `json:"title"`
+			Link        string `json:"link"`
+			Description string `json:"description"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&nResp); err != nil {
+		return nil, fmt.Errorf("parse newsdata response: %w", err)
+	}
+
+	var results []SearchResult
+	for _, r := range nResp.Results {
+		results = append(results, SearchResult{Title: r.Title, URL: r.Link, Snippet: r.Description})
+	}
+	return results, nil
+}
+
+// --- TheNewsAPI Backend (thenewsapi.com — structured global news) ---
+
+type TheNewsAPIBackend struct{ apiKey string }
+
+func (b *TheNewsAPIBackend) Name() string { return "thenewsapi" }
+
+func (b *TheNewsAPIBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
+	u, _ := url.Parse("https://api.thenewsapi.com/v1/news/all")
+	params := url.Values{}
+	params.Set("search", query)
+	params.Set("api_token", b.apiKey)
+	params.Set("language", "en")
+	params.Set("limit", fmt.Sprintf("%d", maxResults))
+	u.RawQuery = params.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := ssrfSafeClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("thenewsapi error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var tResp struct {
+		Data []struct {
+			Title       string `json:"title"`
+			URL         string `json:"url"`
+			Description string `json:"description"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tResp); err != nil {
+		return nil, fmt.Errorf("parse thenewsapi response: %w", err)
+	}
+
+	var results []SearchResult
+	for _, d := range tResp.Data {
+		results = append(results, SearchResult{Title: d.Title, URL: d.URL, Snippet: d.Description})
 	}
 	return results, nil
 }
