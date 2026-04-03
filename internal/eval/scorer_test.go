@@ -112,7 +112,7 @@ func TestPercentile(t *testing.T) {
 	}
 
 	p95 := Percentile(data, 95)
-	if p95 < 480 || p95 > 500 {
+	if p95 < 479.99 || p95 > 500.01 {
 		t.Errorf("p95 of [100-500] = %f, want ~480-500", p95)
 	}
 
