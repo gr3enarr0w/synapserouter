@@ -17,9 +17,8 @@ func TestDetectGitContext(t *testing.T) {
 	if !gc.IsRepo {
 		t.Fatal("expected IsRepo=true")
 	}
-	if gc.Branch == "" {
-		t.Error("expected non-empty branch")
-	}
+	// Branch may be empty in detached HEAD (e.g., CI tag checkout)
+	// Just verify it doesn't crash — branch is optional
 	if len(gc.RecentCommits) == 0 {
 		t.Error("expected recent commits")
 	}
