@@ -36,7 +36,9 @@ var forbiddenInlinePatterns = []string{
 type BashTool struct{}
 
 func (t *BashTool) Name() string        { return "bash" }
-func (t *BashTool) Description() string { return "Execute a shell command and return its output" }
+func (t *BashTool) Description() string {
+	return "Execute a shell command and return its output. IMPORTANT: Each call runs in a fresh shell — environment variables, cd, and aliases do NOT persist between calls. To use env vars from a .env file, source it inline: 'source .env && curl -u \"$EMAIL:$TOKEN\" ...' or set vars inline: 'EMAIL=x TOKEN=y curl ...'"
+}
 func (t *BashTool) Category() ToolCategory { return CategoryWrite }
 
 func (t *BashTool) InputSchema() map[string]interface{} {

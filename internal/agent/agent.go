@@ -1666,6 +1666,9 @@ SPEC COMPLIANCE:
 - Match the spec's directory structure exactly. Do NOT reorganize packages.
 - Do NOT add layers (service, controller, repository) unless the spec requires them.
 
+BASH: Each call is a FRESH shell. Env vars do NOT persist. Use: source .env && command
+Or inline: VAR=x command. Do NOT export in one call and use in the next.
+
 RULES:
 - To fix existing files: file_read THEN file_edit. NEVER create duplicate files.
 - After writing tests: ALWAYS run them. If they fail, fix and re-run until all pass.
@@ -1718,6 +1721,12 @@ EDITING EXISTING FILES:
 - NEVER create a new file with corrections when the original file already exists.
 - Read the file first with file_read, then edit it in place with file_edit.
 - Only use file_write for genuinely NEW files that don't exist yet.
+
+BASH TOOL — IMPORTANT:
+- Each bash call runs in a FRESH shell. Environment variables, cd, and aliases do NOT persist between calls.
+- To use env vars from .env: source them inline: 'source .env && curl -u "$EMAIL:$TOKEN" ...'
+- To chain commands: put them all in ONE bash call with && or ;
+- Do NOT try to export vars in one call and use them in the next — it will not work.
 
 ENVIRONMENT SETUP:
 - Before building, check that required tools are installed (e.g., bash: which mvn, which go, which python3).
