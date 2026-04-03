@@ -117,6 +117,9 @@ type Agent struct {
 	factTracker              *FactTracker // in-memory ground-truth accumulator
 	hallucinationRecallCount int          // consecutive auto-corrections (rate limited at 3)
 
+	// Task graph for scope decomposition
+	taskGraph *TaskGraph
+
 	// Toolchain detection
 	toolchainSetup    string // install instructions for missing tools
 	resolvedBuildCmds string // resolved build/test/install commands for detected language

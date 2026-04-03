@@ -204,15 +204,19 @@ func cmdCode(args []string) {
 	pool := agent.NewPool(config.MaxAgents)
 
 	var ag *agent.Agent
+	userID := config.UserID
+	if userID == "" {
+		userID = "local"
+	}
 	if config.SessionID != "" && config.DB != nil {
-		state, err := agent.LoadState(config.DB, config.SessionID)
+		state, err := agent.LoadState(config.DB, config.SessionID, userID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading session: %v\n", err)
 			os.Exit(1)
 		}
 		ag = agent.RestoreAgent(ac.ProxyRouter, registry, codeRenderer, state)
 	} else if config.Resume && config.DB != nil {
-		state, err := agent.LoadLatestState(config.DB)
+		state, err := agent.LoadLatestState(config.DB, userID)
 		if err != nil {
 			ag = agent.New(ac.ProxyRouter, registry, codeRenderer, config)
 		} else {

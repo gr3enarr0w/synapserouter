@@ -20,6 +20,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS agent_sessions (
 			session_id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL DEFAULT 'local',
 			model TEXT NOT NULL DEFAULT 'auto',
 			system_prompt TEXT NOT NULL DEFAULT '',
 			work_dir TEXT NOT NULL DEFAULT '.',
@@ -62,7 +63,7 @@ func TestSaveAndLoadState(t *testing.T) {
 	}
 
 	// Load
-	state, err := LoadState(db, ag.SessionID())
+	state, err := LoadState(db, ag.SessionID(), "local")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func TestLoadLatestState(t *testing.T) {
 	db.Exec(`UPDATE agent_sessions SET updated_at = datetime('now', '+1 second') WHERE session_id = ?`, ag2.SessionID())
 
 	// Latest should be ag2
-	state, err := LoadLatestState(db)
+	state, err := LoadLatestState(db, "local")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +133,7 @@ func TestRestoreAgent(t *testing.T) {
 	ag.SaveState(db)
 
 	// Load and restore
-	state, err := LoadState(db, ag.SessionID())
+	state, err := LoadState(db, ag.SessionID(), "local")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,7 @@ func TestListSessions(t *testing.T) {
 	ag.Run(nil, "test")
 	ag.SaveState(db)
 
-	sessions, err := ListSessions(db)
+	sessions, err := ListSessions(db, "local")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +186,7 @@ func TestDeleteSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := LoadState(db, ag.SessionID())
+	_, err := LoadState(db, ag.SessionID(), "local")
 	if err == nil {
 		t.Error("expected error loading deleted session")
 	}
@@ -194,7 +195,7 @@ func TestDeleteSession(t *testing.T) {
 func TestLoadStateNotFound(t *testing.T) {
 	db := setupTestDB(t)
 
-	_, err := LoadState(db, "nonexistent")
+	_, err := LoadState(db, "nonexistent", "local")
 	if err == nil {
 		t.Error("expected error for nonexistent session")
 	}

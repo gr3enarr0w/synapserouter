@@ -99,6 +99,10 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]interface{}, wor
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = workDir
 	cmd.Env = filteredEnv()
+
+	// Apply OS-native sandboxing (Seatbelt on macOS, Bubblewrap on Linux)
+	cfg := DefaultSandboxConfig(workDir)
+	cmd = WrapCommand(cmd, cfg)
 	// Set process group so we can kill the entire tree on timeout
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 

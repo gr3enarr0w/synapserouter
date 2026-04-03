@@ -14,6 +14,7 @@ type Config struct {
 	SystemPrompt string // Custom system prompt
 	MaxTurns     int    // Max tool-call rounds per message (default 25)
 	WorkDir      string // Working directory for tool execution
+	UserID       string // User identifier for session isolation (default: "local")
 	Streaming    bool   // Enable streaming output
 
 	// Sub-agent configuration
@@ -90,6 +91,7 @@ func DefaultConfig() Config {
 		Model:           "auto",
 		MaxTurns:        0, // 0 = unlimited; use AgentBudget.MaxTurns for sub-agent limits
 		WorkDir:         ".",
+		UserID:          "local",
 		MaxAgents:       3, // match Ollama Cloud Pro concurrent limit
 		MaxPhaseTurns:   25, // default hard cap per phase; 0 = auto-detect from spec complexity
 		Skills:          orchestration.DefaultSkills(),

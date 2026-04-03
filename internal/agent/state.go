@@ -39,14 +39,20 @@ func (a *Agent) SaveState(db *sql.DB) error {
 		return fmt.Errorf("marshal tool call log: %w", err)
 	}
 
+	// Default UserID to "local" for backward compatibility and tests
+	userID := a.config.UserID
+	if userID == "" {
+		userID = "local"
+	}
+
 	_, err = db.Exec(`
-		INSERT INTO agent_sessions (session_id, model, system_prompt, work_dir, messages, tool_call_log, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO agent_sessions (session_id, user_id, model, system_prompt, work_dir, messages, tool_call_log, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(session_id) DO UPDATE SET
 			messages = excluded.messages,
 			tool_call_log = excluded.tool_call_log,
 			updated_at = CURRENT_TIMESTAMP`,
-		a.sessionID, a.config.Model, a.config.SystemPrompt, a.config.WorkDir, string(data), string(toolLog))
+		a.sessionID, userID, a.config.Model, a.config.SystemPrompt, a.config.WorkDir, string(data), string(toolLog))
 	if err != nil {
 		return fmt.Errorf("save session: %w", err)
 	}
@@ -54,7 +60,8 @@ func (a *Agent) SaveState(db *sql.DB) error {
 }
 
 // LoadState restores an agent's conversation from SQLite.
-func LoadState(db *sql.DB, sessionID string) (*SessionState, error) {
+// Filters by user_id for tenant isolation.
+func LoadState(db *sql.DB, sessionID, userID string) (*SessionState, error) {
 	if db == nil {
 		return nil, fmt.Errorf("no database configured")
 	}
@@ -63,7 +70,7 @@ func LoadState(db *sql.DB, sessionID string) (*SessionState, error) {
 	var messagesJSON, toolCallLogJSON sql.NullString
 	err := db.QueryRow(`
 		SELECT session_id, model, system_prompt, work_dir, messages, tool_call_log, created_at, updated_at
-		FROM agent_sessions WHERE session_id = ?`, sessionID).
+		FROM agent_sessions WHERE session_id = ? AND user_id = ?`, sessionID, userID).
 		Scan(&state.SessionID, &state.Model, &state.SystemPrompt, &state.WorkDir,
 			&messagesJSON, &toolCallLogJSON, &state.CreatedAt, &state.UpdatedAt)
 	if err == sql.ErrNoRows {
@@ -86,8 +93,9 @@ func LoadState(db *sql.DB, sessionID string) (*SessionState, error) {
 	return &state, nil
 }
 
-// LoadLatestState returns the most recently updated session.
-func LoadLatestState(db *sql.DB) (*SessionState, error) {
+// LoadLatestState returns the most recently updated session for a user.
+// Filters by user_id for tenant isolation.
+func LoadLatestState(db *sql.DB, userID string) (*SessionState, error) {
 	if db == nil {
 		return nil, fmt.Errorf("no database configured")
 	}
@@ -95,7 +103,7 @@ func LoadLatestState(db *sql.DB) (*SessionState, error) {
 	var sessionID string
 	err := db.QueryRow(`
 		SELECT session_id FROM agent_sessions
-		ORDER BY updated_at DESC LIMIT 1`).Scan(&sessionID)
+		WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1`, userID).Scan(&sessionID)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("no sessions found")
 	}
@@ -103,7 +111,7 @@ func LoadLatestState(db *sql.DB) (*SessionState, error) {
 		return nil, fmt.Errorf("query latest session: %w", err)
 	}
 
-	return LoadState(db, sessionID)
+	return LoadState(db, sessionID, userID)
 }
 
 // RestoreAgent creates an agent from a persisted session state.
@@ -129,15 +137,16 @@ func RestoreAgent(executor ChatExecutor, registry *tools.Registry, renderer Term
 	return a
 }
 
-// ListSessions returns all saved agent sessions, newest first.
-func ListSessions(db *sql.DB) ([]SessionState, error) {
+// ListSessions returns all saved agent sessions for a user, newest first.
+// Filters by user_id for tenant isolation.
+func ListSessions(db *sql.DB, userID string) ([]SessionState, error) {
 	if db == nil {
 		return nil, fmt.Errorf("no database configured")
 	}
 
 	rows, err := db.Query(`
 		SELECT session_id, model, system_prompt, work_dir, created_at, updated_at
-		FROM agent_sessions ORDER BY updated_at DESC`)
+		FROM agent_sessions WHERE user_id = ? ORDER BY updated_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}
