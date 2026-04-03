@@ -79,7 +79,7 @@ Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-impl
 
 ### Agent Execution Layer
 - **Tool Registry** (`internal/tools/`): 10 built-in tools (bash, file_read, file_write, file_edit, grep, glob, git, web_search, web_fetch, notebook_edit) + 2 agent tools (delegate, handoff)
-- **Web Search** (`internal/tools/web_search.go`): DuckDuckGo (default, no key), Tavily (`TAVILY_API_KEY`), SearXNG (`SEARXNG_URL`) backends
+- **Web Search** (`internal/tools/web_search.go`, `web_search_backends.go`): 19 backends with RRF fusion. See "Search Backends" section below
 - **Web Fetch** (`internal/tools/web_fetch.go`): Fetch and extract content from URLs, SSRF-safe via `safeclient.go`
 - **Notebook Edit** (`internal/tools/notebook_edit.go`): Edit Jupyter notebooks by cell index; `file_read` renders `.ipynb` cells
 - **File Attachments** (`internal/agent/attachment.go`): `@file` and `@dir/` references in user input with path traversal protection
@@ -130,6 +130,44 @@ Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-impl
   - Rust: Cargo.lock, edition
   - Java: build wrapper
 - **Command Wrapping** (`internal/environment/setup.go`): auto-activate venv, generate setup/test/build commands
+
+### Search Backends (19 total, RRF fusion)
+When multiple backends are configured, all are queried in parallel and results merged via Reciprocal Rank Fusion (RRF). More backends = better coverage. Auto-enables with 2+ backends; disable with `SYNROUTE_SEARCH_FUSION=false`.
+
+**Recommended setup by budget:**
+
+| Budget | Backends | Cost | Coverage |
+|--------|----------|------|----------|
+| Free | DuckDuckGo + Semantic Scholar + OpenAlex | $0 | Web + academic, 3-way fusion |
+| Low ($5/mo) | + Serper + Brave | ~$5/mo | Google results + independent index |
+| Mid ($20/mo) | + Tavily + SearXNG (self-hosted) | ~$20/mo | Agent-optimized + 100+ engines |
+| Full | + Exa + Jina + SerpAPI + You.com + others | ~$50/mo | Maximum coverage, 10+ way fusion |
+
+**All backends and env vars:**
+
+| Tier | Backend | Env Var | Cost/1K queries |
+|------|---------|---------|-----------------|
+| Free | DuckDuckGo | (none needed) | $0 |
+| Free | Semantic Scholar | `SEMANTIC_SCHOLAR_API_KEY` (optional) | $0 |
+| Free | OpenAlex | (none needed) | $0 |
+| Free | SearXNG | `SEARXNG_URL` (self-hosted) | $0 |
+| Cheap | Serper | `SERPER_API_KEY` | $0.30 |
+| Cheap | Brave | `BRAVE_API_KEY` | ~$5/mo credits |
+| Cheap | NewsAPI | `NEWSAPI_KEY` | Free tier |
+| Cheap | Newsdata.io | `NEWSDATA_API_KEY` | Free tier |
+| Cheap | TheNewsAPI | `THENEWSAPI_KEY` | Free tier |
+| Mid | Tavily | `TAVILY_API_KEY` | ~$2 |
+| Mid | Exa | `EXA_API_KEY` | ~$3 |
+| Mid | SerpAPI | `SERPAPI_KEY` | ~$10 |
+| Mid | SearchAPI.io | `SEARCHAPI_KEY` | ~$5 |
+| Mid | Linkup | `LINKUP_API_KEY` | ~$5 |
+| Mid | You.com | `YOU_API_KEY` | ~$5 |
+| Mid | GitHub Search | `GITHUB_TOKEN` | Free (code only) |
+| Mid | Sourcegraph | `SOURCEGRAPH_TOKEN` | Free (code only) |
+| Mid | Jina | `JINA_API_KEY` | ~$5 |
+| Expensive | Kagi | `KAGI_API_KEY` | $25 (closed beta) |
+
+**Usage tracking:** Tavily (`GET /usage`), SerpAPI (`GET /account.json`), and Kagi (inline `api_balance`) expose programmatic credit/balance checks. For all others, track usage locally.
 
 ### Key Patterns
 - Gemini 2.5+ models: thinking tokens from output budget, min 1024 maxOutputTokens enforced
