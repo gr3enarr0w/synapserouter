@@ -200,8 +200,8 @@ func containsStr(s, sub string) bool {
 
 type mockSearchBackend struct {
 	name    string
-	results []SearchResult
-	err     error
+	Results []SearchResult
+	Err     error
 	delay   time.Duration
 }
 
@@ -214,7 +214,7 @@ func (m *mockSearchBackend) Search(ctx context.Context, query string, maxResults
 			return nil, ctx.Err()
 		}
 	}
-	return m.results, m.err
+	return m.Results, m.Err
 }
 
 func TestNormalizeURL(t *testing.T) {
@@ -245,15 +245,15 @@ func TestNormalizeURL(t *testing.T) {
 func TestMergeRRF_BasicMerge(t *testing.T) {
 	backendResults := []backendResult{
 		{
-			backendName: "backend-a",
-			results: []SearchResult{
+			BackendName: "backend-a",
+			Results: []SearchResult{
 				{Title: "Shared Result", URL: "https://example.com/shared", Snippet: "A's version"},
 				{Title: "A Only", URL: "https://example.com/a-only", Snippet: "Only in A"},
 			},
 		},
 		{
-			backendName: "backend-b",
-			results: []SearchResult{
+			BackendName: "backend-b",
+			Results: []SearchResult{
 				{Title: "Shared Result", URL: "https://example.com/shared", Snippet: "B's version"},
 				{Title: "B Only", URL: "https://example.com/b-only", Snippet: "Only in B"},
 			},
@@ -274,10 +274,10 @@ func TestMergeRRF_BasicMerge(t *testing.T) {
 
 func TestMergeRRF_SingleBackend(t *testing.T) {
 	backendResults := []backendResult{
-		{backendName: "ok", results: []SearchResult{
+		{BackendName: "ok", Results: []SearchResult{
 			{Title: "Result 1", URL: "https://example.com/1"},
 		}},
-		{backendName: "failed", err: errors.New("timeout")},
+		{BackendName: "failed", Err: errors.New("timeout")},
 	}
 
 	merged := mergeRRF(backendResults, 10)
@@ -288,8 +288,8 @@ func TestMergeRRF_SingleBackend(t *testing.T) {
 
 func TestMergeRRF_AllFailed(t *testing.T) {
 	backendResults := []backendResult{
-		{backendName: "a", err: errors.New("fail")},
-		{backendName: "b", err: errors.New("fail")},
+		{BackendName: "a", Err: errors.New("fail")},
+		{BackendName: "b", Err: errors.New("fail")},
 	}
 
 	merged := mergeRRF(backendResults, 10)
@@ -300,10 +300,10 @@ func TestMergeRRF_AllFailed(t *testing.T) {
 
 func TestMergeRRF_DuplicateURLs(t *testing.T) {
 	backendResults := []backendResult{
-		{backendName: "a", results: []SearchResult{
+		{BackendName: "a", Results: []SearchResult{
 			{Title: "Page", URL: "https://www.example.com/page/", Snippet: "A"},
 		}},
-		{backendName: "b", results: []SearchResult{
+		{BackendName: "b", Results: []SearchResult{
 			{Title: "Page Better", URL: "https://example.com/page", Snippet: "B"},
 		}},
 	}
@@ -315,15 +315,15 @@ func TestMergeRRF_DuplicateURLs(t *testing.T) {
 }
 
 func TestMergeRRF_MaxResults(t *testing.T) {
-	var results []SearchResult
+	var localResults []SearchResult
 	for i := 0; i < 20; i++ {
-		results = append(results, SearchResult{
+		localResults = append(localResults, SearchResult{
 			Title: "Result",
 			URL:   "https://example.com/" + string(rune('a'+i)),
 		})
 	}
 
-	merged := mergeRRF([]backendResult{{backendName: "a", results: results}}, 5)
+	merged := mergeRRF([]backendResult{{BackendName: "a", Results: localResults}}, 5)
 	if len(merged) != 5 {
 		t.Errorf("expected 5 results, got %d", len(merged))
 	}
@@ -331,8 +331,8 @@ func TestMergeRRF_MaxResults(t *testing.T) {
 
 func TestSearchAllBackends_Parallel(t *testing.T) {
 	backends := []SearchBackend{
-		&mockSearchBackend{name: "fast", results: []SearchResult{{Title: "Fast"}}, delay: 100 * time.Millisecond},
-		&mockSearchBackend{name: "slow", results: []SearchResult{{Title: "Slow"}}, delay: 100 * time.Millisecond},
+		&mockSearchBackend{name: "fast", Results: []SearchResult{{Title: "Fast"}}, delay: 100 * time.Millisecond},
+		&mockSearchBackend{name: "slow", Results: []SearchResult{{Title: "Slow"}}, delay: 100 * time.Millisecond},
 	}
 
 	start := time.Now()
@@ -349,23 +349,23 @@ func TestSearchAllBackends_Parallel(t *testing.T) {
 
 func TestSearchAllBackends_GracefulDegradation(t *testing.T) {
 	backends := []SearchBackend{
-		&mockSearchBackend{name: "ok", results: []SearchResult{{Title: "Good"}}},
-		&mockSearchBackend{name: "broken", err: errors.New("network error")},
+		&mockSearchBackend{name: "ok", Results: []SearchResult{{Title: "Good"}}},
+		&mockSearchBackend{name: "broken", Err: errors.New("network error")},
 	}
 
 	results := searchAllBackends(context.Background(), backends, "test", 5)
-	if results[0].err != nil {
-		t.Errorf("ok backend should succeed: %v", results[0].err)
+	if results[0].Err != nil {
+		t.Errorf("ok backend should succeed: %v", results[0].Err)
 	}
-	if results[1].err == nil {
+	if results[1].Err == nil {
 		t.Error("broken backend should fail")
 	}
 }
 
 func TestSearchAllBackends_Timeout(t *testing.T) {
 	backends := []SearchBackend{
-		&mockSearchBackend{name: "fast", results: []SearchResult{{Title: "Fast"}}, delay: 50 * time.Millisecond},
-		&mockSearchBackend{name: "very-slow", results: []SearchResult{{Title: "Slow"}}, delay: 5 * time.Second},
+		&mockSearchBackend{name: "fast", Results: []SearchResult{{Title: "Fast"}}, delay: 50 * time.Millisecond},
+		&mockSearchBackend{name: "very-slow", Results: []SearchResult{{Title: "Slow"}}, delay: 5 * time.Second},
 	}
 
 	start := time.Now()
@@ -375,10 +375,10 @@ func TestSearchAllBackends_Timeout(t *testing.T) {
 	if elapsed > 3*time.Second {
 		t.Errorf("timeout should cap at ~2s, took %v", elapsed)
 	}
-	if results[0].err != nil {
-		t.Errorf("fast backend should succeed: %v", results[0].err)
+	if results[0].Err != nil {
+		t.Errorf("fast backend should succeed: %v", results[0].Err)
 	}
-	if results[1].err == nil {
+	if results[1].Err == nil {
 		t.Error("slow backend should have timed out")
 	}
 }
@@ -431,7 +431,7 @@ func TestLLMRerank_SingleResult(t *testing.T) {
 
 func TestExecuteFusion_BackwardCompat(t *testing.T) {
 	tool := &WebSearchTool{
-		backend: &mockSearchBackend{name: "single", results: []SearchResult{
+		backend: &mockSearchBackend{name: "single", Results: []SearchResult{
 			{Title: "Single Backend", URL: "https://example.com"},
 		}},
 		fusion: false,
@@ -452,11 +452,11 @@ func TestExecuteFusion_BackwardCompat(t *testing.T) {
 func TestExecuteFusion_MultiBackend(t *testing.T) {
 	tool := &WebSearchTool{
 		backends: []SearchBackend{
-			&mockSearchBackend{name: "a", results: []SearchResult{
+			&mockSearchBackend{name: "a", Results: []SearchResult{
 				{Title: "Shared", URL: "https://example.com/shared"},
 				{Title: "A Only", URL: "https://example.com/a"},
 			}},
-			&mockSearchBackend{name: "b", results: []SearchResult{
+			&mockSearchBackend{name: "b", Results: []SearchResult{
 				{Title: "Shared", URL: "https://example.com/shared"},
 				{Title: "B Only", URL: "https://example.com/b"},
 			}},

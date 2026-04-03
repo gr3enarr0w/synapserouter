@@ -37,7 +37,7 @@ func NewCodeREPL(agent *Agent, renderer *CodeRenderer, _ *Terminal) *CodeREPL {
 // slashCommands returns the list of available slash commands for tab completion.
 func slashCommands() []string {
 	return []string{
-		"/plan", "/review", "/check", "/fix", "/help",
+		"/plan", "/review", "/check", "/fix", "/research", "/help",
 		"/exit", "/clear", "/model", "/tools", "/history",
 		"/agents", "/budget",
 	}
@@ -650,6 +650,44 @@ func (cr *CodeREPL) handleCommand(ctx context.Context, input string) bool {
 				cr.renderer.Error(err.Error())
 			} else if response != "" {
 				cr.renderer.Text(response)
+			}
+		}
+
+	case "/research":
+		msg := strings.TrimSpace(strings.TrimPrefix(input, "/research"))
+		if msg == "" {
+			cr.renderer.mu.Lock()
+			cr.renderer.writeContent("  usage: /research [quick|standard|deep] <query>")
+			cr.renderer.mu.Unlock()
+		} else {
+			// Parse optional depth prefix
+			depth := "standard"
+			parts := strings.SplitN(msg, " ", 2)
+			switch parts[0] {
+			case "quick", "standard", "deep":
+				depth = parts[0]
+				if len(parts) > 1 {
+					msg = parts[1]
+				} else {
+					cr.renderer.mu.Lock()
+					cr.renderer.writeContent("  usage: /research [quick|standard|deep] <query>")
+					cr.renderer.mu.Unlock()
+					break
+				}
+			}
+
+			config := DefaultResearchConfig(depth)
+			cr.renderer.mu.Lock()
+			cr.renderer.writeContent(cr.renderer.color("\033[35m",
+				fmt.Sprintf("  researching (%s): %d rounds, %d max queries, %d budget...",
+					depth, config.MaxRounds, config.MaxQueries, config.MaxAPICalls)))
+			cr.renderer.mu.Unlock()
+
+			report, err := cr.agent.RunResearch(ctx, msg, depth)
+			if err != nil {
+				cr.renderer.Error(err.Error())
+			} else if report != nil {
+				cr.renderer.Text(report.Findings)
 			}
 		}
 

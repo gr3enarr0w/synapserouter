@@ -26,12 +26,15 @@ const (
 	duckDuckGoURL           = "https://html.duckduckgo.com/html/"
 )
 
-// backendResult holds one backend's ranked results alongside metadata.
-type backendResult struct {
-	backendName string
-	results     []SearchResult
-	err         error
+// BackendResult holds one backend's ranked results alongside metadata.
+type BackendResult struct {
+	BackendName string
+	Results     []SearchResult
+	Err         error
 }
+
+// backendResult is the unexported alias used internally.
+type backendResult = BackendResult
 
 // ChatCompleter is a minimal interface for LLM re-ranking.
 // Defined locally to avoid import cycles (tools ↔ agent/orchestration).
@@ -183,19 +186,19 @@ func (t *WebSearchTool) executeFusion(ctx context.Context, query string, maxResu
 	// Count successes
 	successCount := 0
 	for _, br := range backendResults {
-		if br.err == nil && len(br.results) > 0 {
+		if br.Err == nil && len(br.Results) > 0 {
 			successCount++
-			log.Printf("[SearchFusion] %s: %d results", br.backendName, len(br.results))
-		} else if br.err != nil {
-			log.Printf("[SearchFusion] %s: failed: %v", br.backendName, br.err)
+			log.Printf("[SearchFusion] %s: %d results", br.BackendName, len(br.Results))
+		} else if br.Err != nil {
+			log.Printf("[SearchFusion] %s: failed: %v", br.BackendName, br.Err)
 		}
 	}
 
 	if successCount == 0 {
 		var errs []string
 		for _, br := range backendResults {
-			if br.err != nil {
-				errs = append(errs, fmt.Sprintf("%s: %v", br.backendName, br.err))
+			if br.Err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %v", br.BackendName, br.Err))
 			}
 		}
 		if len(errs) > 0 {
@@ -207,8 +210,8 @@ func (t *WebSearchTool) executeFusion(ctx context.Context, query string, maxResu
 	// Single success: skip RRF, return directly
 	if successCount == 1 {
 		for _, br := range backendResults {
-			if br.err == nil && len(br.results) > 0 {
-				trimmed := br.results
+			if br.Err == nil && len(br.Results) > 0 {
+				trimmed := br.Results
 				if len(trimmed) > maxResults {
 					trimmed = trimmed[:maxResults]
 				}
@@ -635,6 +638,12 @@ func formatSearchResults(results []SearchResult) string {
 
 // --- Search Fusion: RRF Multi-Backend Merge ---
 
+// DetectAllBackends returns all configured search backends.
+// Exported for use by the research pipeline.
+func DetectAllBackends() []SearchBackend {
+	return detectAllBackends()
+}
+
 // detectAllBackends returns all configured search backends.
 // DuckDuckGo is always included as the last fallback (no API key needed).
 func detectAllBackends() []SearchBackend {
@@ -712,6 +721,17 @@ func isFusionEnabled(backendCount int) bool {
 	}
 }
 
+// SearchSelectedBackends queries a specific set of backends in parallel.
+// Used by the research pipeline to query only the backends matching the query type.
+func SearchSelectedBackends(ctx context.Context, backends []SearchBackend, query string, maxResults int) []backendResult {
+	return searchAllBackends(ctx, backends, query, maxResults)
+}
+
+// NormalizeURL is the exported version of normalizeURL for use by the research pipeline.
+func NormalizeURL(rawURL string) string {
+	return normalizeURL(rawURL)
+}
+
 // searchAllBackends queries all backends in parallel with per-backend timeouts.
 func searchAllBackends(ctx context.Context, backends []SearchBackend, query string, maxResults int) []backendResult {
 	results := make([]backendResult, len(backends))
@@ -725,9 +745,9 @@ func searchAllBackends(ctx context.Context, backends []SearchBackend, query stri
 			defer cancel()
 			res, err := backend.Search(bctx, query, maxResults)
 			results[idx] = backendResult{
-				backendName: backend.Name(),
-				results:     res,
-				err:         err,
+				BackendName: backend.Name(),
+				Results:     res,
+				Err:         err,
 			}
 		}(i, b)
 	}
@@ -776,10 +796,10 @@ func mergeRRF(backendResults []backendResult, maxResults int) []SearchResult {
 	urlMap := make(map[string]*candidate)
 
 	for _, br := range backendResults {
-		if br.err != nil || len(br.results) == 0 {
+		if br.Err != nil || len(br.Results) == 0 {
 			continue
 		}
-		for rank, sr := range br.results {
+		for rank, sr := range br.Results {
 			normURL := normalizeURL(sr.URL)
 			rrfScore := 1.0 / float64(rrfK+rank+1) // rank+1 for 1-based
 
