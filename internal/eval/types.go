@@ -34,6 +34,8 @@ type EvalRunConfig struct {
 	MaxTurns     int      `json:"max_turns,omitempty"`
 	Timeout      int      `json:"timeout_seconds,omitempty"`
 	Concurrency  int      `json:"concurrency,omitempty"`
+	ConfigTag    string   `json:"config_tag,omitempty"` // label for config-vs-config comparison
+	ConfigPath   string   `json:"config_path,omitempty"` // path to tier config YAML used
 }
 
 // DefaultCountPerSuite is the default number of exercises sampled per suite
@@ -75,6 +77,7 @@ type EvalResult struct {
 	MetricScore      float64   `json:"metric_score,omitempty"`
 	MetricName       string    `json:"metric_name,omitempty"`
 	JudgeProvider    string    `json:"judge_provider,omitempty"`
+	CostUSD          float64   `json:"cost_usd,omitempty"`
 	Error            string    `json:"error,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 }
@@ -85,7 +88,14 @@ type EvalSummary struct {
 	Pass1Rate      float64                    `json:"pass_1_rate"`
 	Pass2Rate      float64                    `json:"pass_2_rate"`
 	AvgLatencyMs   int64                      `json:"avg_latency_ms"`
+	LatencyP50     float64                    `json:"latency_p50"`
+	LatencyP95     float64                    `json:"latency_p95"`
+	LatencyP99     float64                    `json:"latency_p99"`
+	TokensPerSec   float64                    `json:"tokens_per_sec,omitempty"`
 	TotalTokens    int                        `json:"total_tokens"`
+	TotalCost      float64                    `json:"total_cost,omitempty"`
+	AvgCostPerEx   float64                    `json:"avg_cost_per_exercise,omitempty"`
+	CostEfficiency float64                    `json:"cost_efficiency,omitempty"` // pass_rate / avg_cost (higher = better)
 	FallbackRate   float64                    `json:"fallback_rate"`
 	AvgMetricScore float64                    `json:"avg_metric_score,omitempty"`
 	MetricResults  int                        `json:"metric_results,omitempty"`
@@ -119,13 +129,19 @@ type LanguageStats struct {
 
 // RunComparison shows differences between two runs.
 type RunComparison struct {
-	RunA          string  `json:"run_a"`
-	RunB          string  `json:"run_b"`
-	Pass1Delta    float64 `json:"pass_1_delta"`
-	Pass2Delta    float64 `json:"pass_2_delta"`
-	LatencyDelta  int64   `json:"latency_delta_ms"`
-	TokensDelta   int     `json:"tokens_delta"`
-	FallbackDelta float64 `json:"fallback_delta"`
+	RunA            string  `json:"run_a"`
+	RunB            string  `json:"run_b"`
+	Pass1Delta      float64 `json:"pass_1_delta"`
+	Pass2Delta      float64 `json:"pass_2_delta"`
+	LatencyDelta    int64   `json:"latency_delta_ms"`
+	LatencyP50Delta float64 `json:"latency_p50_delta"`
+	LatencyP95Delta float64 `json:"latency_p95_delta"`
+	CostDelta       float64 `json:"cost_delta"`
+	EfficiencyDelta float64 `json:"efficiency_delta"`
+	TokensDelta     int     `json:"tokens_delta"`
+	FallbackDelta   float64 `json:"fallback_delta"`
+	SampleCountA    int     `json:"sample_count_a"`
+	SampleCountB    int     `json:"sample_count_b"`
 }
 
 // DockerConfig maps languages to test execution details.
