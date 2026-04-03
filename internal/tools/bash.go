@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -104,7 +103,7 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]interface{}, wor
 	cfg := DefaultSandboxConfig(workDir)
 	cmd = WrapCommand(cmd, cfg)
 	// Set process group so we can kill the entire tree on timeout
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setupProcessGroup(cmd)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &limitWriter{w: &stdout, max: maxOutputBytes}
@@ -142,14 +141,10 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]interface{}, wor
 
 	case <-ctx.Done():
 		// Timeout or cancellation — kill the entire process group.
-		// Kill the process via both methods:
-		// 1. syscall.Kill(-pgid, SIGKILL) kills the entire process group
-		// 2. cmd.Process.Kill() closes the process's stdin, which unblocks
-		//    cmd.Wait()'s internal pipe-copy goroutines
-		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			_ = cmd.Process.Kill()
-		}
+		// Kill the process via platform-specific method:
+		// - Unix: syscall.Kill(-pgid, SIGKILL) kills the entire process group
+		// - Windows: cmd.Process.Kill() closes the process's stdin
+		killProcessGroup(cmd)
 		// Wait briefly for cmd.Wait() to return after kill.
 		// If it doesn't return (pipe goroutines stuck), move on anyway.
 		select {
