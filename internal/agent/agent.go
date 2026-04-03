@@ -99,10 +99,13 @@ type Agent struct {
 	phaseTurns         int // turns spent in current phase (hard cap at maxPhaseTurns)
 	lastGateScore      int // verification gate passed count from previous retry (plateau detection)
 	plateauCount       int // consecutive retries with no score improvement
-	cachedPromptLevel  int      // provider level when system prompt was cached (-1 = uncached)
-	toolFingerprints   []string // sliding window of recent tool call fingerprints (loop detection)
-	loopWarningCount   int      // consecutive loop warnings without resolution (escalation trigger)
-	exhaustionRedirects int     // how many times we've hit chain-exhausted redirect (cap at 3)
+	cachedPromptLevel     int      // provider level when system prompt was cached (-1 = uncached)
+	toolFingerprints      []string // sliding window of recent tool call fingerprints (loop detection)
+	toolOutputFingerprints map[string]int // toolName+outputHash -> repeat count (loop detection)
+	loopWarningCount      int      // consecutive loop warnings without resolution (escalation trigger)
+	exhaustionRedirects   int      // how many times we've hit chain-exhausted redirect (cap at 3)
+	filesModified         map[string]bool // tracks files modified in current session
+	turnsSinceFileMod     int      // turns since last file modification (warn at 10)
 
 	// Durable execution — checkpoint state
 	toolCallLog []string // IDs of completed tool calls for resume
@@ -150,8 +153,10 @@ type Agent struct {
 // New creates an agent with the given executor, tool registry, and config.
 func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRenderer, config Config) *Agent {
 	a := &Agent{
-		executor:          executor,
-		registry:          registry,
+		executor:              executor,
+		registry:              registry,
+		toolOutputFingerprints: make(map[string]int),
+		filesModified:         make(map[string]bool),
 		permissions:       tools.NewPermissionChecker(tools.ModeAutoApprove),
 		conversation:      NewConversation(),
 		renderer:          renderer,
@@ -1212,6 +1217,50 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			ToolCallID: callID,
 			Content:    conversationContent,
 		})
+
+		// Change 1: Track tool output hash for loop detection
+		outputHash := fmt.Sprintf("%x", sha256.Sum256([]byte(resultContent)))
+		toolOutputKey := fmt.Sprintf("%s:%s", name, outputHash[:16])
+		a.toolOutputFingerprints[toolOutputKey]++
+		if a.toolOutputFingerprints[toolOutputKey] >= 3 {
+			warningMsg := fmt.Sprintf("You have called %s %d times and gotten the same result. Try a different approach or move on.", name, a.toolOutputFingerprints[toolOutputKey])
+			a.conversation.Add(providers.Message{
+				Role:    "system",
+				Content: warningMsg,
+			})
+			a.loopWarningCount++
+		}
+
+		// Change 3: Track files modified
+		if (name == "file_write" || name == "file_edit") && !isError {
+			if path, ok := args["path"].(string); ok && path != "" {
+				a.filesModified[path] = true
+				a.turnsSinceFileMod = 0
+			}
+		} else {
+			a.turnsSinceFileMod++
+			if a.turnsSinceFileMod >= 10 && len(a.filesModified) > 0 {
+				a.conversation.Add(providers.Message{
+					Role:    "system",
+					Content: "You have not modified any files in 10 turns. Are you making progress?",
+				})
+				a.turnsSinceFileMod = 0
+			}
+		}
+
+		// Change 2: Hard cap at 5 loop warnings
+		if a.loopWarningCount >= 5 {
+			modifiedFiles := make([]string, 0, len(a.filesModified))
+			for f := range a.filesModified {
+				modifiedFiles = append(modifiedFiles, f)
+			}
+			resetMsg := fmt.Sprintf("STOP. You are stuck in a loop. Here is what you have accomplished so far: %v. Move to the next step or finish.", modifiedFiles)
+			a.conversation.Add(providers.Message{
+				Role:    "system",
+				Content: resetMsg,
+			})
+			a.loopWarningCount = 0
+		}
 
 		// Track tool call history for PASTE speculative predictions
 		outputPreview := conversationContent
