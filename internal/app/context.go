@@ -402,6 +402,19 @@ func buildEscalationChain(profile string) []agent.EscalationLevel {
 		return buildWorkEscalationChain()
 	}
 
+	// YAML config takes priority over OLLAMA_CHAIN env var
+	if tc, err := LoadTierConfig(); err == nil && tc != nil {
+		yamlChain := tc.ToEscalationChain()
+		if len(yamlChain) > 0 {
+			warnings := ValidateTierConfig(tc)
+			for _, w := range warnings {
+				log.Printf("[Config] warning: %s", w)
+			}
+			log.Printf("[Config] using YAML tier config (%d levels)", len(yamlChain))
+			return yamlChain
+		}
+	}
+
 	chainLevels := ParseOllamaChain(os.Getenv("OLLAMA_CHAIN"))
 	explicitTiers := parseChainTiers(os.Getenv("OLLAMA_CHAIN_TIERS"))
 

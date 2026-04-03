@@ -463,6 +463,80 @@ func cmdRecommend(args []string) {
 	}
 }
 
+func cmdConfig(args []string) {
+	if len(args) > 0 && args[0] == "show" {
+		// Show current effective config
+		tc, err := app.LoadTierConfig()
+		if err != nil {
+			log.Printf("Warning: %v", err)
+		}
+
+		source := "OLLAMA_CHAIN env var (no YAML config found)"
+		if tc != nil {
+			home, _ := os.UserHomeDir()
+			if _, err := os.Stat(".synroute.yaml"); err == nil {
+				source = ".synroute.yaml (project-level)"
+			} else {
+				source = home + "/.synroute/config.yaml (user-level)"
+			}
+		}
+
+		fmt.Print(app.FormatTierConfig(tc, source))
+
+		warnings := app.ValidateTierConfig(tc)
+		for _, w := range warnings {
+			fmt.Printf("WARNING: %s\n", w)
+		}
+		return
+	}
+
+	if len(args) > 0 && args[0] == "generate" {
+		// Generate config from current OLLAMA_CHAIN
+		chainStr := os.Getenv("OLLAMA_CHAIN")
+		if chainStr == "" {
+			fmt.Println("No OLLAMA_CHAIN configured. Set it in .env first, then run synroute config generate.")
+			return
+		}
+
+		levels := app.ParseOllamaChain(chainStr)
+		tc := &app.TierConfig{Tiers: make(map[string][]string)}
+
+		// Auto-classify into tiers (same logic as autoClassifyTiers)
+		total := len(levels)
+		for i, models := range levels {
+			tier := "mid"
+			switch {
+			case total <= 2:
+				tier = "frontier"
+			case i < total/3:
+				tier = "cheap"
+			case i >= total-total/3:
+				tier = "frontier"
+			}
+			tc.Tiers[tier] = append(tc.Tiers[tier], models...)
+		}
+
+		if err := app.WriteTierConfig(tc); err != nil {
+			log.Fatalf("Failed to write config: %v", err)
+		}
+		fmt.Print(app.FormatTierConfig(tc, "~/.synroute/config.yaml (generated)"))
+		fmt.Println("\nConfig saved. Edit ~/.synroute/config.yaml to customize.")
+		return
+	}
+
+	// Default: show help
+	fmt.Println("Usage: synroute config <subcommand>")
+	fmt.Println()
+	fmt.Println("Subcommands:")
+	fmt.Println("  show       Show current effective tier configuration")
+	fmt.Println("  generate   Generate YAML config from current OLLAMA_CHAIN")
+	fmt.Println()
+	fmt.Println("Config file locations (priority order):")
+	fmt.Println("  1. .synroute.yaml (project-level, in CWD)")
+	fmt.Println("  2. ~/.synroute/config.yaml (user-level)")
+	fmt.Println("  3. OLLAMA_CHAIN env var (fallback)")
+}
+
 func stringVal(m map[string]interface{}, key string) string {
 	if v, ok := m[key]; ok {
 		return fmt.Sprintf("%v", v)
