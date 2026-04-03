@@ -24,6 +24,9 @@ jobs:
       - name: Run tests
         run: go test -race -timeout 5m ./...
 
+      - name: Clean test artifacts
+        run: git checkout -- . && git clean -fd
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
