@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-13
+          - os: macos-latest
             goos: darwin
             goarch: amd64
           - os: macos-latest
@@ -66,15 +66,17 @@ jobs:
           go build -ldflags "-s -w -X main.version=${{ github.ref_name }} -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o dist/${BINARY} .
         shell: bash
 
-      - name: Package
+      - name: Package (Unix)
+        if: matrix.goos != 'windows'
         run: |
           cd dist
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip synroute_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.zip synroute.exe
-          else
-            tar czf synroute_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz synroute
-          fi
-        shell: bash
+          tar czf synroute_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz synroute
+
+      - name: Package (Windows)
+        if: matrix.goos == 'windows'
+        run: |
+          Compress-Archive -Path dist\synroute.exe -DestinationPath dist\synroute_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.zip
+        shell: pwsh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
