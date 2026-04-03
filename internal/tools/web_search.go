@@ -116,7 +116,7 @@ func detectSearchBackend() SearchBackend {
 
 func (t *WebSearchTool) Name() string     { return "web_search" }
 func (t *WebSearchTool) Description() string {
-	return "Search the web and return top results. 19 backends: Brave, Tavily, Serper, Exa, SearXNG, DuckDuckGo, Perplexity, You.com, SerpAPI, Google CSE, Jina, Kagi, Yandex, Linkup, Semantic Scholar, OpenAlex, GitHub, Sourcegraph, NewsAPI. Multiple backends fused via RRF."
+	return "Search the web and return top results. 19 backends: Brave, Tavily, Serper, Exa, SearXNG, DuckDuckGo, You.com, SerpAPI, SearchAPI.io, Jina, Kagi, Linkup, Semantic Scholar, OpenAlex, GitHub, Sourcegraph, NewsAPI, Newsdata.io, TheNewsAPI. Multiple backends fused via RRF."
 }
 func (t *WebSearchTool) Category() ToolCategory { return CategoryReadOnly }
 
@@ -655,19 +655,11 @@ func detectAllBackends() []SearchBackend {
 		backends = append(backends, &SearXNGBackend{baseURL: u})
 	}
 	// Tier 1: Large user bases
-	if key := os.Getenv("PERPLEXITY_API_KEY"); key != "" {
-		backends = append(backends, &PerplexityBackend{apiKey: key})
-	}
 	if key := os.Getenv("YOU_API_KEY"); key != "" {
 		backends = append(backends, &YouBackend{apiKey: key})
 	}
 	if key := os.Getenv("SERPAPI_KEY"); key != "" {
 		backends = append(backends, &SerpAPIBackend{apiKey: key})
-	}
-	if key := os.Getenv("GOOGLE_CSE_KEY"); key != "" {
-		if cx := os.Getenv("GOOGLE_CSE_CX"); cx != "" {
-			backends = append(backends, &GoogleCSEBackend{apiKey: key, cx: cx})
-		}
 	}
 	if key := os.Getenv("JINA_API_KEY"); key != "" {
 		backends = append(backends, &JinaBackend{apiKey: key})
@@ -676,14 +668,14 @@ func detectAllBackends() []SearchBackend {
 	if key := os.Getenv("KAGI_API_KEY"); key != "" {
 		backends = append(backends, &KagiBackend{apiKey: key})
 	}
-	if key := os.Getenv("YANDEX_API_KEY"); key != "" {
-		backends = append(backends, &YandexBackend{apiKey: key})
-	}
 	if key := os.Getenv("LINKUP_API_KEY"); key != "" {
 		backends = append(backends, &LinkupBackend{apiKey: key})
 	}
-	// Tier 3: Specialized (academic — no keys needed)
-	backends = append(backends, &SemanticScholarBackend{})
+	if key := os.Getenv("SEARCHAPI_KEY"); key != "" {
+		backends = append(backends, &SearchAPIBackend{apiKey: key})
+	}
+	// Tier 3: Specialized (academic — keys optional for higher rate limits)
+	backends = append(backends, &SemanticScholarBackend{apiKey: os.Getenv("SEMANTIC_SCHOLAR_API_KEY")})
 	backends = append(backends, &OpenAlexBackend{})
 	// Tier 3: Code (optional keys)
 	if key := os.Getenv("GITHUB_TOKEN"); key != "" {
@@ -695,6 +687,12 @@ func detectAllBackends() []SearchBackend {
 	// Tier 3: News
 	if key := os.Getenv("NEWSAPI_KEY"); key != "" {
 		backends = append(backends, &NewsAPIBackend{apiKey: key})
+	}
+	if key := os.Getenv("NEWSDATA_API_KEY"); key != "" {
+		backends = append(backends, &NewsdataBackend{apiKey: key})
+	}
+	if key := os.Getenv("THENEWSAPI_KEY"); key != "" {
+		backends = append(backends, &TheNewsAPIBackend{apiKey: key})
 	}
 	// DuckDuckGo always last (free fallback)
 	backends = append(backends, &DuckDuckGoBackend{})

@@ -10,64 +10,6 @@ import (
 	"strings"
 )
 
-// --- Perplexity Sonar Backend (perplexity.ai — AI-grounded search) ---
-
-type PerplexityBackend struct{ apiKey string }
-
-func (b *PerplexityBackend) Name() string { return "perplexity" }
-
-func (b *PerplexityBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
-	body := fmt.Sprintf(`{"model":"sonar","messages":[{"role":"user","content":%q}],"search_recency_filter":"month","return_related_questions":false}`, query)
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.perplexity.ai/chat/completions", strings.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+b.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := ssrfSafeClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("perplexity API error %d: %s", resp.StatusCode, string(body))
-	}
-
-	var pResp struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Citations []string `json:"citations"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&pResp); err != nil {
-		return nil, fmt.Errorf("parse perplexity response: %w", err)
-	}
-
-	var results []SearchResult
-	content := ""
-	if len(pResp.Choices) > 0 {
-		content = pResp.Choices[0].Message.Content
-	}
-	for i, citation := range pResp.Citations {
-		if i >= maxResults {
-			break
-		}
-		results = append(results, SearchResult{
-			Title:   fmt.Sprintf("Source %d", i+1),
-			URL:     citation,
-			Snippet: content,
-		})
-	}
-	if len(results) == 0 && content != "" {
-		results = append(results, SearchResult{Title: "Perplexity Answer", URL: "", Snippet: content})
-	}
-	return results, nil
-}
-
 // --- You.com Backend (you.com — multi-step AI search) ---
 
 type YouBackend struct{ apiKey string }
