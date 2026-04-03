@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
 )
 
 const maxConversationMessages = 200

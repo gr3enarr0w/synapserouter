@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
 )
 
 type provider interface {

@@ -3,9 +3,9 @@ package agent
 import (
 	"database/sql"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
+	"github.com/gr3enarr0w/synapserouter/internal/mcp"
+	"github.com/gr3enarr0w/synapserouter/internal/memory"
+	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
 )
 
 // Config holds configuration for an agent session.

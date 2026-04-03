@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/router"
+	"github.com/gr3enarr0w/synapserouter/internal/router"
 )
 
 // DiagnosticCheck represents a single diagnostic result.

@@ -18,19 +18,19 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/brand"
+	"github.com/gr3enarr0w/synapserouter/internal/brand"
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/app"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/compat"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcpserver"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/router"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/subscriptions"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/usage"
+	"github.com/gr3enarr0w/synapserouter/internal/app"
+	"github.com/gr3enarr0w/synapserouter/internal/compat"
+	"github.com/gr3enarr0w/synapserouter/internal/mcpserver"
+	"github.com/gr3enarr0w/synapserouter/internal/memory"
+	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/router"
+	"github.com/gr3enarr0w/synapserouter/internal/subscriptions"
+	"github.com/gr3enarr0w/synapserouter/internal/tools"
+	"github.com/gr3enarr0w/synapserouter/internal/usage"
 )
 
 var (

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
+	"github.com/gr3enarr0w/synapserouter/internal/tools"
 )
 
 // mockPipelineAgent implements PipelineToolAgent for testing.

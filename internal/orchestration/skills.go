@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration/skilldata"
+	"github.com/gr3enarr0w/synapserouter/internal/orchestration/skilldata"
 )
 
 var (

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
 )
 
 // TestModelValidation tests the model validation fixes for BUG-MODEL-VALIDATION-001 and BUG-MODEL-VALIDATION-002

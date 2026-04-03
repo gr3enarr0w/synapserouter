@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/environment"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
+	"github.com/gr3enarr0w/synapserouter/internal/environment"
+	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
 )
 
 // VerifyResult holds the result of a single programmatic verification check.

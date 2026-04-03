@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/subscriptions"
+	"github.com/gr3enarr0w/synapserouter/internal/subscriptions"
 )
 
 // Recommendation holds model suggestions for one tier.

@@ -19,11 +19,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/environment"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
+	"github.com/gr3enarr0w/synapserouter/internal/environment"
+	"github.com/gr3enarr0w/synapserouter/internal/mcp"
+	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/tools"
 )
 
 // ChatExecutor can execute chat completions against the LLM provider chain.

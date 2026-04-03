@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/tools"
 )
 
 // Handoff represents a request to transfer control to a specialist agent.

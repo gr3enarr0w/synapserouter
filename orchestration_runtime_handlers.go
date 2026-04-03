@@ -8,7 +8,7 @@ import (
 	"strings"
 
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
+	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
 )
 
 func orchestrationAgentsHandler(w http.ResponseWriter, r *http.Request) {

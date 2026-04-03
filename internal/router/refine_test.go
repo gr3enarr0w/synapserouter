@@ -12,10 +12,10 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/usage"
+	"github.com/gr3enarr0w/synapserouter/internal/memory"
+	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/usage"
 )
 
 // --- Unit tests for needsRefinement ---

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/memory"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
+	"github.com/gr3enarr0w/synapserouter/internal/memory"
+	"github.com/gr3enarr0w/synapserouter/internal/tools"
 )
 
 // UnifiedSearcher wraps both ToolOutputStore and VectorMemory to provide

@@ -16,14 +16,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/agent"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/app"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/subscriptions"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/environment"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcpserver"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/worktree"
+	"github.com/gr3enarr0w/synapserouter/internal/agent"
+	"github.com/gr3enarr0w/synapserouter/internal/app"
+	"github.com/gr3enarr0w/synapserouter/internal/subscriptions"
+	"github.com/gr3enarr0w/synapserouter/internal/environment"
+	"github.com/gr3enarr0w/synapserouter/internal/mcp"
+	"github.com/gr3enarr0w/synapserouter/internal/mcpserver"
+	"github.com/gr3enarr0w/synapserouter/internal/tools"
+	"github.com/gr3enarr0w/synapserouter/internal/worktree"
 )
 
 // Build-time variables set via ldflags.

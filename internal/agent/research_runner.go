@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
+	"github.com/gr3enarr0w/synapserouter/internal/tools"
 )
 
 // RunResearch executes a multi-round research session with dynamic backend

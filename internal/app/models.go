@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/subscriptions"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/subscriptions"
 )
 
 // ListModels returns all available models from providers.

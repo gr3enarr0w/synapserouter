@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/app"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/eval"
+	"github.com/gr3enarr0w/synapserouter/internal/app"
+	"github.com/gr3enarr0w/synapserouter/internal/eval"
 )
 
 func cmdEval(args []string) {

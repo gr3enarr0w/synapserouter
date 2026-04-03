@@ -11,8 +11,8 @@ import (
 	"time"
 
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/compat"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/compat"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
 )
 
 // --- Anthropic Messages API types ---

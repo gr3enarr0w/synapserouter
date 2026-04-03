@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/subscriptions"
+	"github.com/gr3enarr0w/synapserouter/internal/subscriptions"
 )
 
 func subscriptionAnthropicAuthURLHandler(w http.ResponseWriter, r *http.Request) {

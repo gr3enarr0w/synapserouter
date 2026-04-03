@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/agent"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/app"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/router"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
+	"github.com/gr3enarr0w/synapserouter/internal/agent"
+	"github.com/gr3enarr0w/synapserouter/internal/app"
+	"github.com/gr3enarr0w/synapserouter/internal/router"
+	"github.com/gr3enarr0w/synapserouter/internal/tools"
 )
 
 var (

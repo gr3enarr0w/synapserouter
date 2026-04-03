@@ -7,7 +7,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
+	"github.com/gr3enarr0w/synapserouter/internal/tools"
 )
 
 // PipelineToolAgent is the interface pipeline tools need from the agent.

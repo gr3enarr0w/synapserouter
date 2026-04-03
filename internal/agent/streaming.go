@@ -6,7 +6,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
 )
 
 // StreamCallback is called for each line of streaming output.

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/subscription"
+	"github.com/gr3enarr0w/synapserouter/subscription"
 )
 
 // TestMockSubscriptionServer validates that the mock server returns correct models and roles

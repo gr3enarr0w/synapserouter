@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/tools"
+	"github.com/gr3enarr0w/synapserouter/internal/tools"
 )
 
 // DefaultPermissionPrompt creates a permission prompt function that writes

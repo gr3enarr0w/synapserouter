@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
+	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
 )
 
 func TestSkillsForPhase(t *testing.T) {

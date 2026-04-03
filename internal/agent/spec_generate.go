@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
 )
 
 // specPromptTemplate is used to generate structured specs from freeform input.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/eval"
+	"github.com/gr3enarr0w/synapserouter/internal/eval"
 )
 
 func evalExercisesHandler(w http.ResponseWriter, r *http.Request) {

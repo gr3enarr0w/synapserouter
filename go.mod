@@ -1,4 +1,4 @@
-module github.com/gr3enarr0w/mcp-ecosystem/synapse-router
+module github.com/gr3enarr0w/synapserouter
 
 go 1.25.0
 

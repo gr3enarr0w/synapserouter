@@ -6,8 +6,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
 )
 
 const refinementSystemPrompt = `Rewrite the user's vague message as a single imperative sentence (a command/request) using context from the conversation. Start with an action verb (check, fix, review, test, implement, diagnose, update, etc). Reply with ONLY the rewritten sentence. No markdown, no explanation, no code, no bullet points. One sentence only.

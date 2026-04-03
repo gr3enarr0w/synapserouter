@@ -9,7 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/mcp"
+	"github.com/gr3enarr0w/synapserouter/internal/mcp"
 )
 
 func cmdMCP(args []string) {

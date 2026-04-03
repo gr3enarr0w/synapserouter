@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/subscriptions"
+	"github.com/gr3enarr0w/synapserouter/internal/subscriptions"
 )
 
 func TestLoadModelCatalog(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
 )
 
 func TestOrchestrationTasksHandlerCreatesTask(t *testing.T) {

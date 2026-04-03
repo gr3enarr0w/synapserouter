@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
 )
 
 // SmokeTestResult holds the outcome of a single provider smoke test.

@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"github.com/gr3enarr0w/mcp-ecosystem/synapse-router/internal/orchestration"
+	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
 )
 
 // SkillsForPhase filters a skill chain to only include skills in the given phase.
