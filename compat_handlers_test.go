@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/gr3enarr0w/synapserouter/internal/compat"
 	"github.com/gr3enarr0w/synapserouter/internal/providers"
@@ -507,7 +507,7 @@ func TestProviderChatHandlerFallsBackToAmpUpstreamForUnknownModel(t *testing.T) 
 
 func newCompatTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	testDB, err := sql.Open("sqlite3", ":memory:")
+	testDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

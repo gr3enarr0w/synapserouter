@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/gr3enarr0w/synapserouter/internal/memory"
 	"github.com/gr3enarr0w/synapserouter/internal/providers"
@@ -45,7 +45,7 @@ func (p *testProvider) SupportsModel(model string) bool    { return true }
 
 func TestChatCompletionWithDebugIncludesMemoryCandidates(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "router.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestChatCompletionWithDebugIncludesMemoryCandidates(t *testing.T) {
 
 func TestTraceDecisionSelectsHealthyProvider(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "trace.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

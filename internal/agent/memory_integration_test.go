@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/gr3enarr0w/synapserouter/internal/memory"
 	"github.com/gr3enarr0w/synapserouter/internal/providers"
@@ -22,7 +22,7 @@ func setupTestAgent(t *testing.T) (*Agent, *sql.DB) {
 
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/memory_test.db"
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -579,7 +579,7 @@ func TestMemoryFlow_RecallCoherence(t *testing.T) {
 		{"grep", "pattern=TODO path=./internal", "5 TODOs in 3 files", "internal/router/router.go:42:// TODO: add retry logic\ninternal/agent/agent.go:100:// TODO: implement budget tracking\ninternal/tools/bash.go:55:// TODO: add timeout\n", 0},
 		{"bash", "curl -s localhost:8090/health", "health check OK", `{"status":"ok","providers":3,"uptime":"2h15m"}`, 0},
 		{"bash", "go vet ./...", "no issues found", "", 0},
-		{"file_read", "/app/go.mod", "go.mod: 15 lines", "module github.com/example/project\n\ngo 1.22\n\nrequire (\n\tgithub.com/mattn/go-sqlite3 v1.14.22\n)", 0},
+		{"file_read", "/app/go.mod", "go.mod: 15 lines", "module github.com/example/project\n\ngo 1.22\n\nrequire (\n\tmodernc.org/sqlite v1.14.22\n)", 0},
 	}
 
 	for _, to := range toolOutputs {

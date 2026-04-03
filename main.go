@@ -19,7 +19,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/gr3enarr0w/synapserouter/internal/brand"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/gr3enarr0w/synapserouter/internal/app"
 	"github.com/gr3enarr0w/synapserouter/internal/compat"
@@ -149,7 +149,7 @@ func startServer() {
 
 	// Open database
 	var err error
-	db, err = sql.Open("sqlite3", dbPath)
+	db, err = sql.Open("sqlite", dbPath)
 	if err != nil {
 		log.Fatal("Failed to open database:", err)
 	}

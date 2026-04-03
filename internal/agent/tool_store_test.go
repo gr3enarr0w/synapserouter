@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func setupToolStoreTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestToolOutputStore_TableAutoCreated(t *testing.T) {
 	// Verify the table is created automatically (no migration needed)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "fresh.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

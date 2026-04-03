@@ -10,14 +10,14 @@ import (
 	"github.com/gr3enarr0w/synapserouter/internal/router"
 	"github.com/gr3enarr0w/synapserouter/internal/usage"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // TestMemoryContinuity tests the fix for BUG-MEMORY-001
 // Verifies that same-session requests retrieve and include prior context
 func TestMemoryContinuity(t *testing.T) {
 	// Setup in-memory database
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

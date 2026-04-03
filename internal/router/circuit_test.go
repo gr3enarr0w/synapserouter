@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func setupCircuitTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "circuit.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestRouter_ResetCircuitBreaker(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "tracker.db")
 	// Copy schema to tracker db path
 	sqlBytes, _ := os.ReadFile(filepath.Join("..", "..", "migrations", "001_init.sql"))
-	trackerDB, _ := sql.Open("sqlite3", dbPath)
+	trackerDB, _ := sql.Open("sqlite", dbPath)
 	trackerDB.Exec(string(sqlBytes))
 	trackerDB.Close()
 

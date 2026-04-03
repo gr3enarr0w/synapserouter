@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/gr3enarr0w/synapserouter/internal/memory"
 	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
@@ -189,7 +189,7 @@ func (p *refineTestProvider) SupportsModel(string) bool      { return true }
 func setupRefineTestRouter(t *testing.T, provider *refineTestProvider) (*Router, *memory.VectorMemory) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "refine.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

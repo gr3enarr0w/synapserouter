@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/gr3enarr0w/synapserouter/internal/memory"
 	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
@@ -587,7 +587,7 @@ func (p *contextTrackingProvider) SupportsModel(string) bool      { return true 
 func setupContextTestRouter(t *testing.T, p providers.Provider) (*Router, *memory.VectorMemory) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "context.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -696,7 +696,7 @@ func (p *routedProvider) SupportsModel(model string) bool {
 func setupMultiProviderRouter(t *testing.T, providerList []providers.Provider) (*Router, *memory.VectorMemory) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "multi.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

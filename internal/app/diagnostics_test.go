@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/gr3enarr0w/synapserouter/internal/memory"
 	"github.com/gr3enarr0w/synapserouter/internal/providers"
@@ -16,7 +16,7 @@ import (
 func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

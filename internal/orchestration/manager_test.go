@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/gr3enarr0w/synapserouter/internal/mcp"
 	"github.com/gr3enarr0w/synapserouter/internal/memory"
@@ -1922,7 +1922,7 @@ func TestRunWorkflowTemplateUsesTemplateRoles(t *testing.T) {
 func newOrchestrationTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

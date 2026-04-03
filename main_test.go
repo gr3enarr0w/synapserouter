@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/gr3enarr0w/synapserouter/internal/memory"
 	"github.com/gr3enarr0w/synapserouter/internal/providers"
@@ -240,7 +240,7 @@ func TestAuditRequestHandler(t *testing.T) {
 
 func TestTraceHandler(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "trace-handler.db")
-	testDB, err := sql.Open("sqlite3", dbPath)
+	testDB, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestTraceHandler(t *testing.T) {
 
 func TestProvidersHandler(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "providers.db")
-	testDB, err := sql.Open("sqlite3", dbPath)
+	testDB, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +394,7 @@ func (p *traceTestProvider) SupportsModel(model string) bool { return true }
 func newFallbackTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +425,7 @@ func newAuditTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "audit.db")
-	testDB, err := sql.Open("sqlite3", dbPath)
+	testDB, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

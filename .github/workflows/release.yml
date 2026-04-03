@@ -23,9 +23,15 @@ jobs:
           - os: ubuntu-latest
             goos: linux
             goarch: amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
           - os: windows-latest
             goos: windows
             goarch: amd64
+          - os: windows-latest
+            goos: windows
+            goarch: arm64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -38,25 +44,18 @@ jobs:
           cache: true
 
       - name: Run tests
-        if: matrix.goos != 'windows'
-        run: go test -race -timeout 5m ./...
-
-      - name: Run tests (Windows)
-        if: matrix.goos == 'windows'
+        if: matrix.goarch == 'amd64' || matrix.goos == 'darwin'
         run: go test -timeout 5m ./...
+        env:
+          CGO_ENABLED: 0
 
       - name: Clean test artifacts
-        if: matrix.goos != 'windows'
-        run: git checkout -- . && git clean -fd
-
-      - name: Clean test artifacts (Windows)
-        if: matrix.goos == 'windows'
         run: git checkout -- . && git clean -fd
         shell: bash
 
       - name: Build
         env:
-          CGO_ENABLED: 1
+          CGO_ENABLED: 0
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
