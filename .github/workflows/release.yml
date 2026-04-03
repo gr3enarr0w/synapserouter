@@ -11,9 +11,10 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-13
             goos: darwin
             goarch: amd64
           - os: macos-latest
@@ -22,9 +23,6 @@ jobs:
           - os: ubuntu-latest
             goos: linux
             goarch: amd64
-          - os: ubuntu-latest
-            goos: linux
-            goarch: arm64
           - os: windows-latest
             goos: windows
             goarch: amd64
