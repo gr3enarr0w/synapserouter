@@ -227,7 +227,10 @@ func SelectBackends(tagged []BackendTag, queryTypes []string, depth string) []to
 			maxBackends = 5
 		}
 	case "deep":
-		// All matching — no cap
+		// Cap at 7 backends for deep research
+		if maxBackends > 7 {
+			maxBackends = 7
+		}
 	}
 
 	if len(matched) > maxBackends {

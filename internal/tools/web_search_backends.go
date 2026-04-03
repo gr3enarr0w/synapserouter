@@ -14,6 +14,8 @@ import (
 
 type YouBackend struct{ apiKey string }
 
+func (b *YouBackend) CostTier() string { return "mid" }
+
 func (b *YouBackend) Name() string { return "you" }
 
 func (b *YouBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
@@ -68,6 +70,8 @@ func (b *YouBackend) Search(ctx context.Context, query string, maxResults int) (
 
 type SerpAPIBackend struct{ apiKey string }
 
+func (b *SerpAPIBackend) CostTier() string { return "mid" }
+
 func (b *SerpAPIBackend) Name() string { return "serpapi" }
 
 func (b *SerpAPIBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
@@ -115,6 +119,8 @@ func (b *SerpAPIBackend) Search(ctx context.Context, query string, maxResults in
 // --- Jina Reader Backend (jina.ai — search + content extraction) ---
 
 type JinaBackend struct{ apiKey string }
+
+func (b *JinaBackend) CostTier() string { return "mid" }
 
 func (b *JinaBackend) Name() string { return "jina" }
 
@@ -167,6 +173,8 @@ func (b *JinaBackend) Search(ctx context.Context, query string, maxResults int) 
 
 type KagiBackend struct{ apiKey string }
 
+func (b *KagiBackend) CostTier() string { return "expensive" }
+
 func (b *KagiBackend) Name() string { return "kagi" }
 
 func (b *KagiBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
@@ -216,6 +224,8 @@ func (b *KagiBackend) Search(ctx context.Context, query string, maxResults int) 
 // --- Linkup Backend (linkup.so — AI-native search) ---
 
 type LinkupBackend struct{ apiKey string }
+
+func (b *LinkupBackend) CostTier() string { return "mid" }
 
 func (b *LinkupBackend) Name() string { return "linkup" }
 
@@ -324,9 +334,13 @@ func (b *SemanticScholarBackend) Search(ctx context.Context, query string, maxRe
 	return results, nil
 }
 
+func (b *SemanticScholarBackend) CostTier() string { return "free" }
+
 // --- OpenAlex Backend (openalex.org — 260M academic works, fully open) ---
 
 type OpenAlexBackend struct{}
+
+func (b *OpenAlexBackend) CostTier() string { return "free" }
 
 func (b *OpenAlexBackend) Name() string { return "openalex" }
 
@@ -382,6 +396,8 @@ func (b *OpenAlexBackend) Search(ctx context.Context, query string, maxResults i
 
 type GitHubSearchBackend struct{ token string }
 
+func (b *GitHubSearchBackend) CostTier() string { return "free" }
+
 func (b *GitHubSearchBackend) Name() string { return "github" }
 
 func (b *GitHubSearchBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
@@ -435,6 +451,8 @@ func (b *GitHubSearchBackend) Search(ctx context.Context, query string, maxResul
 // --- Sourcegraph Backend (sourcegraph.com — code search, 2M+ repos) ---
 
 type SourcegraphBackend struct{ token string }
+
+func (b *SourcegraphBackend) CostTier() string { return "free" }
 
 func (b *SourcegraphBackend) Name() string { return "sourcegraph" }
 
@@ -501,6 +519,8 @@ func (b *SourcegraphBackend) Search(ctx context.Context, query string, maxResult
 
 type NewsAPIBackend struct{ apiKey string }
 
+func (b *NewsAPIBackend) CostTier() string { return "cheap" }
+
 func (b *NewsAPIBackend) Name() string { return "newsapi" }
 
 func (b *NewsAPIBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
@@ -548,6 +568,8 @@ func (b *NewsAPIBackend) Search(ctx context.Context, query string, maxResults in
 // --- SearchAPI.io Backend (searchapi.io — Google, Bing, Baidu, Naver, DuckDuckGo) ---
 
 type SearchAPIBackend struct{ apiKey string }
+
+func (b *SearchAPIBackend) CostTier() string { return "mid" }
 
 func (b *SearchAPIBackend) Name() string { return "searchapi" }
 
@@ -597,6 +619,8 @@ func (b *SearchAPIBackend) Search(ctx context.Context, query string, maxResults 
 
 type NewsdataBackend struct{ apiKey string }
 
+func (b *NewsdataBackend) CostTier() string { return "cheap" }
+
 func (b *NewsdataBackend) Name() string { return "newsdata" }
 
 func (b *NewsdataBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
@@ -644,6 +668,8 @@ func (b *NewsdataBackend) Search(ctx context.Context, query string, maxResults i
 // --- TheNewsAPI Backend (thenewsapi.com — structured global news) ---
 
 type TheNewsAPIBackend struct{ apiKey string }
+
+func (b *TheNewsAPIBackend) CostTier() string { return "cheap" }
 
 func (b *TheNewsAPIBackend) Name() string { return "thenewsapi" }
 

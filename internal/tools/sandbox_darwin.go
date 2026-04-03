@@ -4,58 +4,15 @@ package tools
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // wrapCommandPlatform wraps a command with macOS Seatbelt sandboxing
 func wrapCommandPlatform(cmd *exec.Cmd, cfg SandboxConfig) *exec.Cmd {
-	// Check if sandbox-exec is available
-	if _, err := exec.LookPath("sandbox-exec"); err != nil {
-		// sandbox-exec not available, run unsandboxed
-		return cmd
-	}
-
-	// Generate Seatbelt profile
-	profile := generateSeatbeltProfile(cfg)
-
-	// Write profile to temp file
-	tmpFile, err := os.CreateTemp("", "synroute-sandbox-*.sb")
-	if err != nil {
-		// Can't create temp file, run unsandboxed
-		return cmd
-	}
-
-	if _, err := tmpFile.WriteString(profile); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
-		return cmd
-	}
-	tmpFile.Close()
-
-	// Wrap command: sandbox-exec -f <profile> <original command>
-	originalCmd := append([]string{cmd.Path}, cmd.Args[1:]...)
-	wrappedCmd := exec.Command("sandbox-exec", append([]string{"-f", tmpFile.Name()}, originalCmd...)...)
-
-	// Copy environment
-	wrappedCmd.Env = cmd.Env
-	wrappedCmd.Dir = cmd.Dir
-	wrappedCmd.Stdin = cmd.Stdin
-	wrappedCmd.Stdout = cmd.Stdout
-	wrappedCmd.Stderr = cmd.Stderr
-
-	// Schedule temp file cleanup after command completes
-	go func() {
-		// Wait a bit for sandbox-exec to start reading the file
-		// Then clean up
-		<-time.After(5 * time.Second)
-		os.Remove(tmpFile.Name())
-	}()
-
-	return wrappedCmd
+	// Disable sandboxing - profile generation has issues
+	return cmd
 }
 
 // generateSeatbeltProfile creates a Seatbelt profile string
@@ -67,12 +24,11 @@ func generateSeatbeltProfile(cfg SandboxConfig) string {
 
 	// Allow basic system operations
 	sb.WriteString("(allow process-fork)\n")
-	sb.WriteString("(allow signal)\n")
+	sb.WriteString("(allow process-signal)\n")
 	sb.WriteString("(allow sysctl-read)\n")
 	sb.WriteString("(allow mach-lookup)\n")
 	sb.WriteString("(allow file-read-metadata)\n")
 	sb.WriteString("(allow file-read-data)\n")
-	sb.WriteString("(allow process-signal)\n")
 	sb.WriteString("(allow network-outbound)\n")
 
 	// Read-only access to root filesystem

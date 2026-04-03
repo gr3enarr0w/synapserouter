@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +53,7 @@ type SearchResult struct {
 // SearchBackend is the interface for pluggable search providers.
 type SearchBackend interface {
 	Name() string
+	CostTier() string // "free", "cheap", "mid", "expensive"
 	Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error)
 }
 
@@ -181,7 +183,36 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]interface{}
 
 // executeFusion queries all backends in parallel and merges results via RRF.
 func (t *WebSearchTool) executeFusion(ctx context.Context, query string, maxResults int) (*ToolResult, error) {
-	backendResults := searchAllBackends(ctx, t.backends, query, maxResults)
+	// Determine max backends from env var (default 3)
+	maxBackends := 3
+	if envVal := os.Getenv("SYNROUTE_SEARCH_MAX_BACKENDS"); envVal != "" {
+		if parsed, err := strconv.Atoi(envVal); err == nil && parsed > 0 {
+			maxBackends = parsed
+		}
+	}
+
+	// Sort backends by cost tier (free first, then cheap, mid, expensive)
+	costOrder := map[string]int{"free": 0, "cheap": 1, "mid": 2, "expensive": 3}
+	sortedBackends := make([]SearchBackend, len(t.backends))
+	copy(sortedBackends, t.backends)
+	sort.Slice(sortedBackends, func(i, j int) bool {
+		return costOrder[sortedBackends[i].CostTier()] < costOrder[sortedBackends[j].CostTier()]
+	})
+
+	// Cap to max backends
+	cappedBackends := sortedBackends
+	if len(sortedBackends) > maxBackends {
+		cappedBackends = sortedBackends[:maxBackends]
+	}
+
+	// Log which backends were selected
+	var selectedNames []string
+	for _, b := range cappedBackends {
+		selectedNames = append(selectedNames, b.Name())
+	}
+	log.Printf("[SearchFusion] using %d/%d backends: %s", len(cappedBackends), len(t.backends), strings.Join(selectedNames, ", "))
+
+	backendResults := searchAllBackends(ctx, cappedBackends, query, maxResults)
 
 	// Count successes
 	successCount := 0
@@ -242,6 +273,7 @@ func (t *WebSearchTool) executeFusion(ctx context.Context, query string, maxResu
 type DuckDuckGoBackend struct{}
 
 func (b *DuckDuckGoBackend) Name() string { return "duckduckgo" }
+func (b *DuckDuckGoBackend) CostTier() string { return "free" }
 func (b *DuckDuckGoBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	return duckDuckGoSearch(ctx, query, maxResults)
 }
@@ -377,6 +409,7 @@ type TavilyBackend struct {
 }
 
 func (b *TavilyBackend) Name() string { return "tavily" }
+func (b *TavilyBackend) CostTier() string { return "cheap" }
 
 func (b *TavilyBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	reqBody, _ := json.Marshal(map[string]interface{}{
@@ -435,6 +468,7 @@ type SearXNGBackend struct {
 }
 
 func (b *SearXNGBackend) Name() string { return "searxng" }
+func (b *SearXNGBackend) CostTier() string { return "free" }
 
 func (b *SearXNGBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	u, err := url.Parse(b.baseURL + "/search")
@@ -493,6 +527,7 @@ func (b *SearXNGBackend) Search(ctx context.Context, query string, maxResults in
 type SerperBackend struct{ apiKey string }
 
 func (b *SerperBackend) Name() string { return "serper" }
+func (b *SerperBackend) CostTier() string { return "cheap" }
 
 func (b *SerperBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	reqBody, _ := json.Marshal(map[string]interface{}{"q": query, "num": maxResults})
@@ -535,6 +570,7 @@ func (b *SerperBackend) Search(ctx context.Context, query string, maxResults int
 type BraveBackend struct{ apiKey string }
 
 func (b *BraveBackend) Name() string { return "brave" }
+func (b *BraveBackend) CostTier() string { return "cheap" }
 
 func (b *BraveBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	u, _ := url.Parse("https://api.search.brave.com/res/v1/web/search")
@@ -584,6 +620,7 @@ func (b *BraveBackend) Search(ctx context.Context, query string, maxResults int)
 type ExaBackend struct{ apiKey string }
 
 func (b *ExaBackend) Name() string { return "exa" }
+func (b *ExaBackend) CostTier() string { return "mid" }
 
 func (b *ExaBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	reqBody, _ := json.Marshal(map[string]interface{}{"query": query, "numResults": maxResults, "type": "auto"})

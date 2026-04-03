@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -67,6 +68,12 @@ func (t *FileWriteTool) Execute(ctx context.Context, args map[string]interface{}
 	if warningMsg != "" {
 		output += warningMsg
 	}
+
+	// Run language-appropriate verification
+	if verifyOutput := verifyWrittenFile(path, workDir); verifyOutput != "" {
+		output += "\n\n⚠️ VERIFICATION FAILED:\n" + verifyOutput + "\nFix the errors above before proceeding."
+	}
+
 	return &ToolResult{Output: output}, nil
 }
 
@@ -99,4 +106,94 @@ func findDuplicateFiles(basename, rootDir, excludePath string) []string {
 		return nil
 	})
 	return dupes
+}
+
+// runGoBuild runs 'go build ./...' in the given directory and returns any error output.
+// Returns empty string if build succeeds.
+func runGoBuild(workDir string) string {
+	cmd := exec.Command("go", "build", "./...")
+	cmd.Dir = workDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(output)
+	}
+	return ""
+}
+
+// verifyWrittenFile runs language-appropriate syntax verification on the written file.
+// Returns empty string if verification succeeds or if language is not supported.
+func verifyWrittenFile(path, workDir string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	
+	switch ext {
+	case ".go":
+		return runGoBuild(workDir)
+	
+	case ".py":
+		cmd := exec.Command("python", "-m", "py_compile", path)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return string(output)
+		}
+		return ""
+	
+	case ".js":
+		cmd := exec.Command("node", "--check", path)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return string(output)
+		}
+		return ""
+	
+	case ".ts", ".tsx":
+		// Only run if tsconfig.json exists
+		if _, err := os.Stat(filepath.Join(workDir, "tsconfig.json")); err == nil {
+			cmd := exec.Command("npx", "tsc", "--noEmit")
+			cmd.Dir = workDir
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				return string(output)
+			}
+		}
+		return ""
+	
+	case ".rs":
+		// Only run if Cargo.toml exists
+		if _, err := os.Stat(filepath.Join(workDir, "Cargo.toml")); err == nil {
+			cmd := exec.Command("cargo", "check")
+			cmd.Dir = workDir
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				return string(output)
+			}
+		}
+		return ""
+	
+	case ".java":
+		cmd := exec.Command("javac", path)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return string(output)
+		}
+		return ""
+	
+	case ".rb":
+		cmd := exec.Command("ruby", "-c", path)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return string(output)
+		}
+		return ""
+	
+	case ".cpp", ".h", ".hpp", ".cc":
+		cmd := exec.Command("g++", "-fsyntax-only", path)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return string(output)
+		}
+		return ""
+	
+	default:
+		return ""
+	}
 }

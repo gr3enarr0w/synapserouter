@@ -134,6 +134,10 @@ Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-impl
 ### Search Backends (19 total, RRF fusion)
 When multiple backends are configured, all are queried in parallel and results merged via Reciprocal Rank Fusion (RRF). More backends = better coverage. Auto-enables with 2+ backends; disable with `SYNROUTE_SEARCH_FUSION=false`.
 
+**Fusion caps:** Regular search caps at 3 backends for speed; deep research uses up to 7 backends for coverage. Smart routing selects backends by query type.
+
+**Circuit breakers:** Search backends have rate-limit protection — backends that hit rate limits are automatically paused and retried later.
+
 **Recommended setup by budget:**
 
 | Budget | Backends | Cost | Coverage |
@@ -289,6 +293,7 @@ go vet ./...                               # Lint
 ./synroute eval run --per-suite 0 --count 100   # no per-suite limit, 100 total
 ./synroute eval results --json             # Most recent run
 ./synroute eval compare --run-a <id1> --run-b <id2>
+./synroute search stats                    # Show search backend quality metrics
 ./synroute profile show                    # Show active profile
 ./synroute profile list                    # List available profiles
 ./synroute profile switch work             # Switch to work profile

@@ -3,6 +3,7 @@ package agent
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -437,4 +438,72 @@ func ApplyKReviewOverrides(p *Pipeline) {
 			}
 		}
 	}
+}
+
+// RunCleanup removes junk files left by agent runs from the repo root.
+// This includes temporary files, backups, and unrelated artifacts.
+func RunCleanup() {
+	junkPatterns := []string{
+		"*.bak",
+		"*.tmp",
+		"lint_results.json",
+		"file.txt",
+		"result.txt",
+		"test_env.txt",
+		"synapse-router",
+		"synroute_test",
+		".aider.chat.history.md",
+		".aider.input.history",
+	}
+
+	// SQL files that don't belong in root
+	sqlJunk := []string{
+		"top_10_customers_production.sql",
+		"top_10_customers_by_order_value.sql",
+	}
+
+	// Remove root-level package.json (this is a Go project)
+	rootPackageJSON := "package.json"
+
+	log.Printf("[Cleanup] Starting junk file cleanup...")
+	removedCount := 0
+
+	// Remove junk patterns from root
+	for _, pattern := range junkPatterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			log.Printf("[Cleanup] glob error for %s: %v", pattern, err)
+			continue
+		}
+		for _, match := range matches {
+			// Only delete files in root, not in subdirectories
+			if filepath.Dir(match) != "." {
+				continue
+			}
+			if err := os.RemoveAll(match); err == nil {
+				log.Printf("[Cleanup] removed: %s", match)
+				removedCount++
+			}
+		}
+	}
+
+	// Remove SQL junk
+	for _, sqlFile := range sqlJunk {
+		if _, err := os.Stat(sqlFile); err == nil {
+			if err := os.Remove(sqlFile); err == nil {
+				log.Printf("[Cleanup] removed: %s", sqlFile)
+				removedCount++
+			}
+		}
+	}
+
+	// Remove root package.json only (not in subdirs)
+	if info, err := os.Stat(rootPackageJSON); err == nil && !info.IsDir() {
+		if err := os.Remove(rootPackageJSON); err == nil {
+			log.Printf("[Cleanup] removed: %s", rootPackageJSON)
+			removedCount++
+		}
+	}
+
+	log.Printf("[Cleanup] Finished — removed %d junk files", removedCount)
 }

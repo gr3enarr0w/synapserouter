@@ -76,6 +76,23 @@ func LoadRoleInstructions(workDir, role string) string {
 	return strings.TrimSpace(string(data))
 }
 
+// LoadModulePath reads go.mod from the working directory and extracts the module path.
+func LoadModulePath(workDir string) string {
+	goModPath := filepath.Join(workDir, "go.mod")
+	data, err := os.ReadFile(goModPath)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
+		}
+	}
+	return ""
+}
+
 // forceToolsConfig holds the parsed force-tools.md configuration.
 type forceToolsConfig struct {
 	Base   string            `yaml:"base"`

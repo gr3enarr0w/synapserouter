@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.08 — Search Optimization + Agent Quality (2026-04-XX)
+
+### Improvements
+- **Junk File Cleanup**: Agent automatically cleans up temporary/junk files after itself
+- **Agent Code Quality**: Module path included in system prompt, mandatory `go build` verification before commit
+- **Per-Language Verification**: Syntax check after writing Python, JS, TS, Rust, Java, Ruby, C++ files
+- **Search Fusion Optimization**: Capped at 3 backends for regular search, 7 for deep research; smart routing by query type
+- **Search Backend Circuit Breakers**: Rate-limited backends automatically paused and retried later
+- **Backend Quality Metrics**: New `synroute search stats` command shows backend performance metrics
+
 ## v1.06 — Durable Execution + Provider Routing (2026-04-XX)
 
 ### New Features

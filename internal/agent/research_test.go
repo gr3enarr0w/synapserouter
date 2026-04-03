@@ -16,6 +16,7 @@ func (m *mockTagBackend) Name() string { return m.name }
 func (m *mockTagBackend) Search(ctx context.Context, query string, maxResults int) ([]tools.SearchResult, error) {
 	return nil, nil
 }
+func (m *mockTagBackend) CostTier() string { return "free" }
 
 func TestClassifyQuery_Code(t *testing.T) {
 	types := ClassifyQuery("fix the Go test function error")

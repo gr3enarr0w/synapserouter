@@ -79,10 +79,10 @@ Synapserouter supports any number of provider backends. Users configure which pr
 | Google | Vertex AI (Claude + Gemini), Gemini API | Implemented |
 | OpenAI-compatible | OpenAI, Codex, Azure OpenAI, any compatible endpoint | Implemented |
 | Anthropic | Claude API, Claude Code (OAuth) | Implemented |
+| OpenAI-compatible | Any endpoint: DeepSeek, Groq, xAI, Together, Fireworks, LM Studio, vLLM, etc. | Implemented (v1.06) |
 | OpenRouter | Any model on OpenRouter marketplace | Planned |
 | Red Hat AI | RHAI Inference / models.corp | Planned |
 | Amazon | Bedrock | Planned |
-| Custom | Any HTTP endpoint with OpenAI-compatible API (configurable base URL + API key) | Planned |
 
 **Escalation chain** is user-configured, not hardcoded. Users define their own levels based on available providers and budget. The product provides the escalation engine; the user provides the provider list.
 
@@ -108,6 +108,16 @@ Two independent database backends. User picks based on environment.
 | **PostgreSQL** | Multi-user, team, production, cloud. Connection pooling, concurrent writes. | Planned (#85) |
 
 ### Design Principles
+
+**User Experience**
+
+12. **The user comes first.** Every feature must be usable by someone who doesn't know what a provider chain, circuit breaker, or escalation level is. Complexity exists under the hood; the surface is simple. If a user has to read docs to complete a basic task, the UI failed.
+13. **Zero noise by default.** Internal logs (memory, routing, provider init, embeddings) never appear in the user's terminal. The user sees their question and the answer. Verbose mode exists for debugging, but the default is clean.
+14. **Show state, not mechanics.** The user should always know: what model is active, what the agent is doing, how long it's been working, and how to cancel. They should never see which provider index was selected or how many tokens were embedded.
+15. **Progressive disclosure.** First-time users see tips, trust dialogs, and suggested prompts. Experienced users see a clean prompt. Power users access internals via flags and slash commands. Each layer is opt-in.
+16. **Accessibility is not optional.** `NO_COLOR`, screen reader mode, color blindness presets, and keyboard-only navigation are baseline requirements, not planned features. Never rely on color alone — always pair with symbols or text.
+
+**Architecture**
 
 1. **The router IS the escalation.** One system routes requests. No parallel escalation mechanisms.
 2. **Frontier talks, cheap models work.** Three model tiers (cheap/mid/frontier) auto-classified from OLLAMA_CHAIN position. The frontier model handles user conversation and planning. Mid-tier handles reviews and complex fixes. Cheap models handle code generation and builds via sub-agents.
@@ -1099,6 +1109,12 @@ synroute models                            # List available models
 synroute version                           # Show version info
 synroute mcp-serve                         # Start standalone MCP server
 synroute mcp-serve --addr :9090            # Custom port
+synroute recommend                         # Model tier recommendations
+synroute recommend --json                  # JSON output
+synroute config show                       # Show current tier config
+synroute config generate                   # Generate YAML from OLLAMA_CHAIN
+synroute tasks                             # List background tasks
+synroute code --background --message "fix" # Run in background, create PR
 ```
 
 #### Eval Commands
@@ -1169,7 +1185,126 @@ Each command persists state via project_continuity so the next command picks up 
 - Binary file detection (null bytes, non-printable characters)
 - Remaining (planned): image base64 encoding, PDF text extraction, URL attachment
 
-### 4.6 CLI Color System (Planned, #231)
+### 4.6 First-Run Experience
+
+First-time users should feel like they're setting up an Apple product — guided, personal, and complete in under 2 minutes. The tool asks who you are, what you do, and configures itself.
+
+#### Setup Wizard (`synroute setup`)
+
+Runs automatically on first launch (or manually via `synroute setup`).
+
+**Step 1: Who are you?**
+- Role selection: Developer, Data Scientist, DevOps, Security, ML Engineer, Student, Manager, Other
+- Experience level: New to coding, Intermediate, Senior, Staff+
+- This determines: default skills loaded, prompt style, verbosity level, suggested slash commands
+
+**Step 2: What do you work on?**
+- Language/framework selection (multi-select): Go, Python, JavaScript/TypeScript, Rust, Java, Ruby, C++, R, SQL, Other
+- Project types: Web apps, APIs, Data pipelines, ML/AI, Infrastructure, Mobile, CLI tools, Research
+- This determines: which language skills are prioritized, environment detection hints, default tool configs
+
+**Step 3: What tools does your team use?**
+- Source control: GitHub, GitLab, Bitbucket, Azure DevOps
+- Project management: Jira, Linear, GitHub Issues, Shortcut, None
+- Communication: Slack, Teams, Discord, None
+- CI/CD: GitHub Actions, Jenkins, GitLab CI, CircleCI, None
+- This determines: which MCP servers to suggest, which skills to activate, integration setup prompts
+
+**Step 4: Connect your providers**
+- Auto-detect: scan environment for API keys (OLLAMA_API_KEY, ANTHROPIC_API_KEY, GOOGLE_CLOUD_PROJECT, etc.)
+- For each detected provider: "Found Ollama Cloud key — add to your chain? [Y/n]"
+- For missing providers: "No LLM provider found. Choose: (1) Ollama Cloud, (2) OpenAI, (3) Google AI, (4) Azure, (5) Skip"
+- Guided key entry with links to signup pages
+- Store in `.env` or system keychain
+
+**Step 5: Connect your integrations**
+- Based on Step 3 answers, offer to set up:
+  - GitHub: `gh auth login` or paste token
+  - Jira: MCP server setup with project URL
+  - Slack: OAuth flow or webhook URL
+  - Each integration = install matching MCP + activate matching skill
+- "You can always add more later with `/integrations`"
+
+**Step 6: Review and launch**
+- Summary: "You're set up as a Senior Go Developer with Ollama Cloud + GitHub + Jira"
+- Show the tier config that was generated
+- "Type your first message or try: `Explain this codebase`"
+
+#### Company/Team Configuration
+
+If a company has pre-configured synroute (via `.synroute.yaml` in a repo or shared config):
+- Setup wizard detects it: "Your team has configured synroute for this project"
+- Shows what's pre-configured (providers, skills, MCP servers)
+- Asks only for personal settings (API keys, preferences)
+
+#### Trust Dialog
+
+On launch in any new directory (not just first run):
+- "Do you trust this folder?" with options: trust folder, trust parent, don't trust
+- Trusting loads `.synroute.yaml`, skills, hooks
+- Not trusting runs in restricted mode (read-only tools)
+- Reference: Gemini CLI, Claude Code
+
+#### Ongoing Tips
+- First 5 sessions: show contextual tips based on role
+- Suggested prompts in gray placeholder when input is empty
+- `/help` tailored to user's role and detected project type
+
+### 4.7 Thinking and Progress Indicators
+
+Users must always know the agent is working and how to stop it.
+
+- **Thinking spinner** with elapsed time: `⠋ Thinking... (esc to cancel, 4s)` (Reference: Gemini CLI)
+- **Window title updates** — dynamic title reflecting state: `Working... (project)` → `Ready (project)` (Reference: Gemini CLI)
+- **Streaming tokens** — character-by-character output with optional typing effect
+- **Tool call announcements** — `[tool_name] args_summary` displayed inline when a tool is invoked
+- **Tool results** — condensed by default, expandable on demand (Reference: Claude Code `ctrl+o to expand`)
+- **Phase transitions** — clear visual marker when pipeline advances: `── plan complete ── implement ──`
+- **Cancel** — `Esc` or `Ctrl+C` interrupts current operation immediately, returns to prompt
+
+### 4.8 Status Bar
+
+Persistent bottom status bar showing context at a glance. Always visible.
+
+| Element | Example | Position |
+|---------|---------|----------|
+| Workspace | `~/Development/synapserouter` | Left |
+| Git branch | `main` | Center-left |
+| Sandbox status | `sandboxed` or `no sandbox` | Center |
+| Active model | `Auto (qwen3.5:397b)` | Center-right |
+| Provider/tier | `frontier` | Right |
+| Budget remaining | `93% left` | Right (if budget set) |
+
+Reference: Codex CLI (`gpt-5.4 default · 93% left · ~/Development/synapserouter`), Gemini CLI (`workspace | branch | sandbox | /model`)
+
+### 4.9 Input Experience
+
+- **Multi-line input** — `Shift+Enter` or `\` at end of line for continuation
+- **Tab completion** — for file paths (`@` prefix), slash commands, model names
+- **Command history** — arrow keys navigate previous inputs, persisted across sessions
+- **Input placeholder** — `> Type your message or @path/to/file` (Reference: Gemini CLI)
+- **Edit acceptance** — `Shift+Tab` to accept proposed edits (Reference: Gemini CLI)
+
+### 4.10 Session Management
+
+- `/sessions` — list recent sessions with project, date, status
+- `/sessions switch <id>` — switch to a different session
+- `/sessions delete <id>` — delete a session
+- `--resume` — resume most recent session (implemented)
+- `--session <id>` — resume specific session (implemented)
+- Sessions display: project name, last message preview, date, phase reached
+
+### 4.11 Multi-Agent Visibility
+
+When sub-agents run (scope decomposition, parallel review), the user should see:
+
+- **Agent count** — `3 agents working` in status bar
+- **Agent list** — `/agents` shows each agent's task, status, elapsed time
+- **Completion notifications** — `Agent 2/3 complete: implemented auth module`
+- **Error surfacing** — if an agent fails, show the error inline, not buried in logs
+- **Future: dashboard view** — `Ctrl+D` toggles a split-pane dashboard showing all agents (CLI now, GUI later). Architecture should use EventBus so the same events can render in terminal, web, or mobile. (Reference: JetBrains Air agent panel)
+
+### 4.12 CLI Color System (Planned, #231)
 
 Semantic color mapping for REPL elements:
 
@@ -1194,7 +1329,7 @@ Semantic color mapping for REPL elements:
 - Respects `NO_COLOR` env var (https://no-color.org/)
 - Per-element overrides via env vars (`CLI_COLOR_AGENT=cyan`)
 
-### 4.7 CLI Terminal UI (Epic #304)
+### 4.13 CLI Terminal UI (Epic #304)
 
 **Code mode** (implemented, `synroute code`):
 - Status bar: project name, current pipeline phase, active model, elapsed time
@@ -1205,11 +1340,38 @@ Semantic color mapping for REPL elements:
 - `NO_COLOR` env var support
 - Implemented in `internal/agent/coderenderer.go`, `coderepl.go`, `terminal.go`, `commands_code.go`
 
-**Remaining work:**
+**v1.06 additions:**
+- Background execution: `--background` flag, `synroute tasks` status command
+- Durable execution: checkpoint after every tool call, `--resume` from crash
+- Generic OpenAI-compatible provider: configurable N endpoints via YAML
+- Provider-aware YAML tier routing: models route to correct provider by name
+
+**v1.07 additions:**
+- Scope decomposition: plan outputs task graph, parallel sub-agents in worktrees
+- OS sandbox: Seatbelt (macOS) + Bubblewrap (Linux) for bash tool
+- Multi-user prep: tenant-scoped DB with user_id column
+
+**v1.08 work (UI + UX):**
+- Suppress all internal logging in user-facing modes (Principle 13: zero noise)
+- Implement status bar (Section 4.8)
+- Implement thinking/progress indicators (Section 4.7)
+- First-run experience with trust dialog (Section 4.6)
 - Semantic color system with accessibility presets (#266)
 - Streaming output with tool call visualization (#267)
-- Session management commands (#268)
+- Session management commands (#268, Section 4.10)
 - Phase progress indicators (#269)
+- Input experience: tab completion, multi-line, history (Section 4.9)
+- Multi-agent visibility (Section 4.11)
+
+### 4.14 CLI-to-GUI Architecture
+
+The CLI is the primary interface. But the architecture should enable future surfaces (web dashboard, desktop app, mobile) without rewriting the core.
+
+**Principles:**
+- **EventBus is the bridge** — every user-visible event (tool call, phase change, agent spawn, error) goes through EventBus. The CLI renderer consumes events. A future web renderer consumes the same events over WebSocket.
+- **API-first** — every CLI command has an equivalent HTTP API endpoint. `synroute tasks` = `GET /v1/tasks`. This enables any frontend.
+- **State in DB, not in memory** — sessions, tasks, agent state persisted to SQLite/PostgreSQL. Any client can query current state.
+- **No CLI-specific business logic** — the CLI is a thin renderer over the agent loop. Moving to a web UI should require zero changes to `internal/agent/`, `internal/router/`, or `internal/tools/`.
 
 ---
 

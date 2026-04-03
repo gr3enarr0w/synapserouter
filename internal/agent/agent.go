@@ -1250,6 +1250,11 @@ func (a *Agent) buildMessages() []providers.Message {
 			sysPrompt += "\n\n# Project Instructions\n" + projectInstr
 		}
 
+		// Inject Go module path for import guidance
+		if modulePath := LoadModulePath(a.config.WorkDir); modulePath != "" {
+			sysPrompt += fmt.Sprintf("\n\n# Go Module Information\nThis Go project uses module %s. All imports must use this exact module path.", modulePath)
+		}
+
 		// Inject matched skill instructions (reference patterns, not overrides)
 		if skillCtx := a.matchedSkillContext(); skillCtx != "" {
 			sysPrompt += "\n\n" + skillCtx
