@@ -18,6 +18,7 @@ import (
 	"github.com/gr3enarr0w/synapserouter/internal/providers"
 	"github.com/gr3enarr0w/synapserouter/internal/router"
 	"github.com/gr3enarr0w/synapserouter/internal/subscriptions"
+	"github.com/gr3enarr0w/synapserouter/internal/tasks"
 	"github.com/gr3enarr0w/synapserouter/internal/usage"
 )
 
@@ -29,6 +30,7 @@ type AppContext struct {
 	Providers       []providers.Provider
 	ProxyRouter     *router.Router
 	EscalationChain []agent.EscalationLevel
+	TaskManager     *tasks.Manager
 	Profile         string
 	Port            string
 }
@@ -86,7 +88,11 @@ func InitLight(ctx context.Context) (*AppContext, error) {
 
 	vm := memory.NewVectorMemory(db)
 	providerList := initializeProviders(profile)
-	escalationChain := buildEscalationChain(profile)
+	escalationChain := buildEscalationChain(profile, providerList)
+	taskMgr := tasks.NewManager(db)
+	if err := taskMgr.Init(); err != nil {
+		log.Printf("Warning: failed to initialize task manager: %v", err)
+	}
 
 	return &AppContext{
 		DB:              db,
@@ -94,6 +100,7 @@ func InitLight(ctx context.Context) (*AppContext, error) {
 		VectorMemory:    vm,
 		Providers:       providerList,
 		EscalationChain: escalationChain,
+		TaskManager:     taskMgr,
 		Profile:         profile,
 		Port:            port,
 	}, nil
@@ -144,7 +151,7 @@ func RunEmbeddedMigrations(db *sql.DB, fs embed.FS) error {
 // Close releases resources.
 func (ac *AppContext) Close() {
 	if ac.UsageTracker != nil {
-		ac.UsageTracker.Close()
+		_ = ac.UsageTracker.Close()
 	}
 	if ac.DB != nil {
 		ac.DB.Close()
@@ -181,7 +188,7 @@ func initializeProviders(profile string) []providers.Provider {
 				keyIdx++
 				providerList = append(providerList,
 					providers.NewOllamaCloudProvider(ollamaBaseURL, apiKey, model, m.name))
-				log.Printf("✓ %s provider initialized (model=%s, key=%d/%d)", m.name, model, (keyIdx-1)%len(apiKeys)+1, len(apiKeys))
+				log.Printf("✓ %s provider initialized (model=%s, key=%d/%d)", m.name, model, (keyIdx-1)%len(apiKeys)+1, len(apiKeys)) //nolint:G706 // values from env vars, not user input
 				registered++
 			}
 
@@ -208,7 +215,7 @@ func initializeProviders(profile string) []providers.Provider {
 				if ollamaModel != "" {
 					providerList = append(providerList,
 						providers.NewOllamaCloudProvider(ollamaBaseURL, apiKeys[0], ollamaModel, "ollama-cloud"))
-					log.Printf("✓ ollama-cloud provider initialized (model=%s)", ollamaModel)
+					log.Printf("✓ ollama-cloud provider initialized (model=%s)", ollamaModel) //nolint:G706 // value from OLLAMA_MODEL env var, not user input
 				}
 			}
 
@@ -220,6 +227,19 @@ func initializeProviders(profile string) []providers.Provider {
 		// Subscription providers (gemini, codex, claude-code) — disable with SUBSCRIPTIONS_DISABLED=true
 		if os.Getenv("SUBSCRIPTIONS_DISABLED") != "true" {
 			providerList = append(providerList, initializePersonalProviders()...)
+		}
+
+		// OpenAI-compatible providers from YAML config
+		if tc, err := LoadTierConfig(); err == nil && tc != nil {
+			for _, cfg := range tc.OpenAICompatProviders {
+				if os.Getenv(cfg.APIKeyEnv) == "" {
+					log.Printf("[Config] skipping %s provider — %s not set", cfg.Name, cfg.APIKeyEnv)
+					continue
+				}
+				p := providers.NewOpenAICompatProvider(cfg)
+				providerList = append(providerList, p)
+				log.Printf("✓ %s provider initialized (model=%s, url=%s)", cfg.Name, cfg.DefaultModel, cfg.BaseURL)
+			}
 		}
 	}
 
@@ -255,9 +275,7 @@ func initializePersonalProviders() []providers.Provider {
 		log.Printf("Warning: failed to init subscription providers: %v", err)
 		return providerList
 	}
-	for _, p := range sps {
-		providerList = append(providerList, p)
-	}
+	providerList = append(providerList, sps...)
 	return providerList
 }
 
@@ -394,7 +412,7 @@ func buildWorkEscalationChain() []agent.EscalationLevel {
 	return chain
 }
 
-func buildEscalationChain(profile string) []agent.EscalationLevel {
+func buildEscalationChain(profile string, providerList []providers.Provider) []agent.EscalationLevel {
 	var chain []agent.EscalationLevel
 
 	// Work profile: Vertex AI escalation chain (Claude + Gemini per level)
@@ -410,6 +428,8 @@ func buildEscalationChain(profile string) []agent.EscalationLevel {
 			for _, w := range warnings {
 				log.Printf("[Config] warning: %s", w)
 			}
+			// Map model names in YAML to registered provider names
+			resolveYAMLProviders(yamlChain, providerList)
 			log.Printf("[Config] using YAML tier config (%d levels)", len(yamlChain))
 			return yamlChain
 		}
@@ -469,6 +489,77 @@ func buildEscalationChain(profile string) []agent.EscalationLevel {
 	log.Printf("[Agent] escalation chain (%d levels): %s", len(chain), strings.Join(names, " → "))
 
 	return chain
+}
+
+// ModelNamer is an optional interface for providers that expose their default model name.
+type ModelNamer interface {
+	DefaultModel() string
+}
+
+// resolveYAMLProviders maps model names in YAML tier config to registered provider names.
+// For each model name in the chain, finds the provider whose default model matches,
+// and replaces the model name with the provider name.
+func resolveYAMLProviders(chain []agent.EscalationLevel, providerList []providers.Provider) {
+	for i := range chain {
+		resolved := make([]string, 0, len(chain[i].Providers))
+		for _, modelName := range chain[i].Providers {
+			providerName := ""
+			// Step 1: Pattern matching for subscription providers (before generic matching)
+			modelLower := strings.ToLower(modelName)
+			if providerName == "" {
+				for _, p := range providerList {
+					switch p.Name() {
+					case "anthropic":
+						if strings.Contains(modelLower, "claude") {
+							providerName = "anthropic"
+						}
+					case "openai":
+						if strings.Contains(modelLower, "gpt") || strings.Contains(modelLower, "chatgpt") || strings.Contains(modelLower, "o1") || strings.Contains(modelLower, "o3") {
+							providerName = "openai"
+						}
+					case "codex":
+						if strings.Contains(modelLower, "gpt") || strings.Contains(modelLower, "chatgpt") || strings.Contains(modelLower, "o1") || strings.Contains(modelLower, "o3") || strings.Contains(modelLower, "codex") {
+							providerName = "codex"
+						}
+					case "gemini":
+						if strings.Contains(modelLower, "gemini") {
+							providerName = "gemini"
+						}
+					}
+					if providerName != "" {
+						break
+					}
+				}
+			}
+			// Step 2: Try exact model match via ModelNamer interface
+			if providerName == "" {
+				for _, p := range providerList {
+					if mn, ok := p.(ModelNamer); ok {
+						if strings.EqualFold(mn.DefaultModel(), modelName) {
+							providerName = p.Name()
+							break
+						}
+					}
+				}
+			}
+			// Step 3: Fallback: try SupportsModel
+			if providerName == "" {
+				for _, p := range providerList {
+					if p.SupportsModel(modelName) {
+						providerName = p.Name()
+						break
+					}
+				}
+			}
+			if providerName != "" {
+				resolved = append(resolved, providerName)
+				log.Printf("[Config] tier model %s → provider %s", modelName, providerName)
+			} else {
+				log.Printf("[Config] warning: no provider found for model %s — skipping", modelName)
+			}
+		}
+		chain[i].Providers = resolved
+	}
 }
 
 // parseChainTiers parses OLLAMA_CHAIN_TIERS env var.
@@ -584,7 +675,7 @@ func LoadDotEnv() error {
 	// 3. User config directory
 	userEnv := filepath.Join(home, ".mcp", "synapse", ".env")
 	if _, err := os.Stat(userEnv); err == nil {
-		godotenv.Load(userEnv) // merge, don't overwrite
+		_ = godotenv.Load(userEnv) // merge, don't overwrite
 		loaded = true
 	}
 

@@ -172,8 +172,12 @@ func TestCountExercises(t *testing.T) {
 	db := newTestDB(t)
 	store := NewStore(db)
 
-	store.UpsertExercise(Exercise{ID: "a/go/1", Suite: "a", Language: "go", Slug: "1", Instructions: "x", TestFile: "t", TestCommand: "go test", DockerImage: "golang:1.22"})
-	store.UpsertExercise(Exercise{ID: "a/py/1", Suite: "a", Language: "python", Slug: "1", Instructions: "x", TestFile: "t", TestCommand: "pytest", DockerImage: "python:3.12"})
+	if err := store.UpsertExercise(Exercise{ID: "a/go/1", Suite: "a", Language: "go", Slug: "1", Instructions: "x", TestFile: "t", TestCommand: "go test", DockerImage: "golang:1.22"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertExercise(Exercise{ID: "a/py/1", Suite: "a", Language: "python", Slug: "1", Instructions: "x", TestFile: "t", TestCommand: "pytest", DockerImage: "python:3.12"}); err != nil {
+		t.Fatal(err)
+	}
 
 	count, err := store.CountExercises("", "")
 	if err != nil {
@@ -241,12 +245,14 @@ func TestListRuns(t *testing.T) {
 	store := NewStore(db)
 
 	for i := 0; i < 3; i++ {
-		store.CreateRun(EvalRun{
+		if err := store.CreateRun(EvalRun{
 			ID:        fmt.Sprintf("run-%d", i),
 			Config:    EvalRunConfig{Count: i},
 			Status:    "completed",
 			StartedAt: time.Now().Add(time.Duration(i) * time.Second),
-		})
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	runs, err := store.ListRuns(2)

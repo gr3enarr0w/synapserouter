@@ -71,7 +71,9 @@ func TestConnectAndDiscoverTools(t *testing.T) {
 	defer server.Close()
 
 	client := NewMCPClient()
-	client.AddServer("test-server", server.URL, "")
+	if err := client.AddServer("test-server", server.URL, ""); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -91,10 +93,14 @@ func TestCallTool(t *testing.T) {
 	defer server.Close()
 
 	client := NewMCPClient()
-	client.AddServer("test-server", server.URL, "")
+	if err := client.AddServer("test-server", server.URL, ""); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx := context.Background()
-	client.Connect(ctx, "test-server")
+	if err := client.Connect(ctx, "test-server"); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := client.CallTool(ctx, ToolCall{
 		ToolName:  "test-server.bash",
@@ -121,8 +127,12 @@ func TestConnectAll(t *testing.T) {
 	defer server.Close()
 
 	client := NewMCPClient()
-	client.AddServer("s1", server.URL, "")
-	client.AddServer("s2", "http://localhost:1", "") // will fail
+	if err := client.AddServer("s1", server.URL, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.AddServer("s2", "http://localhost:1", ""); err != nil {
+		t.Fatal(err)
+	} // s2 will fail to connect
 
 	ctx := context.Background()
 	client.ConnectAll(ctx, 0)
@@ -141,14 +151,18 @@ func TestDisconnect(t *testing.T) {
 	defer server.Close()
 
 	client := NewMCPClient()
-	client.AddServer("test-server", server.URL, "")
-	client.Connect(context.Background(), "test-server")
+	if err := client.AddServer("test-server", server.URL, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Connect(context.Background(), "test-server"); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(client.ListTools()) == 0 {
 		t.Fatal("should have tools after connect")
 	}
 
-	client.Disconnect("test-server")
+	_ = client.Disconnect("test-server") // intentionally ignoring disconnect error in test
 	if len(client.ListTools()) != 0 {
 		t.Fatal("should have no tools after disconnect")
 	}
@@ -159,8 +173,12 @@ func TestHealthCheck(t *testing.T) {
 	defer server.Close()
 
 	client := NewMCPClient()
-	client.AddServer("healthy", server.URL, "")
-	client.AddServer("unhealthy", "http://localhost:1", "")
+	if err := client.AddServer("healthy", server.URL, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.AddServer("unhealthy", "http://localhost:1", ""); err != nil {
+		t.Fatal(err)
+	}
 
 	health := client.HealthCheck(context.Background())
 	if !health["healthy"] {
@@ -173,8 +191,8 @@ func TestHealthCheck(t *testing.T) {
 
 func TestServerNames(t *testing.T) {
 	client := NewMCPClient()
-	client.AddServer("a", "http://a", "")
-	client.AddServer("b", "http://b", "")
+	_ = client.AddServer("a", "http://a", "")
+	_ = client.AddServer("b", "http://b", "")
 
 	names := client.ServerNames()
 	if len(names) != 2 {

@@ -85,7 +85,7 @@ func (c *MCPConfig) RemoveServerConfig(name string) bool {
 func NewClientFromConfig(cfg *MCPConfig) *MCPClient {
 	client := NewMCPClient()
 	for _, s := range cfg.Servers {
-		client.AddServer(s.Name, s.URL, s.APIKey)
+		_ = client.AddServer(s.Name, s.URL, s.APIKey)
 	}
 	return client
 }

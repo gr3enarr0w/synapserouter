@@ -22,6 +22,7 @@ import (
 	"github.com/gr3enarr0w/synapserouter/internal/environment"
 	"github.com/gr3enarr0w/synapserouter/internal/mcp"
 	"github.com/gr3enarr0w/synapserouter/internal/mcpserver"
+	"github.com/gr3enarr0w/synapserouter/internal/tasks"
 	"github.com/gr3enarr0w/synapserouter/internal/tools"
 	"github.com/gr3enarr0w/synapserouter/internal/worktree"
 )
@@ -547,6 +548,7 @@ func stringVal(m map[string]interface{}, key string) string {
 func cmdChat(args []string) {
 	fs := flag.NewFlagSet("chat", flag.ExitOnError)
 	model := fs.String("model", "auto", "Model to use")
+	background := fs.Bool("background", false, "Run agent in background and return task ID")
 	message := fs.String("message", "", "One-shot message (non-interactive)")
 	specFile := fs.String("spec-file", "", "Read spec from file and use as message (prepends 'Implement the following specification:')")
 	system := fs.String("system", "", "Custom system prompt")
@@ -732,6 +734,63 @@ func cmdChat(args []string) {
 				message = &composed
 			}
 		}
+
+		// Background mode: create task, run in goroutine, return task ID
+		if *background {
+			taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
+			worktreePath := cwd
+			if wt != nil {
+				worktreePath = wt.Path
+			}
+
+			// Create task record
+			_, err := ac.TaskManager.CreateTask(taskID, worktreePath, *message)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating task: %v\n", err)
+				os.Exit(1)
+			}
+
+			// Update status to running
+			if err := ac.TaskManager.UpdateTask(taskID, tasks.StatusRunning, "", ""); err != nil {
+				log.Printf("Warning: failed to update task status: %v", err)
+			}
+
+			// Run agent in background goroutine
+			go func() {
+				msg := *message
+				response, err := agent.RunOneShot(ctx, ac.ProxyRouter, registry, config, msg)
+				if err != nil {
+					ac.TaskManager.UpdateTask(taskID, tasks.StatusFailed, "", err.Error())
+					log.Printf("Background task %s failed: %v", taskID, err)
+					return
+				}
+
+				// Create PR if worktree exists
+				prURL := ""
+				if wt != nil {
+					cmd := exec.Command("gh", "pr", "create",
+						"--title", fmt.Sprintf("Agent task: %s", taskID),
+						"--body", response,
+						"--base", "main")
+					cmd.Dir = wt.Path
+					output, err := cmd.CombinedOutput()
+					if err != nil {
+						log.Printf("Warning: gh pr create failed: %v - %s", err, output)
+					} else {
+						prURL = strings.TrimSpace(string(output))
+					}
+				}
+
+				ac.TaskManager.UpdateTask(taskID, tasks.StatusCompleted, prURL, "")
+				log.Printf("Background task %s completed", taskID)
+			}()
+
+			fmt.Printf("Task started: %s\n", taskID)
+			fmt.Printf("Worktree: %s\n", worktreePath)
+			fmt.Println("Run 'synroute tasks' to check status")
+			return
+		}
+
 		// One-shot mode: work in the current directory so created files persist.
 		response, err := agent.RunOneShot(ctx, ac.ProxyRouter, registry, config, *message)
 		if err != nil {
@@ -938,6 +997,78 @@ func cmdWorktree(args []string) {
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown worktree subcommand: %s\nUsage: synroute worktree <list|delete> [id]\n", args[0])
 		os.Exit(1)
+	}
+}
+
+// cmdTasks shows status of background tasks
+// Usage: synroute tasks [options]
+//
+//	Options:
+//	  --status <pending|running|completed|failed>  Filter by status
+//	  --id <task-id>                               Show single task details
+//	  --json                                       Output as JSON
+func cmdTasks(args []string) {
+	fs := flag.NewFlagSet("tasks", flag.ExitOnError)
+	status := fs.String("status", "", "Filter by status (pending, running, completed, failed)")
+	taskID := fs.String("id", "", "Show single task by ID")
+	jsonOut := fs.Bool("json", false, "Output as JSON")
+	fs.Parse(args)
+
+	ac, err := app.InitLight(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing: %v\n", err)
+		os.Exit(1)
+	}
+	defer ac.Close()
+
+	var taskStatus tasks.TaskStatus
+	if *status != "" {
+		taskStatus = tasks.TaskStatus(*status)
+	}
+
+	var tasksList []*tasks.BackgroundTask
+	if *taskID != "" {
+		task, err := ac.TaskManager.GetTask(*taskID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: task not found: %s\n", *taskID)
+			os.Exit(1)
+		}
+		tasksList = []*tasks.BackgroundTask{task}
+	} else {
+		tasksList, err = ac.TaskManager.GetTasks(taskStatus)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error fetching tasks: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(tasksList)
+		return
+	}
+
+	if len(tasksList) == 0 {
+		fmt.Println("No background tasks found.")
+		return
+	}
+
+	fmt.Printf("%-20s %-10s %-40s %-25s %-25s %s\n",
+		"ID", "STATUS", "WORKTREE", "STARTED", "ENDED", "PR URL")
+	fmt.Println(strings.Repeat("-", 130))
+	for _, task := range tasksList {
+		endTime := "running"
+		if task.EndTime.Valid {
+			endTime = task.EndTime.Time.Format("2006-01-02 15:04:05")
+		}
+		prURL := "-"
+		if task.PRURL.Valid {
+			prURL = task.PRURL.String
+		}
+		fmt.Printf("%-20s %-10s %-40s %-25s %-25s %s\n",
+			task.ID, task.Status, task.WorktreePath,
+			task.StartTime.Format("2006-01-02 15:04:05"), endTime, prURL)
 	}
 }
 

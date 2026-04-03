@@ -268,6 +268,11 @@ func normalizeOllamaToolCalls(raw []byte, resp *ChatResponse) {
 	}
 }
 
+// DefaultModel returns the model this provider was configured with.
+func (p *OllamaCloudProvider) DefaultModel() string {
+	return p.model
+}
+
 func (p *OllamaCloudProvider) SupportsModel(model string) bool {
 	if model == "" || strings.EqualFold(model, "auto") {
 		return true // Ollama Cloud handles auto routing

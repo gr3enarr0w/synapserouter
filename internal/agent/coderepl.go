@@ -34,15 +34,6 @@ func NewCodeREPL(agent *Agent, renderer *CodeRenderer, _ *Terminal) *CodeREPL {
 	}
 }
 
-// slashCommands returns the list of available slash commands for tab completion.
-func slashCommands() []string {
-	return []string{
-		"/plan", "/review", "/check", "/fix", "/research", "/help",
-		"/exit", "/clear", "/model", "/tools", "/history",
-		"/agents", "/budget",
-	}
-}
-
 // Run starts the code mode REPL. Blocks until exit.
 func (cr *CodeREPL) Run(ctx context.Context) error {
 	// Initialize the screen layout (prints launch banner)
@@ -105,7 +96,7 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 
 	// Put terminal in raw mode for character-at-a-time input (keyboard shortcuts).
 	// Raw mode lets us intercept Ctrl-L, Ctrl-P, etc. before the terminal processes them.
-	stdinFd := int(os.Stdin.Fd())
+	stdinFd := int(os.Stdin.Fd()) //nolint:G115 // os.Stdin.Fd() always fits in int on supported platforms
 	isTerminal := term.IsTerminal(stdinFd)
 
 	var restoreTerminal func()
@@ -115,7 +106,7 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 			log.Printf("[REPL] failed to enter raw mode: %v — falling back to cooked mode", err)
 			isTerminal = false
 		} else {
-			restoreTerminal = func() { term.Restore(stdinFd, oldState) }
+			restoreTerminal = func() { _ = term.Restore(stdinFd, oldState) }
 			defer restoreTerminal()
 		}
 	}
@@ -207,7 +198,7 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 			// Re-enter raw mode
 			if isTerminal {
 				if oldState, err := term.MakeRaw(stdinFd); err == nil {
-					restoreTerminal = func() { term.Restore(stdinFd, oldState) }
+					restoreTerminal = func() { _ = term.Restore(stdinFd, oldState) }
 				}
 			}
 			continue
@@ -233,7 +224,7 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 				// Re-enter raw mode before next prompt
 				if isTerminal {
 					if oldState, err := term.MakeRaw(stdinFd); err == nil {
-						restoreTerminal = func() { term.Restore(stdinFd, oldState) }
+						restoreTerminal = func() { _ = term.Restore(stdinFd, oldState) }
 					}
 				}
 				continue
@@ -265,7 +256,7 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		// Re-enter raw mode for next prompt
 		if isTerminal {
 			if oldState, err := term.MakeRaw(stdinFd); err == nil {
-				restoreTerminal = func() { term.Restore(stdinFd, oldState) }
+				restoreTerminal = func() { _ = term.Restore(stdinFd, oldState) }
 			}
 		}
 	}
@@ -443,7 +434,7 @@ func (cr *CodeREPL) readLine(fd int, isRaw bool, exitCh chan struct{}, reqMu *sy
 		case b == 0x1B: // ESC — start of escape sequence, consume and ignore
 			// Read the rest of the escape sequence (e.g. arrow keys: ESC [ A)
 			seq := make([]byte, 2)
-			os.Stdin.Read(seq) // ignore arrow keys for now
+			_, _ = os.Stdin.Read(seq) // ignore arrow keys for now
 
 		case b >= 0x20 && b < 0x7F: // Printable ASCII
 			lineBuf = append(lineBuf, b)

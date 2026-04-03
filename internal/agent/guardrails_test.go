@@ -77,8 +77,8 @@ func TestGuardrailChainAdd(t *testing.T) {
 	chain := NewGuardrailChain()
 	chain.Add(&MaxLengthGuardrail{MaxChars: 5})
 
-	if result := chain.Validate("toolong"); !result.Passed {
-		// length 7 > 5, should fail
+	if result := chain.Validate("toolong"); result.Passed {
+		t.Error("length 7 > 5 should fail")
 	}
 	if result := chain.Validate("ok"); !result.Passed {
 		t.Error("short content should pass")

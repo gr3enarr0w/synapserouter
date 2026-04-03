@@ -75,7 +75,7 @@ func Connect(config *Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to ping MySQL: %w", err)
 	}
 
-	log.Printf("Successfully connected to MySQL database: %s", config.Database)
+	log.Printf("Successfully connected to MySQL database: %s", config.Database) //nolint:G706 // database name from server config, not user input
 	return db, nil
 }
 

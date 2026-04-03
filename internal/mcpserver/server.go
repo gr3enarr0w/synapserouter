@@ -68,15 +68,16 @@ func (s *Server) Handler() *Handler {
 // Serve starts a standalone MCP HTTP server.
 func (s *Server) Serve(ctx context.Context, addr string) error {
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: s.Routes(),
+		Addr:              addr,
+		Handler:           s.Routes(),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	go func() {
+	go func() { //nolint:G118 // graceful shutdown goroutine, bounded by context
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		srv.Shutdown(shutdownCtx)
+		_ = srv.Shutdown(shutdownCtx)
 	}()
 
 	return srv.ListenAndServe()

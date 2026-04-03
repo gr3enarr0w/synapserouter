@@ -104,6 +104,8 @@ func main() {
 			cmdMCPServe(os.Args[2:])
 		case "worktree":
 			cmdWorktree(os.Args[2:])
+		case "tasks":
+			cmdTasks(os.Args[2:])
 		case "auth":
 			cmdAuth(os.Args[2:])
 		case "version":

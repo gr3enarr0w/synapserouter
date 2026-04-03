@@ -84,13 +84,6 @@ func (cr *CodeRenderer) SetVersion(v string) {
 
 // ANSI helpers — return empty strings when NO_COLOR is set.
 
-func (cr *CodeRenderer) ansi(code string) string {
-	if cr.noColor {
-		return ""
-	}
-	return code
-}
-
 func (cr *CodeRenderer) color(code, text string) string {
 	if cr.noColor {
 		return text
@@ -396,7 +389,7 @@ func (cr *CodeRenderer) ShowPipeline() {
 		cr.writeContent("  No pipeline active")
 	} else {
 		for i := 0; i < cr.phaseCount; i++ {
-			marker := "  "
+			var marker string
 			if i < cr.phaseIdx {
 				marker = cr.color("\033[32m", "  done ")
 			} else if i == cr.phaseIdx {
@@ -484,51 +477,6 @@ func (cr *CodeRenderer) SetVerbosity(level int) {
 	names := []string{"compact", "normal", "verbose"}
 	name := names[level%3]
 	cr.writeContent(cr.color("\033[33m", fmt.Sprintf("  verbosity: %s", name)))
-}
-
-// --- Utility ---
-
-// visibleLen estimates the visible length of a string with ANSI codes.
-func (cr *CodeRenderer) visibleLen(s string) int {
-	inEscape := false
-	visible := 0
-	for _, r := range s {
-		if r == '\033' {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				inEscape = false
-			}
-			continue
-		}
-		visible++
-	}
-	return visible
-}
-
-// truncate cuts a string to maxVisible visible characters, preserving ANSI codes.
-func (cr *CodeRenderer) truncate(s string, maxVisible int) string {
-	inEscape := false
-	visible := 0
-	for i, r := range s {
-		if r == '\033' {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				inEscape = false
-			}
-			continue
-		}
-		visible++
-		if visible >= maxVisible {
-			return s[:i+1]
-		}
-	}
-	return s
 }
 
 // Cleanup is a no-op — no scroll regions to restore.

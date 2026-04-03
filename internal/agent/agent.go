@@ -11,12 +11,10 @@ import (
 	"io/fs"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gr3enarr0w/synapserouter/internal/environment"
@@ -104,6 +102,9 @@ type Agent struct {
 	toolFingerprints   []string // sliding window of recent tool call fingerprints (loop detection)
 	loopWarningCount   int      // consecutive loop warnings without resolution (escalation trigger)
 	exhaustionRedirects int     // how many times we've hit chain-exhausted redirect (cap at 3)
+
+	// Durable execution — checkpoint state
+	toolCallLog []string // IDs of completed tool calls for resume
 
 	// Context retrieval after compaction
 	hasCompacted bool // set true after compactConversation; triggers auto-context injection
@@ -485,7 +486,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 					// Store to cache on miss
 					if !cacheHit && a.config.PlanCache != nil && a.originalRequest != "" {
 						key := ExtractCacheKey(a.originalRequest)
-						a.config.PlanCache.Store(key, a.config.Model, a.originalRequest, planResult)
+						_ = a.config.PlanCache.Store(key, a.config.Model, a.originalRequest, planResult)
 					}
 				}
 				// Advance past the plan phase
@@ -1119,7 +1120,6 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 
 		// Summarize large tool outputs and store full output in DB.
 		// Small outputs (<2KB) are kept verbatim in conversation.
-		conversationContent := resultContent
 		exitCode := 0
 		if result != nil {
 			exitCode = result.ExitCode
@@ -1145,6 +1145,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		}
 
 		// Summarize large outputs for conversation context; keep small outputs verbatim.
+		var conversationContent string
 		if ShouldSummarize(name, resultContent) {
 			summary := SummarizeToolOutput(name, args, resultContent, exitCode)
 			if storedOutputID > 0 {
@@ -1861,7 +1862,7 @@ func (a *Agent) advancePipeline(content string) bool {
 			// Cache the plan for reuse in future similar tasks
 			if a.config.PlanCache != nil && a.originalRequest != "" {
 				key := ExtractCacheKey(a.originalRequest)
-				a.config.PlanCache.Store(key, a.config.Model, a.originalRequest, content)
+				_ = a.config.PlanCache.Store(key, a.config.Model, a.originalRequest, content)
 			}
 		}
 
@@ -2731,41 +2732,6 @@ func (a *Agent) selectReviewerProvider(reviewerIdx, k int) string {
 		return ""
 	}
 	return levelProviders[reviewerIdx%len(levelProviders)]
-}
-
-// getChangedFiles returns a list of files changed in the working directory
-// (via git diff or staged changes).
-func (a *Agent) getChangedFiles() []string {
-	workDir := a.config.WorkDir
-	if workDir == "" {
-		workDir = "."
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", "HEAD")
-	cmd.Dir = workDir
-	out, err := cmd.Output()
-	if err != nil {
-		// Fallback to staged changes
-		cmd = exec.CommandContext(ctx, "git", "diff", "--name-only", "--cached")
-		cmd.Dir = workDir
-		out, err = cmd.Output()
-		if err != nil {
-			log.Printf("[Agent] K-LLM: could not get changed files (no git repo?): %v", err)
-			return nil
-		}
-	}
-
-	var files []string
-	for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		f = strings.TrimSpace(f)
-		if f != "" {
-			files = append(files, f)
-		}
-	}
-	return files
 }
 
 // runSingleReviewer runs one independent reviewer sub-agent (used when level has 1 provider).
@@ -3930,12 +3896,10 @@ func parseArguments(raw interface{}) map[string]interface{} {
 	return nil
 }
 
-var idCounter int64
-
 // copyDirContents copies files from src to dst, skipping .git and heavy directories.
 func copyDirContents(src, dst string) {
 	skipDirs := map[string]bool{".git": true, "node_modules": true, "vendor": true, "__pycache__": true, ".build": true, "target": true}
-	filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || path == src {
 			return nil
 		}
@@ -3956,7 +3920,7 @@ func copyDirContents(src, dst string) {
 			}
 			return nil
 		}
-		data, readErr := os.ReadFile(path)
+		data, readErr := os.ReadFile(path) //nolint:G122 // path from WalkDir on agent-controlled directories
 		if readErr != nil {
 			log.Printf("[Agent] copyDir: failed to read %s: %v", rel, readErr)
 			return nil
@@ -3973,7 +3937,7 @@ func copyDirContents(src, dst string) {
 func mergeParallelDir(subDir, parentDir string) {
 	cleanParent := filepath.Clean(parentDir) + string(os.PathSeparator)
 	merged := 0
-	filepath.WalkDir(subDir, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(subDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || path == subDir {
 			return nil
 		}
@@ -3994,7 +3958,7 @@ func mergeParallelDir(subDir, parentDir string) {
 			log.Printf("[Agent] mergeDir: failed to create dir for %s: %v", rel, mkErr)
 			return nil
 		}
-		data, readErr := os.ReadFile(path)
+		data, readErr := os.ReadFile(path) //nolint:G122 // path from WalkDir with symlink check above
 		if readErr != nil {
 			log.Printf("[Agent] mergeDir: failed to read %s: %v", rel, readErr)
 			return nil
@@ -4025,10 +3989,6 @@ func modelMaxMessages(model string) int {
 	default:
 		return 0 // 0 = use default (maxConversationMessages = 200)
 	}
-}
-
-func uniqueID() int64 {
-	return atomic.AddInt64(&idCounter, 1)
 }
 
 // resolvePathForCache resolves a tool path to an absolute canonical form for cache keying.

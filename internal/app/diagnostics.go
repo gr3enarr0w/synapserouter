@@ -182,11 +182,14 @@ func checkCircuitBreakers(ac *AppContext) []DiagnosticCheck {
 	}
 
 	for provider, state := range states {
-		status := "ok"
-		if state == router.StateOpen {
+		var status string
+		switch state {
+		case router.StateOpen:
 			status = "fail"
-		} else if state == router.StateHalfOpen {
+		case router.StateHalfOpen:
 			status = "warn"
+		default:
+			status = "ok"
 		}
 		checks = append(checks, DiagnosticCheck{
 			Category: "circuit_breakers",

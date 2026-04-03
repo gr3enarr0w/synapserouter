@@ -76,7 +76,7 @@ func findDuplicateFiles(basename, rootDir, excludePath string) []string {
 	var dupes []string
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	filepath.WalkDir(rootDir, func(p string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(rootDir, func(p string, d fs.DirEntry, err error) error {
 		select {
 		case <-ctx.Done():
 			return filepath.SkipAll

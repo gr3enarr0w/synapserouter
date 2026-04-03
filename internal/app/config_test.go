@@ -48,6 +48,7 @@ func TestLoadTierConfig_Missing(t *testing.T) {
 	origDir, _ := os.Getwd()
 	os.Chdir(tmpDir)
 	defer os.Chdir(origDir)
+	t.Setenv("HOME", tmpDir)
 
 	tc, err := LoadTierConfig()
 	if err != nil {

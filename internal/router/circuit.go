@@ -65,7 +65,7 @@ func (cb *CircuitBreaker) GetState() (CircuitState, error) {
 
 	// Check if we should transition from open to half-open
 	if state == string(StateOpen) && openUntil.Valid && time.Now().After(openUntil.Time) {
-		cb.SetState(StateHalfOpen)
+		_ = cb.SetState(StateHalfOpen)
 		return StateHalfOpen, nil
 	}
 
@@ -243,7 +243,7 @@ func ResetAllCircuitStates(db *sql.DB) ([]string, error) {
 	return providers, nil
 }
 
-// GetAllStates returns states for all providers
+// GetAllCircuitStates returns states for all providers
 func GetAllCircuitStates(db *sql.DB) (map[string]CircuitState, error) {
 	rows, err := db.Query(`
 		SELECT provider, state, open_until
@@ -266,7 +266,7 @@ func GetAllCircuitStates(db *sql.DB) (map[string]CircuitState, error) {
 		// Check if should transition to half-open
 		if state == string(StateOpen) && openUntil.Valid && time.Now().After(openUntil.Time) {
 			cb := NewCircuitBreaker(db, provider)
-			cb.SetState(StateHalfOpen)
+			_ = cb.SetState(StateHalfOpen)
 			states[provider] = StateHalfOpen
 		} else {
 			states[provider] = CircuitState(state)

@@ -35,13 +35,13 @@ func TestNativeServiceAccountToken(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
-		if err := r.ParseForm(); err != nil {
+		if err := r.ParseForm(); err != nil { //nolint:G120 // test handler, no body limit needed
 			t.Fatalf("parse form: %v", err)
 		}
-		if r.FormValue("grant_type") != "urn:ietf:params:oauth:grant-type:jwt-bearer" {
+		if r.FormValue("grant_type") != "urn:ietf:params:oauth:grant-type:jwt-bearer" { //nolint:G120 // test code
 			t.Errorf("unexpected grant_type: %s", r.FormValue("grant_type"))
 		}
-		if r.FormValue("assertion") == "" {
+		if r.FormValue("assertion") == "" { //nolint:G120 // test code
 			t.Error("missing assertion")
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -74,13 +74,13 @@ func TestNativeServiceAccountToken(t *testing.T) {
 func TestNativeADCToken_AuthorizedUser(t *testing.T) {
 	// Mock OAuth2 token endpoint
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
+		if err := r.ParseForm(); err != nil { //nolint:G120 // test handler, no body limit needed
 			t.Fatalf("parse form: %v", err)
 		}
-		if r.FormValue("grant_type") != "refresh_token" {
+		if r.FormValue("grant_type") != "refresh_token" { //nolint:G120 // test code
 			t.Errorf("unexpected grant_type: %s", r.FormValue("grant_type"))
 		}
-		if r.FormValue("client_id") != "test-client-id" {
+		if r.FormValue("client_id") != "test-client-id" { //nolint:G120 // test code
 			t.Errorf("unexpected client_id: %s", r.FormValue("client_id"))
 		}
 		w.Header().Set("Content-Type", "application/json")

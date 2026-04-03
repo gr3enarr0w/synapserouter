@@ -253,7 +253,7 @@ func TestScenarioMCPErrorHandling(t *testing.T) {
 func mcpPost(t *testing.T, url string, req MCPRequest) MCPResponse {
 	t.Helper()
 	body, _ := json.Marshal(req)
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(body))
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(body)) //nolint:G107 // test helper, URL is from httptest.Server
 	if err != nil {
 		t.Fatal(err)
 	}

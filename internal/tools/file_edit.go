@@ -93,7 +93,7 @@ func (t *FileEditTool) Execute(ctx context.Context, args map[string]interface{},
 		result = strings.Replace(content, oldStr, newStr, 1)
 	}
 
-	if err := os.WriteFile(path, []byte(result), fileMode); err != nil {
+	if err := os.WriteFile(path, []byte(result), fileMode); err != nil { //nolint:G703 // path validated by agent tool permission system
 		return &ToolResult{Error: err.Error()}, nil
 	}
 

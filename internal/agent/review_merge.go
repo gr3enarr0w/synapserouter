@@ -292,7 +292,7 @@ func ShuffleFileOrder(files []string, seed int64) []string {
 	result := make([]string, len(files))
 	copy(result, files)
 
-	r := rand.New(rand.NewSource(seed))
+	r := rand.New(rand.NewSource(seed)) //nolint:G404 // used for shuffling review order, not security
 	r.Shuffle(len(result), func(i, j int) {
 		result[i], result[j] = result[j], result[i]
 	})

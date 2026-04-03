@@ -181,18 +181,6 @@ func getenvAny(keys []string, fallback string) string {
 	return fallback
 }
 
-func getenvDuration(key string, fallback int64) time.Duration {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return time.Duration(fallback)
-	}
-	seconds, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || seconds <= 0 {
-		return time.Duration(fallback)
-	}
-	return time.Duration(seconds)
-}
-
 func getenvDurationAny(keys []string, fallback int64) time.Duration {
 	for _, key := range keys {
 		raw := strings.TrimSpace(os.Getenv(key))
@@ -230,9 +218,7 @@ func normalizeProviderOrder(order []string, providers []ProviderSpec) []string {
 	}
 
 	for _, configured := range order {
-		if _, ok := added[configured]; ok {
-			delete(added, configured)
-		}
+		delete(added, configured)
 	}
 
 	ordered := make([]string, 0, len(providers))

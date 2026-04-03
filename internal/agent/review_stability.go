@@ -115,7 +115,7 @@ func countLOC(workDir string) int {
 
 	total := 0
 	fileCount := 0
-	filepath.WalkDir(workDir, func(path string, d os.DirEntry, err error) error {
+	_ = filepath.WalkDir(workDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip errors
 		}
@@ -139,7 +139,7 @@ func countLOC(workDir string) int {
 			return filepath.SkipAll
 		}
 		// Read with size cap to prevent OOM on large generated files
-		f, err := os.Open(path)
+		f, err := os.Open(path) //nolint:G122 // path from WalkDir on agent work directory
 		if err != nil {
 			return nil
 		}

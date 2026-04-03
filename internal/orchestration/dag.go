@@ -50,7 +50,7 @@ func (d *DAGScheduler) CanExecute(task *Task, allTasks map[string]*Task) bool {
 	return true
 }
 
-// GetExecutableTask returns the next task that can execute
+// GetExecutableTasks returns the next tasks that can execute
 func (d *DAGScheduler) GetExecutableTasks(allTasks map[string]*Task) []*Task {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -296,7 +296,7 @@ func (d *DAGScheduler) topologicalSort(tasks map[string]*Task) []string {
 	return result
 }
 
-// GetExecutionPlan returns a detailed execution plan for a set of tasks
+// ExecutionPlan represents a detailed execution plan for a set of tasks
 type ExecutionPlan struct {
 	Groups      [][]*Task                `json:"groups"`
 	TotalStages int                      `json:"total_stages"`

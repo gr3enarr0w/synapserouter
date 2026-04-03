@@ -37,7 +37,7 @@ func (a *Agent) writeDiagnostics(startTime time.Time) {
 	// Append-only write — avoids read-modify-write race between concurrent agents.
 	// Each agent appends its report independently; no data is lost.
 	path := filepath.Join(a.config.WorkDir, diagnosticsFile)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) //nolint:G302 // diagnostics report is non-sensitive, needs to be readable by user
 	if err != nil {
 		return // best-effort
 	}
@@ -73,9 +73,7 @@ func (a *Agent) buildDiagnosticsReport(startTime time.Time) DiagnosticsReport {
 	if a.providerIdx < len(a.config.EscalationChain) {
 		for i := 0; i <= a.providerIdx; i++ {
 			level := a.config.EscalationChain[i]
-			for _, p := range level.Providers {
-				report.ProvidersUsed = append(report.ProvidersUsed, p)
-			}
+			report.ProvidersUsed = append(report.ProvidersUsed, level.Providers...)
 		}
 	}
 

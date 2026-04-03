@@ -574,7 +574,7 @@ func (p *VertexProvider) discoverClaudeModels(token string) []map[string]interfa
 				var result struct {
 					Model string `json:"model"`
 				}
-				json.Unmarshal(respBody, &result)
+				_ = json.Unmarshal(respBody, &result)
 				results <- probeResult{model: firstStr(result.Model, model), ok: true}
 			} else {
 				results <- probeResult{model: model}

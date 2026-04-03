@@ -1765,7 +1765,7 @@ func TestCascade_RefinedPromptSurvivesHandoff(t *testing.T) {
 	}
 
 	// Large provider must see the REFINED prompt, not "whats going on"
-	if large.lastMessages == nil || len(large.lastMessages) == 0 {
+	if len(large.lastMessages) == 0 {
 		t.Fatal("large provider should have received messages")
 	}
 

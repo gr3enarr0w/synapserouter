@@ -24,6 +24,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 			system_prompt TEXT NOT NULL DEFAULT '',
 			work_dir TEXT NOT NULL DEFAULT '.',
 			messages TEXT NOT NULL DEFAULT '[]',
+			tool_call_log TEXT NOT NULL DEFAULT '[]',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`)

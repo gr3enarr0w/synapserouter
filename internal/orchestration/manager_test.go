@@ -620,8 +620,8 @@ func TestMCPAutoInvoke_MCPFailureDoesNotBlockTask(t *testing.T) {
 	t.Cleanup(failServer.Close)
 
 	client := mcp.NewMCPClient()
-	client.AddServer("context7", failServer.URL, "")
-	client.Connect(context.Background(), "context7")
+	_ = client.AddServer("context7", failServer.URL, "")
+	_ = client.Connect(context.Background(), "context7")
 	mgr.SetMCPClient(client)
 
 	task, err := mgr.CreateTask(context.Background(), TaskRequest{

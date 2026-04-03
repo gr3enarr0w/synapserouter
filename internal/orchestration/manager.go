@@ -335,7 +335,7 @@ func (m *Manager) CreateTask(ctx context.Context, req TaskRequest) (*Task, error
 	m.persistTask(task)
 
 	if req.Execute {
-		go m.runTask(context.Background(), task.ID)
+		go m.runTask(context.Background(), task.ID) //nolint:G118 // fire-and-forget task execution by design
 	}
 
 	copyTask := *task
@@ -374,7 +374,7 @@ func (m *Manager) RefineTask(ctx context.Context, taskID string, req RefineReque
 	m.persistTask(task)
 
 	if req.Execute {
-		go m.runTask(context.Background(), task.ID)
+		go m.runTask(context.Background(), task.ID) //nolint:G118 // fire-and-forget task execution by design
 	}
 
 	return cloneTask(task), nil
@@ -628,7 +628,7 @@ func (m *Manager) AgentMetrics(agentID string) (*AgentMetrics, error) {
 	}
 
 	metrics := &AgentMetrics{
-		AgentID: string(agent.ID),
+		AgentID: agent.ID,
 		Status:  string(agent.Status),
 	}
 	for _, swarm := range m.swarms {

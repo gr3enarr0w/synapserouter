@@ -59,29 +59,6 @@ type codexCompactRequest struct {
 	Store        *bool                    `json:"store,omitempty"`
 }
 
-type codexCompactResponse struct {
-	ID         string          `json:"id"`
-	Model      string          `json:"model"`
-	OutputText string          `json:"output_text"`
-	Output     []codexOutput   `json:"output"`
-	Usage      providers.Usage `json:"usage"`
-}
-
-type codexOutput struct {
-	Type      string            `json:"type"`
-	ID        string            `json:"id"`
-	CallID    string            `json:"call_id"`
-	Name      string            `json:"name"`
-	Arguments string            `json:"arguments"`
-	Content   []codexOutputPart `json:"content"`
-}
-
-type codexOutputPart struct {
-	Type       string `json:"type"`
-	Text       string `json:"text"`
-	OutputText string `json:"output_text"`
-}
-
 type compositeReadCloser struct {
 	io.Reader
 	closers []func() error
@@ -550,94 +527,6 @@ func buildCodexCompactRequest(req providers.ChatRequest, model string) codexComp
 	return payload
 }
 
-func (r codexCompactResponse) asChatCompletion(fallbackModel string) (providers.ChatResponse, error) {
-	var content string
-	toolCalls := make([]map[string]interface{}, 0)
-
-	// 1. Process all tool calls from the entire output
-	for _, item := range r.Output {
-		itemType := strings.ToLower(strings.TrimSpace(item.Type))
-		switch itemType {
-		case "function_call", "tool_call", "call":
-			toolCalls = append(toolCalls, map[string]interface{}{
-				"id":   firstNonEmptyString(item.ID, item.CallID),
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":      item.Name,
-					"arguments": firstNonEmptyString(item.Arguments, "{}"),
-				},
-			})
-		case "function":
-			if item.Name != "" {
-				toolCalls = append(toolCalls, map[string]interface{}{
-					"id":   firstNonEmptyString(item.ID, item.CallID, "call-"+strconv.FormatInt(time.Now().UnixNano(), 10)),
-					"type": "function",
-					"function": map[string]interface{}{
-						"name":      item.Name,
-						"arguments": firstNonEmptyString(item.Arguments, "{}"),
-					},
-				})
-			}
-		}
-	}
-
-	// 2. Extract content ONLY from turns that are messages
-	for i := len(r.Output) - 1; i >= 0; i-- {
-		item := r.Output[i]
-		if strings.ToLower(strings.TrimSpace(item.Type)) == "message" {
-			var turnContent strings.Builder
-			for j, part := range item.Content {
-				log.Printf("[Codex] Part %d Content %d: Type=%s, TextLen=%d, OutputTextLen=%d",
-					i, j, part.Type, len(part.Text), len(part.OutputText))
-				if strings.ToLower(strings.TrimSpace(part.Type)) == "output_text" || part.Type == "text" || part.Type == "" {
-					if part.Text != "" {
-						turnContent.WriteString(part.Text)
-					} else if part.OutputText != "" {
-						turnContent.WriteString(part.OutputText)
-					}
-				}
-			}
-			content = turnContent.String()
-			if strings.TrimSpace(content) != "" {
-				break
-			}
-		}
-	}
-
-	// 3. Fallback to OutputText ONLY if structured content is still empty
-	if strings.TrimSpace(content) == "" && strings.TrimSpace(r.OutputText) != "" {
-		content = r.OutputText
-	}
-
-	// 4. Reject empty responses — return error so router tries next provider
-	if strings.TrimSpace(content) == "" && len(toolCalls) == 0 {
-		if r.Usage.CompletionTokens > 0 {
-			return providers.ChatResponse{}, fmt.Errorf("codex returned empty content with %d completion tokens (malformed response)", r.Usage.CompletionTokens)
-		}
-		return providers.ChatResponse{}, fmt.Errorf("codex returned empty completion (no content or tool calls)")
-	}
-
-	finishReason := "stop"
-	if len(toolCalls) > 0 {
-		finishReason = "tool_calls"
-	}
-	return providers.ChatResponse{
-		ID:     firstNonEmptyString(r.ID, "codex-"+strconv.FormatInt(time.Now().UnixNano(), 10)),
-		Object: "chat.completion",
-		Model:  firstNonEmptyString(r.Model, fallbackModel),
-		Choices: []providers.Choice{{
-			Index: 0,
-			Message: providers.Message{
-				Role:      "assistant",
-				Content:   strings.TrimSpace(content),
-				ToolCalls: toolCalls,
-			},
-			FinishReason: finishReason,
-		}},
-		Usage: normalizeUsage(r.Usage),
-	}, nil
-}
-
 func applyCodexHeaders(req *http.Request, credential ProviderCredential, sessionID string, stream bool) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+credential.authToken())
@@ -848,55 +737,6 @@ func applyGeminiCLIHeaders(req *http.Request, model string) {
 	}
 	req.Header.Set("User-Agent", fmt.Sprintf("GeminiCLI/%s/%s (%s; %s; CLI)", geminiCLIVersion, model, runtime.GOOS, runtime.GOARCH))
 	req.Header.Set("Accept", "application/json")
-}
-
-func decodeGeminiChatResponse(resp *http.Response) (geminiChatResponse, error) {
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return geminiChatResponse{}, fmt.Errorf("gemini read failure: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return geminiChatResponse{}, fmt.Errorf("gemini returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	log.Printf("[Gemini] Raw CLI response (%d bytes): %s", len(body), truncateLogBody(body, 2000))
-
-	var upstreamResp geminiChatResponse
-	if err := json.Unmarshal(body, &upstreamResp); err != nil {
-		return geminiChatResponse{}, fmt.Errorf("gemini decode failure: %w", err)
-	}
-	// Try wrapped response formats used by the Gemini CLI endpoint
-	if len(upstreamResp.Candidates) == 0 {
-		var wrapped struct {
-			Response geminiChatResponse `json:"response"`
-		}
-		if err := json.Unmarshal(body, &wrapped); err == nil && len(wrapped.Response.Candidates) > 0 {
-			upstreamResp = wrapped.Response
-		}
-	}
-	// Try array-of-candidates format (some CLI endpoints return top-level array)
-	if len(upstreamResp.Candidates) == 0 {
-		var arrayResp []geminiChatResponse
-		if err := json.Unmarshal(body, &arrayResp); err == nil && len(arrayResp) > 0 && len(arrayResp[0].Candidates) > 0 {
-			upstreamResp = arrayResp[0]
-		}
-	}
-	// Try nested generateContentResponse wrapper
-	if len(upstreamResp.Candidates) == 0 {
-		var nested struct {
-			GenerateContentResponse geminiChatResponse `json:"generateContentResponse"`
-		}
-		if err := json.Unmarshal(body, &nested); err == nil && len(nested.GenerateContentResponse.Candidates) > 0 {
-			upstreamResp = nested.GenerateContentResponse
-		}
-	}
-	if len(upstreamResp.Candidates) == 0 {
-		return geminiChatResponse{}, fmt.Errorf("gemini returned empty completion (no candidates)")
-	}
-	// Allow candidates with empty parts — can happen when thinking consumes the entire
-	// output budget (finishReason=MAX_TOKENS with thoughtsTokenCount > 0).
-	// Return a valid response with empty text rather than erroring.
-	return upstreamResp, nil
 }
 
 func truncateLogBody(body []byte, maxLen int) string {
@@ -1330,44 +1170,6 @@ func looksLikeCodexModel(model string) bool {
 func looksLikeGeminiModel(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	return strings.HasPrefix(model, "gemini")
-}
-
-func codexRole(role string) string {
-	switch role {
-	case "assistant":
-		return "assistant"
-	case "system", "developer":
-		return "developer"
-	case "tool":
-		return "tool"
-	default:
-		return "user"
-	}
-}
-
-func codexReasoningEffort(effort string) string {
-	effort = strings.TrimSpace(effort)
-	if effort == "" {
-		return "medium"
-	}
-	return effort
-}
-
-func codexTools(req providers.ChatRequest) []map[string]interface{} {
-	if len(req.Tools) > 0 {
-		return req.Tools
-	}
-	if len(req.Functions) == 0 {
-		return nil
-	}
-	tools := make([]map[string]interface{}, 0, len(req.Functions))
-	for _, fn := range req.Functions {
-		tools = append(tools, map[string]interface{}{
-			"type":     "function",
-			"function": fn,
-		})
-	}
-	return tools
 }
 
 func buildGeminiCLIRequest(req providers.ChatRequest, model, projectID, sessionID string) ([]byte, error) {

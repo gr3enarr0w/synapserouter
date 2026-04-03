@@ -51,6 +51,7 @@ func (r *REPL) Run(ctx context.Context) error {
 	// Handle Ctrl-C gracefully — cancel current request, don't exit
 	var mu sync.Mutex
 	reqCtx, reqCancel := context.WithCancel(ctx)
+	_ = reqCtx // used after reassignment in the loop below
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT)

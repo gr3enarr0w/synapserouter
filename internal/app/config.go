@@ -8,12 +8,14 @@ import (
 	"strings"
 
 	"github.com/gr3enarr0w/synapserouter/internal/agent"
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
 	"gopkg.in/yaml.v3"
 )
 
 // TierConfig holds user-configurable tier definitions from YAML.
 type TierConfig struct {
-	Tiers map[string][]string `yaml:"tiers"` // "cheap" → ["model1", "model2"]
+	Tiers                 map[string][]string                    `yaml:"tiers"`                    // "cheap" → ["model1", "model2"]
+	OpenAICompatProviders []providers.OpenAICompatProviderConfig `yaml:"openai_compat_providers"`  // Custom OpenAI-compatible endpoints
 }
 
 // tierOrder defines the escalation order (ascending capability).

@@ -122,7 +122,7 @@ func (a *Agent) RunResearch(ctx context.Context, query, depth string) (*Research
 
 	// Store in tool output DB if available
 	if a.config.ToolStore != nil {
-		a.config.ToolStore.Store(
+		_, _ = a.config.ToolStore.Store(
 			a.sessionID, "research", query,
 			fmt.Sprintf("Research: %s (%s, %d rounds, %d sources)", query, depth, len(report.Rounds), report.UniqueURLs),
 			report.Findings, 0, len(report.Findings))
@@ -133,20 +133,8 @@ func (a *Agent) RunResearch(ctx context.Context, query, depth string) (*Research
 
 // generateFollowUpQueries creates queries for round 2+ based on gaps.
 func generateFollowUpQueries(originalQuery string, previousRounds []ResearchRound, maxQueries int) []string {
-	// Collect all titles/snippets from previous rounds to identify themes
-	var coveredTerms []string
-	for _, round := range previousRounds {
-		for _, hit := range round.Hits {
-			for _, word := range strings.Fields(strings.ToLower(hit.Title)) {
-				word = strings.Trim(word, ".,;:!?()[]{}\"'`-")
-				if len(word) > 4 {
-					coveredTerms = append(coveredTerms, word)
-				}
-			}
-		}
-	}
-
 	// Generate follow-up queries that explore different angles
+	_ = previousRounds // future: use previous round titles to refine queries
 	queries := []string{
 		originalQuery + " advanced",
 		originalQuery + " common mistakes pitfalls",

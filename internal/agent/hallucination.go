@@ -3,6 +3,7 @@ package agent
 import (
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -199,7 +200,7 @@ func checkExitCodeClaims(content string, facts FactProvider) []HallucinationSign
 		signals = append(signals, HallucinationSignal{
 			Type:        SignalContradiction,
 			Description: "Claims success but most recent command had non-zero exit code",
-			Evidence:    "Command: " + lastFact.Command + " (exit " + string(rune('0'+lastFact.ExitCode)) + ")",
+			Evidence:    "Command: " + lastFact.Command + " (exit " + strconv.Itoa(lastFact.ExitCode) + ")",
 			Severity:    0.7,
 		})
 	}

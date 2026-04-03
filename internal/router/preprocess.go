@@ -202,7 +202,7 @@ func buildInjections(signals ConversationSignals, registry []orchestration.Skill
 			Source:  "research-hint",
 			Content: "[Research Available] Use context7.query-docs to look up API documentation before writing code that calls external APIs.",
 		}
-		budgetUsed += estimateInjectionTokens(inj.Content)
+		_ = estimateInjectionTokens(inj.Content) // budgetUsed not needed after last injection
 		injections = append(injections, inj)
 	}
 

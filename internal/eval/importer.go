@@ -1177,7 +1177,7 @@ func ImportDS1000(store *Store, repoPath string) (*ImportResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("gzip reader: %w", err)
 		}
-		defer gz.Close()
+		defer func() { _ = gz.Close() }()
 		scanner = bufio.NewScanner(gz)
 	} else {
 		scanner = bufio.NewScanner(f)

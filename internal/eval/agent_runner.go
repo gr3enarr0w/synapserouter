@@ -257,17 +257,17 @@ func buildErrorAwareFixPrompt(ex Exercise, code, testOutput string, et errorType
 	// Error-specific guidance
 	switch et {
 	case errCompile:
-		sb.WriteString(fmt.Sprintf("Your code has COMPILATION ERRORS (attempt %d/%d). Fix the syntax and type errors.\n\n", turn, maxTurns))
+		fmt.Fprintf(&sb, "Your code has COMPILATION ERRORS (attempt %d/%d). Fix the syntax and type errors.\n\n", turn, maxTurns)
 	case errRuntime:
-		sb.WriteString(fmt.Sprintf("Your code CRASHES at runtime (attempt %d/%d). Fix the runtime error — check for nil values, out-of-bounds access, type mismatches.\n\n", turn, maxTurns))
+		fmt.Fprintf(&sb, "Your code CRASHES at runtime (attempt %d/%d). Fix the runtime error — check for nil values, out-of-bounds access, type mismatches.\n\n", turn, maxTurns)
 	case errAssertion:
-		sb.WriteString(fmt.Sprintf("Your code compiles and runs but produces WRONG RESULTS (attempt %d/%d). The logic is incorrect. Read the test expectations carefully.\n\n", turn, maxTurns))
+		fmt.Fprintf(&sb, "Your code compiles and runs but produces WRONG RESULTS (attempt %d/%d). The logic is incorrect. Read the test expectations carefully.\n\n", turn, maxTurns)
 	case errTimeout:
-		sb.WriteString(fmt.Sprintf("Your code TIMED OUT (attempt %d/%d). It's too slow or has an infinite loop. Optimize the algorithm.\n\n", turn, maxTurns))
+		fmt.Fprintf(&sb, "Your code TIMED OUT (attempt %d/%d). It's too slow or has an infinite loop. Optimize the algorithm.\n\n", turn, maxTurns)
 	case errImport:
-		sb.WriteString(fmt.Sprintf("Your code has MISSING IMPORTS (attempt %d/%d). Add the required import statements.\n\n", turn, maxTurns))
+		fmt.Fprintf(&sb, "Your code has MISSING IMPORTS (attempt %d/%d). Add the required import statements.\n\n", turn, maxTurns)
 	default:
-		sb.WriteString(fmt.Sprintf("Your implementation failed the tests (attempt %d/%d). Fix the code based on the error output.\n\n", turn, maxTurns))
+		fmt.Fprintf(&sb, "Your implementation failed the tests (attempt %d/%d). Fix the code based on the error output.\n\n", turn, maxTurns)
 	}
 
 	sb.WriteString("## Instructions\n\n")

@@ -33,7 +33,7 @@ const (
 	codexRedirectFormat = "http://localhost:%d/auth/callback"
 	codexDefaultPort    = 1455
 
-	geminiClientID       = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
+	geminiClientID       = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com" //nolint:G101 // public OAuth client ID, not a secret
 	geminiClientSecretDefault = "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"
 	geminiAuthURL        = "https://accounts.google.com/o/oauth2/v2/auth"
 	geminiTokenURL       = "https://oauth2.googleapis.com/token"
@@ -82,60 +82,6 @@ func Login(ctx context.Context, provider string, opts LoginOptions) (ProviderCre
 	default:
 		return ProviderCredential{}, fmt.Errorf("unsupported provider %q", provider)
 	}
-}
-
-func loginWithClaude(ctx context.Context, opts LoginOptions) (ProviderCredential, error) {
-	pkce, err := generatePKCE()
-	if err != nil {
-		return ProviderCredential{}, err
-	}
-
-	state, err := generateRandomState()
-	if err != nil {
-		return ProviderCredential{}, err
-	}
-
-	port := claudeDefaultPort
-	if opts.CallbackPort > 0 {
-		port = opts.CallbackPort
-	}
-	redirectURI := fmt.Sprintf(claudeRedirectFormat, port)
-
-	server, err := startOAuthServer(port, "/callback")
-	if err != nil {
-		return ProviderCredential{}, err
-	}
-	defer func() {
-		ctxShutdown, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = server.stop(ctxShutdown)
-	}()
-
-	authURL := buildClaudeAuthURL(state, pkce.challenge, redirectURI)
-	oauthDebugf("anthropic interactive auth start redirect_uri=%q state=%s auth_url=%s", redirectURI, redactOAuthValue(state), redactOAuthURL(authURL))
-	if err := startBrowserIfAvailable(authURL, opts.NoBrowser); err != nil {
-		return ProviderCredential{}, err
-	}
-
-	result, err := server.waitForCallback(effectiveLoginTimeout(opts.Timeout))
-	if err != nil {
-		return ProviderCredential{}, err
-	}
-	if result.Error != "" {
-		if result.ErrorDetail != "" {
-			return ProviderCredential{}, fmt.Errorf("%s: %s", result.Error, result.ErrorDetail)
-		}
-		return ProviderCredential{}, fmt.Errorf("%s", result.Error)
-	}
-	if result.State != state {
-		return ProviderCredential{}, fmt.Errorf("oauth state mismatch: expected %q, got %q", state, result.State)
-	}
-
-	access, err := exchangeClaudeToken(ctx, result.Code, state, pkce.verifier, redirectURI)
-	if err != nil {
-		return ProviderCredential{}, err
-	}
-	return access, nil
 }
 
 func loginWithCodex(ctx context.Context, opts LoginOptions) (ProviderCredential, error) {
@@ -497,8 +443,9 @@ func startOAuthServer(port int, callbackPath string) (*oauthServer, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(callbackPath, server.handleCallback)
 	server.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	go func() {
@@ -624,17 +571,17 @@ func WriteOAuthCallbackHTML(w http.ResponseWriter, status int, ok bool, errCode,
 	}
 	detail := strings.TrimSpace(errDetail)
 	if detail == "" || detail == message {
-		_, _ = w.Write([]byte(fmt.Sprintf("<!doctype html><html><body><h1>Authentication failed</h1><p>%s</p></body></html>", message)))
+		_, _ = fmt.Fprintf(w, "<!doctype html><html><body><h1>Authentication failed</h1><p>%s</p></body></html>", message)
 		return
 	}
-	_, _ = w.Write([]byte(fmt.Sprintf("<!doctype html><html><body><h1>Authentication failed</h1><p>%s</p><p>%s</p></body></html>", message, detail)))
+	_, _ = fmt.Fprintf(w, "<!doctype html><html><body><h1>Authentication failed</h1><p>%s</p><p>%s</p></body></html>", message, detail)
 }
 
 func oauthDebugf(format string, args ...interface{}) {
 	if strings.TrimSpace(os.Getenv("SYNROUTE_OAUTH_DEBUG")) == "" {
 		return
 	}
-	log.Printf("[OAuthDebug] "+format, args...)
+	log.Printf("[OAuthDebug] "+format, args...) //nolint:G706 // debug logging with server-controlled format strings
 }
 
 func redactOAuthURL(raw string) string {

@@ -145,7 +145,7 @@ func BeginManagedLogin(ctx context.Context, provider string, opts LoginOptions) 
 
 	managedLogins.register(session)
 
-	go runManagedLoginFlow(session, effectiveLoginTimeout(opts.Timeout))
+	go runManagedLoginFlow(session, effectiveLoginTimeout(opts.Timeout)) //nolint:G118 // fire-and-forget OAuth flow by design
 
 	return ManagedLoginResult{
 		Provider: session.provider,

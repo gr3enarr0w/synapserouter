@@ -58,7 +58,7 @@ func (t *Tracker) RecordUsage(provider string, tokens int64, requestID, model st
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after successful commit
 
 	// Insert usage record
 	_, err = tx.Exec(`
@@ -232,7 +232,7 @@ func getEnvFloat64(key string, fallback float64) float64 {
 
 	value, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
-		log.Printf("Ignoring invalid %s value %q", key, raw)
+		log.Printf("Ignoring invalid %s value %q", key, raw) //nolint:G706 // key is a hardcoded env var name, raw from env var not user input
 		return fallback
 	}
 

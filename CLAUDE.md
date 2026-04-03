@@ -1,6 +1,6 @@
 # SynapseRouter (synroute)
 
-Go-based LLM proxy router and coding agent that distributes requests across Ollama Cloud (primary, dynamic multi-level escalation chain), subscription providers (Gemini, Codex, Claude Code), Vertex AI, and models.corp (OpenAI-compatible). Includes interactive agent REPL and code mode TUI with tool execution (bash, file I/O, grep, glob, git, web search/fetch, notebook edit), worktree isolation, token streaming via SSE, and MCP server mode. Two profiles: `personal` (Ollama Cloud + OAuth subscriptions) and `work` (Vertex AI with 3-tier chain). Supports multiple Ollama API keys for concurrent subscriptions.
+Go-based LLM proxy router and coding agent that distributes requests across Ollama Cloud (primary, dynamic multi-level escalation chain), subscription providers (Gemini, Codex, Claude Code), Vertex AI, generic OpenAI-compatible providers (configurable via YAML), and models.corp. Includes interactive agent REPL and code mode TUI with tool execution (bash, file I/O, grep, glob, git, web search/fetch, notebook edit), worktree isolation, token streaming via SSE, and MCP server mode. Two profiles: `personal` (Ollama Cloud + OAuth subscriptions) and `work` (Vertex AI with 3-tier chain). Supports multiple Ollama API keys for concurrent subscriptions. Provider-aware tier routing routes models to correct provider (codex, gemini, Ollama Cloud) by name pattern. Background execution (`--background` flag) creates worktree, runs agent, creates PR on completion. Durable execution checkpoints after every tool call via SaveState, `--resume` picks up from last checkpoint.
 
 ## Key Files
 
@@ -194,6 +194,16 @@ When multiple backends are configured, all are queried in parallel and results m
 - Budget enforcement via `SYNROUTE_RESEARCH_BUDGET` (default 50 API calls)
 - Saturation detection: stops when <10% new unique URLs
 - Citation-aware synthesis with inline [1] [2] references
+
+### v1.06 Durable Execution + Provider Routing (2026-04-XX)
+- **Generic OpenAI-Compatible Provider** (`internal/router/providers/openai_compat.go`): Configurable via YAML `openai_compat_providers` section, supports custom endpoints and authentication
+- **Provider-Aware Tier Routing** (`internal/router/tier_config.go`): YAML tier config routes models to correct provider (codex, gemini, Ollama Cloud) by name pattern matching
+- **Background Execution** (`cmd/chat.go`): `synroute chat --background` flag creates worktree, runs agent, creates PR on completion. `synroute tasks` shows background task status
+- **Durable Execution** (`internal/agent/state.go`): Checkpoint after every tool call via `SaveState`, `--resume` flag picks up from last checkpoint, `toolCallLog` tracks completed tool calls to avoid re-execution
+- **Development Pipeline**: DOCS step added as step 5 (after build verification, before commit)
+- **Go 1.26.1**: Updated from Go 1.25.0
+- **golangci-lint v2.11**: Updated configuration from v2.1
+- **Code Cleanup**: 34 unused functions/types removed across codebase, comprehensive lint cleanup
 
 ### v1.05 Model Recommendation + Config
 - **Model Catalog** (`internal/agent/model_catalog.go`, `model_catalog.json`): Bundled reference benchmark scores + pricing for ~30 models. Fuzzy matching for Ollama naming
@@ -389,6 +399,7 @@ After ANY code change, automatically run this pipeline in order:
 2. `go test -race ./...` — unit tests with race detection
 3. `./synroute test` — E2E provider smoke test (or delegate to `@provider-tester`)
 4. Verify build: `go build -o synroute .`
+5. DOCS: Update CLAUDE.md, CLI reference, and CHANGELOG.md with any new features or changes
 
 Do NOT skip steps or ask whether to run them. The pipeline runs automatically after changes are complete.
 

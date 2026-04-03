@@ -1,14 +1,9 @@
 package agent
 
 import (
-	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
-
-	"github.com/gr3enarr0w/synapserouter/internal/providers"
 )
 
 // specPromptTemplate is used to generate structured specs from freeform input.
@@ -100,43 +95,3 @@ func needsSpecGeneration(workDir, message string) bool {
 	return false
 }
 
-// generateSpec creates a structured spec from freeform input and saves it to spec.md.
-// Returns the generated spec content.
-func (a *Agent) generateSpec(message string) (string, error) {
-	if a.config.WorkDir == "" {
-		return "", fmt.Errorf("no working directory configured")
-	}
-
-	// Use strings.Replace (not fmt.Sprintf) to avoid format string bugs if user message contains %s/%d/etc.
-	prompt := strings.Replace(specPromptTemplate, "%s", message, 1)
-
-	// Use the agent's LLM executor to generate the spec
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	resp, err := a.executor.ChatCompletion(ctx, providers.ChatRequest{
-		Model: "auto",
-		Messages: []providers.Message{
-			{Role: "user", Content: prompt},
-		},
-	}, a.sessionID)
-	if err != nil {
-		return "", fmt.Errorf("failed to generate spec: %w", err)
-	}
-
-	spec := ""
-	if len(resp.Choices) > 0 {
-		spec = resp.Choices[0].Message.Content
-	}
-	if spec == "" {
-		return "", fmt.Errorf("LLM returned empty spec")
-	}
-
-	// Save to spec.md
-	path := filepath.Join(a.config.WorkDir, "spec.md")
-	if err := os.WriteFile(path, []byte(spec), 0644); err != nil {
-		return "", fmt.Errorf("failed to write spec.md: %w", err)
-	}
-
-	return spec, nil
-}

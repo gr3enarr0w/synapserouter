@@ -5,7 +5,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -68,12 +67,12 @@ func DefaultPermissionPrompt(out io.Writer, in io.Reader) tools.PermissionPrompt
 		defer tty.Close()
 
 		// Drain any pending bytes (readline cursor queries produce \033[...R responses)
-		tty.SetDeadline(time.Now().Add(100 * time.Millisecond))
+		_ = tty.SetDeadline(time.Now().Add(100 * time.Millisecond))
 		drain := make([]byte, 64)
-		tty.Read(drain)
+		_, _ = tty.Read(drain)
 
 		// Now read the actual user input with a proper timeout
-		tty.SetDeadline(time.Now().Add(30 * time.Second))
+		_ = tty.SetDeadline(time.Now().Add(30 * time.Second))
 		buf := make([]byte, 1)
 		for {
 			n, err := tty.Read(buf)
@@ -89,19 +88,6 @@ func DefaultPermissionPrompt(out io.Writer, in io.Reader) tools.PermissionPrompt
 
 		fmt.Fprintln(out) // newline after the single char
 		return parsePermissionByte(buf[0], &approveAll)
-	}
-}
-
-func parsePermissionResponse(text string, approveAll *bool) bool {
-	response := strings.TrimSpace(strings.ToLower(text))
-	switch response {
-	case "", "y", "yes":
-		return true
-	case "a", "all":
-		*approveAll = true
-		return true
-	default:
-		return false
 	}
 }
 

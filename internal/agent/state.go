@@ -17,6 +17,7 @@ type SessionState struct {
 	SystemPrompt string              `json:"system_prompt"`
 	WorkDir      string              `json:"work_dir"`
 	Messages     []providers.Message `json:"messages"`
+	ToolCallLog  []string            `json:"tool_call_log"` // IDs of completed tool calls for durable execution
 	CreatedAt    time.Time           `json:"created_at"`
 	UpdatedAt    time.Time           `json:"updated_at"`
 }
@@ -33,13 +34,19 @@ func (a *Agent) SaveState(db *sql.DB) error {
 		return fmt.Errorf("marshal messages: %w", err)
 	}
 
+	toolLog, err := json.Marshal(a.toolCallLog)
+	if err != nil {
+		return fmt.Errorf("marshal tool call log: %w", err)
+	}
+
 	_, err = db.Exec(`
-		INSERT INTO agent_sessions (session_id, model, system_prompt, work_dir, messages, updated_at)
-		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO agent_sessions (session_id, model, system_prompt, work_dir, messages, tool_call_log, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(session_id) DO UPDATE SET
 			messages = excluded.messages,
+			tool_call_log = excluded.tool_call_log,
 			updated_at = CURRENT_TIMESTAMP`,
-		a.sessionID, a.config.Model, a.config.SystemPrompt, a.config.WorkDir, string(data))
+		a.sessionID, a.config.Model, a.config.SystemPrompt, a.config.WorkDir, string(data), string(toolLog))
 	if err != nil {
 		return fmt.Errorf("save session: %w", err)
 	}
@@ -53,12 +60,12 @@ func LoadState(db *sql.DB, sessionID string) (*SessionState, error) {
 	}
 
 	var state SessionState
-	var messagesJSON string
+	var messagesJSON, toolCallLogJSON sql.NullString
 	err := db.QueryRow(`
-		SELECT session_id, model, system_prompt, work_dir, messages, created_at, updated_at
+		SELECT session_id, model, system_prompt, work_dir, messages, tool_call_log, created_at, updated_at
 		FROM agent_sessions WHERE session_id = ?`, sessionID).
 		Scan(&state.SessionID, &state.Model, &state.SystemPrompt, &state.WorkDir,
-			&messagesJSON, &state.CreatedAt, &state.UpdatedAt)
+			&messagesJSON, &toolCallLogJSON, &state.CreatedAt, &state.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("session not found: %s", sessionID)
 	}
@@ -66,8 +73,14 @@ func LoadState(db *sql.DB, sessionID string) (*SessionState, error) {
 		return nil, fmt.Errorf("load session: %w", err)
 	}
 
-	if err := json.Unmarshal([]byte(messagesJSON), &state.Messages); err != nil {
+	if err := json.Unmarshal([]byte(messagesJSON.String), &state.Messages); err != nil {
 		return nil, fmt.Errorf("unmarshal messages: %w", err)
+	}
+
+	if toolCallLogJSON.Valid && toolCallLogJSON.String != "" {
+		if err := json.Unmarshal([]byte(toolCallLogJSON.String), &state.ToolCallLog); err != nil {
+			return nil, fmt.Errorf("unmarshal tool call log: %w", err)
+		}
 	}
 
 	return &state, nil
@@ -109,6 +122,9 @@ func RestoreAgent(executor ChatExecutor, registry *tools.Registry, renderer Term
 	for _, msg := range state.Messages {
 		a.conversation.Add(msg)
 	}
+
+	// Restore tool call log for durable execution
+	a.toolCallLog = state.ToolCallLog
 
 	return a
 }

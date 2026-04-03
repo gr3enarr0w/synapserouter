@@ -1,6 +1,6 @@
 module github.com/gr3enarr0w/synapserouter
 
-go 1.25.0
+go 1.26.1
 
 require (
 	github.com/go-sql-driver/mysql v1.8.1

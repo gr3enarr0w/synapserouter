@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.06 — Durable Execution + Provider Routing (2026-04-XX)
+
+### New Features
+- **Generic OpenAI-Compatible Provider**: Configurable via YAML `openai_compat_providers` section, supports custom endpoints and authentication
+- **Provider-Aware Tier Routing**: YAML tier config routes models to correct provider (codex, gemini, Ollama Cloud) by name pattern matching
+- **Background Execution**: `synroute chat --background` flag creates worktree, runs agent, creates PR on completion. `synroute tasks` shows background task status
+- **Durable Execution**: Checkpoint after every tool call via `SaveState`, `--resume` flag picks up from last checkpoint, `toolCallLog` tracks completed tool calls to avoid re-execution
+
+### Updated
+- Go 1.26.1 (was 1.25.0)
+- golangci-lint v2.11 config (was v2.1)
+- 34 unused functions/types removed, lint cleanup across codebase
+
 ## v1.05 — Performance + Model Optimization + Deep Search (2026-04-02)
 
 ### Speed Optimizations

@@ -184,7 +184,8 @@ ORIGINAL SPEC/REQUEST:
 4. Verify the implementation matches the spec's architecture, package structure, and scope
 5. Check for OUT OF SCOPE violations (features added that spec excludes)
 6. Is anything null, broken, missing, or incomplete that a user would notice?
-7. Say ACCEPTANCE_PASS if the user would be satisfied, or ACCEPTANCE_FAIL with what's wrong.`,
+7. Verify documentation has been updated (CLAUDE.md, CLI reference, CHANGELOG.md)
+8. Say ACCEPTANCE_PASS if the user would be satisfied, or ACCEPTANCE_FAIL with what's wrong.`,
 		},
 		{
 			Name: "deploy",

@@ -16,17 +16,33 @@ func TestImportPolyglot(t *testing.T) {
 
 	// Go exercise
 	goExDir := filepath.Join(repoDir, "go", "exercises", "practice", "hello-world")
-	os.MkdirAll(filepath.Join(goExDir, ".docs"), 0755)
-	os.WriteFile(filepath.Join(goExDir, ".docs", "instructions.md"), []byte("# Hello World\nReturn Hello, World!"), 0644)
-	os.WriteFile(filepath.Join(goExDir, "hello_world_test.go"), []byte("package greeting\n\nimport \"testing\"\n\nfunc TestHello(t *testing.T) {}"), 0644)
-	os.WriteFile(filepath.Join(goExDir, "hello_world.go"), []byte("package greeting\n\nfunc Hello() string { return \"\" }"), 0644)
+	if err := os.MkdirAll(filepath.Join(goExDir, ".docs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(goExDir, ".docs", "instructions.md"), []byte("# Hello World\nReturn Hello, World!"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(goExDir, "hello_world_test.go"), []byte("package greeting\n\nimport \"testing\"\n\nfunc TestHello(t *testing.T) {}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(goExDir, "hello_world.go"), []byte("package greeting\n\nfunc Hello() string { return \"\" }"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Python exercise
 	pyExDir := filepath.Join(repoDir, "python", "exercises", "practice", "two-fer")
-	os.MkdirAll(filepath.Join(pyExDir, ".docs"), 0755)
-	os.WriteFile(filepath.Join(pyExDir, ".docs", "instructions.md"), []byte("# Two Fer\nReturn One for X"), 0644)
-	os.WriteFile(filepath.Join(pyExDir, "two_fer_test.py"), []byte("def test_no_name(): pass"), 0644)
-	os.WriteFile(filepath.Join(pyExDir, "two_fer.py"), []byte("def two_fer(): pass"), 0644)
+	if err := os.MkdirAll(filepath.Join(pyExDir, ".docs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pyExDir, ".docs", "instructions.md"), []byte("# Two Fer\nReturn One for X"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pyExDir, "two_fer_test.py"), []byte("def test_no_name(): pass"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pyExDir, "two_fer.py"), []byte("def two_fer(): pass"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := ImportPolyglot(store, repoDir)
 	if err != nil {
@@ -66,9 +82,15 @@ func TestImportRooCode(t *testing.T) {
 
 	// Go exercise under exercises/go/slug
 	goExDir := filepath.Join(repoDir, "exercises", "go", "hello-world")
-	os.MkdirAll(goExDir, 0755)
-	os.WriteFile(filepath.Join(goExDir, "README.md"), []byte("# Hello World"), 0644)
-	os.WriteFile(filepath.Join(goExDir, "hello_world_test.go"), []byte("package greeting\n\nfunc TestHello() {}"), 0644)
+	if err := os.MkdirAll(goExDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(goExDir, "README.md"), []byte("# Hello World"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(goExDir, "hello_world_test.go"), []byte("package greeting\n\nfunc TestHello() {}"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := ImportRooCode(store, repoDir)
 	if err != nil {
@@ -91,8 +113,12 @@ func TestImportSkipsMissingInstructions(t *testing.T) {
 
 	repoDir := t.TempDir()
 	exerciseDir := filepath.Join(repoDir, "go", "exercises", "practice", "no-docs")
-	os.MkdirAll(exerciseDir, 0755)
-	os.WriteFile(filepath.Join(exerciseDir, "no_docs_test.go"), []byte("package x\nfunc TestX() {}"), 0644)
+	if err := os.MkdirAll(exerciseDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(exerciseDir, "no_docs_test.go"), []byte("package x\nfunc TestX() {}"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	result, _ := ImportPolyglot(store, repoDir)
 	if result.Imported != 0 {
@@ -138,13 +164,21 @@ func TestImportExercism(t *testing.T) {
 	slugs := []string{"hello-world", "two-fer", "leap"}
 	for _, slug := range slugs {
 		exDir := filepath.Join(repoDir, "exercises", "practice", slug)
-		os.MkdirAll(filepath.Join(exDir, ".docs"), 0755)
-		os.WriteFile(filepath.Join(exDir, ".docs", "instructions.md"),
-			[]byte("# "+slug+"\nSolve this exercise."), 0644)
-		os.WriteFile(filepath.Join(exDir, toSnake(slug)+"_test.go"),
-			[]byte("package "+toSnake(slug)+"\n\nimport \"testing\"\n\nfunc TestSolution(t *testing.T) {}"), 0644)
-		os.WriteFile(filepath.Join(exDir, toSnake(slug)+".go"),
-			[]byte("package "+toSnake(slug)+"\n"), 0644)
+		if err := os.MkdirAll(filepath.Join(exDir, ".docs"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(exDir, ".docs", "instructions.md"),
+			[]byte("# "+slug+"\nSolve this exercise."), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(exDir, toSnake(slug)+"_test.go"),
+			[]byte("package "+toSnake(slug)+"\n\nimport \"testing\"\n\nfunc TestSolution(t *testing.T) {}"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(exDir, toSnake(slug)+".go"),
+			[]byte("package "+toSnake(slug)+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	result, err := ImportExercism(store, repoDir, "go")
@@ -199,18 +233,27 @@ func TestImportMultiPLE(t *testing.T) {
 
 	// Create JSONL file with MultiPL-E format
 	dataDir := filepath.Join(repoDir, "data")
-	os.MkdirAll(dataDir, 0755)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	entries := []multipleLangEntry{
 		{Name: "HumanEval_0", Prompt: "def has_close_elements(numbers, threshold):\n    \"\"\"Check if any two numbers are closer than threshold.\"\"\"", Tests: "def test_has_close():\n    assert has_close_elements([1.0, 2.0], 0.5) == False", EntryPoint: "has_close_elements"},
 		{Name: "HumanEval_1", Prompt: "def separate_paren_groups(paren_string):\n    \"\"\"Separate parentheses groups.\"\"\"", Tests: "def test_separate():\n    assert separate_paren_groups('(())') == ['(())']", EntryPoint: "separate_paren_groups"},
 	}
 
-	f, _ := os.Create(filepath.Join(dataDir, "py-humaneval.jsonl"))
+	f, err := os.Create(filepath.Join(dataDir, "py-humaneval.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, e := range entries {
 		data, _ := json.Marshal(e)
-		f.Write(data)
-		f.WriteString("\n")
+		if _, err := f.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("\n"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.Close()
 
@@ -219,11 +262,18 @@ func TestImportMultiPLE(t *testing.T) {
 		{Name: "HumanEval_0", Prompt: "// HasCloseElements checks if any two numbers are closer than threshold.", Tests: "func TestHasClose(t *testing.T) {\n\tif HasCloseElements([]float64{1.0, 2.0}, 0.5) {\n\t\tt.Error(\"should be false\")\n\t}\n}", EntryPoint: "HasCloseElements"},
 	}
 
-	f2, _ := os.Create(filepath.Join(dataDir, "go-humaneval.jsonl"))
+	f2, err := os.Create(filepath.Join(dataDir, "go-humaneval.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, e := range goEntries {
 		data, _ := json.Marshal(e)
-		f2.Write(data)
-		f2.WriteString("\n")
+		if _, err := f2.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f2.WriteString("\n"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f2.Close()
 
@@ -263,17 +313,26 @@ func TestImportMultiPLEDirectory(t *testing.T) {
 
 	// Directory format: datasets/py-humaneval/*.jsonl
 	dsDir := filepath.Join(repoDir, "datasets", "py-humaneval")
-	os.MkdirAll(dsDir, 0755)
+	if err := os.MkdirAll(dsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	entries := []multipleLangEntry{
 		{Name: "HumanEval_5", Prompt: "def intersperse(numbers, delimiter):", Tests: "def test_intersperse():\n    assert intersperse([], 4) == []", EntryPoint: "intersperse"},
 	}
 
-	f, _ := os.Create(filepath.Join(dsDir, "humaneval.jsonl"))
+	f, err := os.Create(filepath.Join(dsDir, "humaneval.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, e := range entries {
 		data, _ := json.Marshal(e)
-		f.Write(data)
-		f.WriteString("\n")
+		if _, err := f.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("\n"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.Close()
 
@@ -303,7 +362,9 @@ func TestImportEvalPlus(t *testing.T) {
 
 	repoDir := t.TempDir()
 	dataDir := filepath.Join(repoDir, "data")
-	os.MkdirAll(dataDir, 0755)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	entries := []evalPlusEntry{
 		{TaskID: "HumanEval/0", Prompt: "def has_close_elements(numbers, threshold):", Test: "def test_has_close():\n    assert has_close_elements([1.0, 2.0], 0.5) == False", EntryPoint: "has_close_elements"},
@@ -311,18 +372,32 @@ func TestImportEvalPlus(t *testing.T) {
 		{TaskID: "MBPP/1", Prompt: "def add(a, b):", Test: "def test_add():\n    assert add(1, 2) == 3", EntryPoint: "add"},
 	}
 
-	f, _ := os.Create(filepath.Join(dataDir, "humaneval_plus.jsonl"))
+	f, err := os.Create(filepath.Join(dataDir, "humaneval_plus.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, e := range entries[:2] {
 		data, _ := json.Marshal(e)
-		f.Write(data)
-		f.WriteString("\n")
+		if _, err := f.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("\n"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.Close()
 
-	f2, _ := os.Create(filepath.Join(dataDir, "mbpp_plus.jsonl"))
+	f2, err := os.Create(filepath.Join(dataDir, "mbpp_plus.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	data, _ := json.Marshal(entries[2])
-	f2.Write(data)
-	f2.WriteString("\n")
+	if _, err := f2.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f2.WriteString("\n"); err != nil {
+		t.Fatal(err)
+	}
 	f2.Close()
 
 	result, err := ImportEvalPlus(store, repoDir)
@@ -367,7 +442,9 @@ func TestImportCodeContests(t *testing.T) {
 
 	repoDir := t.TempDir()
 	dataDir := filepath.Join(repoDir, "data")
-	os.MkdirAll(dataDir, 0755)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	entries := []codeContestEntry{
 		{
@@ -383,11 +460,18 @@ func TestImportCodeContests(t *testing.T) {
 		},
 	}
 
-	f, _ := os.Create(filepath.Join(dataDir, "train.jsonl"))
+	f, err := os.Create(filepath.Join(dataDir, "train.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, e := range entries {
 		data, _ := json.Marshal(e)
-		f.Write(data)
-		f.WriteString("\n")
+		if _, err := f.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("\n"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.Close()
 
@@ -429,10 +513,15 @@ func TestImportCodeContestsMaxCount(t *testing.T) {
 
 	repoDir := t.TempDir()
 	dataDir := filepath.Join(repoDir, "data")
-	os.MkdirAll(dataDir, 0755)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create multiple problems
-	f, _ := os.Create(filepath.Join(dataDir, "test.jsonl"))
+	f, err := os.Create(filepath.Join(dataDir, "test.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 10; i++ {
 		entry := codeContestEntry{
 			Name:        "problem_" + string(rune('a'+i)),
@@ -446,12 +535,16 @@ func TestImportCodeContestsMaxCount(t *testing.T) {
 			},
 		}
 		data, _ := json.Marshal(entry)
-		f.Write(data)
-		f.WriteString("\n")
+		if _, err := f.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("\n"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.Close()
 
-	// Import with maxCount=12 (2 problems × 6 languages = 12)
+	// Import with maxCount=12 (2 problems x 6 languages = 12)
 	result, err := ImportCodeContests(store, repoDir, 12)
 	if err != nil {
 		t.Fatal(err)
@@ -500,7 +593,9 @@ func TestImportDS1000(t *testing.T) {
 
 	repoDir := t.TempDir()
 	dataDir := filepath.Join(repoDir, "data")
-	os.MkdirAll(dataDir, 0755)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	entries := []ds1000Entry{
 		{
@@ -517,11 +612,18 @@ func TestImportDS1000(t *testing.T) {
 		},
 	}
 
-	f, _ := os.Create(filepath.Join(dataDir, "ds1000.jsonl"))
+	f, err := os.Create(filepath.Join(dataDir, "ds1000.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, e := range entries {
 		data, _ := json.Marshal(e)
-		f.Write(data)
-		f.WriteString("\n")
+		if _, err := f.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("\n"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.Close()
 
@@ -573,7 +675,9 @@ func TestImportBIRDSQL(t *testing.T) {
 
 	repoDir := t.TempDir()
 	dataDir := filepath.Join(repoDir, "data")
-	os.MkdirAll(dataDir, 0755)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	entries := []birdSQLEntry{
 		{
@@ -595,11 +699,18 @@ func TestImportBIRDSQL(t *testing.T) {
 		},
 	}
 
-	f, _ := os.Create(filepath.Join(dataDir, "mini_dev_prompt.jsonl"))
+	f, err := os.Create(filepath.Join(dataDir, "mini_dev_prompt.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, e := range entries {
 		data, _ := json.Marshal(e)
-		f.Write(data)
-		f.WriteString("\n")
+		if _, err := f.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("\n"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.Close()
 
@@ -633,7 +744,9 @@ func TestImportDAREBench(t *testing.T) {
 
 	repoDir := t.TempDir()
 	evalDir := filepath.Join(repoDir, "data", "eval")
-	os.MkdirAll(evalDir, 0755)
+	if err := os.MkdirAll(evalDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	entries := []dareBenchEntry{
 		{
@@ -649,7 +762,9 @@ func TestImportDAREBench(t *testing.T) {
 	}
 
 	data, _ := json.Marshal(entries)
-	os.WriteFile(filepath.Join(evalDir, "question_list.json"), data, 0644)
+	if err := os.WriteFile(filepath.Join(evalDir, "question_list.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := ImportDAREBench(store, repoDir)
 	if err != nil {
@@ -681,7 +796,9 @@ func TestImportWritingBench(t *testing.T) {
 
 	repoDir := t.TempDir()
 	dataDir := filepath.Join(repoDir, "data")
-	os.MkdirAll(dataDir, 0755)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	entries := []writingBenchEntry{
 		{
@@ -703,11 +820,18 @@ func TestImportWritingBench(t *testing.T) {
 		},
 	}
 
-	f, _ := os.Create(filepath.Join(dataDir, "benchmark_all.jsonl"))
+	f, err := os.Create(filepath.Join(dataDir, "benchmark_all.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, e := range entries {
 		data, _ := json.Marshal(e)
-		f.Write(data)
-		f.WriteString("\n")
+		if _, err := f.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("\n"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.Close()
 
@@ -744,7 +868,9 @@ func TestImportPPTArena(t *testing.T) {
 
 	repoDir := t.TempDir()
 	dataDir := filepath.Join(repoDir, "data")
-	os.MkdirAll(dataDir, 0755)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	entries := []pptArenaEntry{
 		{
@@ -766,7 +892,9 @@ func TestImportPPTArena(t *testing.T) {
 	}
 
 	data, _ := json.Marshal(entries)
-	os.WriteFile(filepath.Join(dataDir, "evaluation_pairs_refined.json"), data, 0644)
+	if err := os.WriteFile(filepath.Join(dataDir, "evaluation_pairs_refined.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := ImportPPTArena(store, repoDir)
 	if err != nil {
@@ -919,9 +1047,15 @@ func TestDeduplicationAcrossSuites(t *testing.T) {
 
 	// Create a polyglot exercise
 	goExDir := filepath.Join(repoDir, "go", "exercises", "practice", "hello-world")
-	os.MkdirAll(filepath.Join(goExDir, ".docs"), 0755)
-	os.WriteFile(filepath.Join(goExDir, ".docs", "instructions.md"), []byte("# Hello World"), 0644)
-	os.WriteFile(filepath.Join(goExDir, "hello_world_test.go"), []byte("package greeting\n\nfunc TestHello() {}"), 0644)
+	if err := os.MkdirAll(filepath.Join(goExDir, ".docs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(goExDir, ".docs", "instructions.md"), []byte("# Hello World"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(goExDir, "hello_world_test.go"), []byte("package greeting\n\nfunc TestHello() {}"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	r1, _ := ImportPolyglot(store, repoDir)
 	if r1.Imported != 1 {
@@ -931,9 +1065,15 @@ func TestDeduplicationAcrossSuites(t *testing.T) {
 	// Create an exercism exercise with the same slug
 	exDir := t.TempDir()
 	exSlugDir := filepath.Join(exDir, "exercises", "practice", "hello-world")
-	os.MkdirAll(filepath.Join(exSlugDir, ".docs"), 0755)
-	os.WriteFile(filepath.Join(exSlugDir, ".docs", "instructions.md"), []byte("# Hello World (exercism)"), 0644)
-	os.WriteFile(filepath.Join(exSlugDir, "hello_world_test.go"), []byte("package greeting\n\nfunc TestHello() {}"), 0644)
+	if err := os.MkdirAll(filepath.Join(exSlugDir, ".docs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(exSlugDir, ".docs", "instructions.md"), []byte("# Hello World (exercism)"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(exSlugDir, "hello_world_test.go"), []byte("package greeting\n\nfunc TestHello() {}"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	r2, _ := ImportExercism(store, exDir, "go")
 	if r2.Imported != 1 {

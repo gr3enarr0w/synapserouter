@@ -164,10 +164,7 @@ func hasAnyCredential() bool {
 			return true
 		}
 	}
-	if HasAnyStoredCredentials() {
-		return true
-	}
-	return false
+	return HasAnyStoredCredentials()
 }
 
 func defaultModel(models []ModelInfo, fallback string) string {

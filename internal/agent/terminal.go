@@ -38,7 +38,7 @@ func (t *Terminal) MakeRaw() (restore func(), err error) {
 	if err != nil {
 		return nil, fmt.Errorf("make raw: %w", err)
 	}
-	return func() { term.Restore(t.fd, oldState) }, nil
+	return func() { _ = term.Restore(t.fd, oldState) }, nil
 }
 
 // GetSize returns the terminal width and height.
@@ -85,7 +85,7 @@ func OnResize(callback func(width, height int)) func() {
 		for {
 			select {
 			case <-ch:
-				w, h, err := term.GetSize(int(os.Stdout.Fd()))
+				w, h, err := term.GetSize(int(os.Stdout.Fd())) //nolint:G115 // os.Stdout.Fd() always fits in int on supported platforms
 				if err == nil {
 					callback(w, h)
 				}

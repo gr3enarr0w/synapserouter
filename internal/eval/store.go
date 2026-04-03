@@ -362,7 +362,7 @@ func (s *Store) GetResultsByRun(runID string) ([]EvalResult, error) {
 			r.JudgeProvider = judgeProvider.String
 		}
 		if fallbackJSON != "" {
-			json.Unmarshal([]byte(fallbackJSON), &r.FallbackChain)
+			_ = json.Unmarshal([]byte(fallbackJSON), &r.FallbackChain) // best-effort: empty chain on invalid JSON
 		}
 
 		results = append(results, r)

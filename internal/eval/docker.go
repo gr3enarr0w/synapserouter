@@ -33,7 +33,7 @@ func RunTestInDocker(ctx context.Context, exercise Exercise, code string, timeou
 	if err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("create tmpdir: %v", err)}
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	if err := scaffoldWorkspace(tmpDir, exercise, code); err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("scaffold: %v", err)}
@@ -117,7 +117,7 @@ func scaffoldGo(dir string, ex Exercise, code string) error {
 
 	// go.mod
 	modContent := fmt.Sprintf("module %s\n\ngo 1.22\n", pkg)
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0644); err != nil { //nolint:G306 // build artifact, not sensitive
 		return err
 	}
 
@@ -127,13 +127,13 @@ func scaffoldGo(dir string, ex Exercise, code string) error {
 	if !strings.HasPrefix(strings.TrimSpace(code), "package ") {
 		code = "package " + pkg + "\n\n" + code
 	}
-	if err := os.WriteFile(filepath.Join(dir, codeFile), []byte(code), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, codeFile), []byte(code), 0644); err != nil { //nolint:G306 // build artifact, not sensitive
 		return err
 	}
 
 	// Test file
 	testFile := toSnake(ex.Slug) + "_test.go"
-	if err := os.WriteFile(filepath.Join(dir, testFile), []byte(ex.TestFile), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, testFile), []byte(ex.TestFile), 0644); err != nil { //nolint:G306 // build artifact, not sensitive
 		return err
 	}
 
@@ -322,22 +322,22 @@ var javaDisabledRegex = regexp.MustCompile(`\s*@(?:Disabled|Ignore)\s*\([^)]*\)\
 func scaffoldJava(dir string, ex Exercise, code string) error {
 	srcDir := filepath.Join(dir, "src", "main", "java")
 	testDir := filepath.Join(dir, "src", "test", "java")
-	if err := os.MkdirAll(srcDir, 0755); err != nil {
+	if err := os.MkdirAll(srcDir, 0755); err != nil { //nolint:G301 // build scaffold directory, needs exec bit
 		return err
 	}
-	if err := os.MkdirAll(testDir, 0755); err != nil {
+	if err := os.MkdirAll(testDir, 0755); err != nil { //nolint:G301 // build scaffold directory, needs exec bit
 		return err
 	}
 
 	className := toPascal(ex.Slug)
-	if err := os.WriteFile(filepath.Join(srcDir, className+".java"), []byte(code), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(srcDir, className+".java"), []byte(code), 0644); err != nil { //nolint:G306 // build artifact
 		return err
 	}
 
 	// Strip @Disabled/@Ignore annotations so all tests run (same pattern as JS xtest→test)
 	testContent := javaDisabledRegex.ReplaceAllString(ex.TestFile, "\n")
 
-	if err := os.WriteFile(filepath.Join(testDir, className+"Test.java"), []byte(testContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(testDir, className+"Test.java"), []byte(testContent), 0644); err != nil { //nolint:G306 // build artifact
 		return err
 	}
 
@@ -350,16 +350,16 @@ dependencies {
 }
 test { useJUnitPlatform() }
 `
-	return os.WriteFile(filepath.Join(dir, "build.gradle"), []byte(gradle), 0644)
+	return os.WriteFile(filepath.Join(dir, "build.gradle"), []byte(gradle), 0644) //nolint:G306 // build artifact
 }
 
 func scaffoldRust(dir string, ex Exercise, code string) error {
 	srcDir := filepath.Join(dir, "src")
 	testsDir := filepath.Join(dir, "tests")
-	if err := os.MkdirAll(srcDir, 0755); err != nil {
+	if err := os.MkdirAll(srcDir, 0755); err != nil { //nolint:G301 // build scaffold directory, needs exec bit
 		return err
 	}
-	if err := os.MkdirAll(testsDir, 0755); err != nil {
+	if err := os.MkdirAll(testsDir, 0755); err != nil { //nolint:G301 // build scaffold directory, needs exec bit
 		return err
 	}
 

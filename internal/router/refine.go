@@ -270,10 +270,7 @@ func containsCodeIndicators(text string) bool {
 			return true
 		}
 	}
-	if strings.Contains(text, "`") {
-		return true
-	}
-	return false
+	return strings.Contains(text, "`")
 }
 
 var actionVerbs = map[string]bool{

@@ -135,8 +135,9 @@ func (m *MockSubscriptionServer) Start(port int) error {
 	})
 
 	m.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	log.Printf("[MOCK] Starting mock subscription server on port %d", port)

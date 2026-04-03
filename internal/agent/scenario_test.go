@@ -433,10 +433,3 @@ func TestScenarioToolDefsPassedToLLM(t *testing.T) {
 		t.Errorf("expected 10 tool definitions, got %d", len(toolDefs))
 	}
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

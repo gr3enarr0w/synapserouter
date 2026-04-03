@@ -653,7 +653,7 @@ func (r *Router) ChatCompletionStreamForProvider(
 	if sp, ok := p.(providers.StreamingProvider); ok {
 		resp, err := sp.ChatCompletionStream(ctx, req, sessionID, onToken)
 		if err == nil {
-			r.circuitBreakers[p.Name()].RecordSuccess()
+			_ = r.circuitBreakers[p.Name()].RecordSuccess()
 			return resp, nil
 		}
 		log.Printf("[Router] streaming failed for %s, falling back: %v", p.Name(), err)
@@ -796,21 +796,21 @@ func (r *Router) tryProvider(
 		}
 
 		// Non-rate-limit failure — record in circuit breaker
-		r.circuitBreakers[provider.Name()].RecordFailure()
+		_ = r.circuitBreakers[provider.Name()].RecordFailure()
 
 		// Legacy rate limit detection for providers not using ProviderError
 		if isRateLimitError(err) {
 			r.rateLimiter.RecordRateLimitHit(provider.Name(), 0)
 			cooldown := rateLimitCooldown(provider.Name(), err)
 			log.Printf("[Router] %s rate limited (legacy), circuit cooldown %s", provider.Name(), cooldown)
-			r.circuitBreakers[provider.Name()].Open(cooldown)
+			_ = r.circuitBreakers[provider.Name()].Open(cooldown)
 		}
 
 		return providers.ChatResponse{}, err
 	}
 
 	// Record success — circuit breaker AND rate limiter
-	r.circuitBreakers[provider.Name()].RecordSuccess()
+	_ = r.circuitBreakers[provider.Name()].RecordSuccess()
 	r.rateLimiter.RecordSuccess(provider.Name())
 	r.healthMu.Lock()
 	r.healthCache[provider.Name()] = &cachedHealth{healthy: true, checkedAt: time.Now()}
@@ -970,14 +970,6 @@ func isRateLimitError(err error) bool {
 		strings.Contains(errStr, "429") ||
 		strings.Contains(errStr, "quota exceeded") ||
 		strings.Contains(errStr, "too many requests")
-}
-
-func isContextError(err error) bool {
-	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "context") ||
-		strings.Contains(errStr, "too long") ||
-		strings.Contains(errStr, "maximum context") ||
-		strings.Contains(errStr, "token limit")
 }
 
 func lastUserMessage(messages []providers.Message) string {

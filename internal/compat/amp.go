@@ -87,7 +87,7 @@ func SaveAmpCodeConfig(db *sql.DB, cfg AmpCodeConfig) error {
 	if db == nil {
 		return nil
 	}
-	raw, err := json.Marshal(cfg)
+	raw, err := json.Marshal(cfg) //nolint:G117 // config with API key intentionally serialized to DB
 	if err != nil {
 		return err
 	}

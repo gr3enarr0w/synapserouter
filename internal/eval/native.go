@@ -46,7 +46,7 @@ func runGoTestNative(ctx context.Context, ex Exercise, code string) DockerTestRe
 	if err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("create tmpdir: %v", err)}
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	if err := scaffoldGo(tmpDir, ex, code); err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("scaffold: %v", err)}
@@ -74,7 +74,7 @@ func runPythonTestNative(ctx context.Context, ex Exercise, code string) DockerTe
 	if err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("create tmpdir: %v", err)}
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	if err := scaffoldPython(tmpDir, ex, code); err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("scaffold: %v", err)}
@@ -110,7 +110,7 @@ func runPythonTestWithAutoInstall(ctx context.Context, dir string, args ...strin
 			installArgs := append([]string{"-m", "pip", "install", "--quiet"}, modules...)
 			installCmd := exec.CommandContext(ctx, "python3", installArgs...)
 			installCmd.Dir = dir
-			installCmd.Run() // best-effort, errors non-fatal
+			_ = installCmd.Run() // best-effort, errors non-fatal
 			// Retry the test
 			result = runPythonCmd(ctx, dir, args...)
 		}
@@ -160,7 +160,7 @@ func runJSTestNative(ctx context.Context, ex Exercise, code string) DockerTestRe
 	if err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("create tmpdir: %v", err)}
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	if err := scaffoldJavaScript(tmpDir, ex, code); err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("scaffold: %v", err)}
@@ -193,7 +193,7 @@ func runRustTestNative(ctx context.Context, ex Exercise, code string) DockerTest
 	if err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("create tmpdir: %v", err)}
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	if err := scaffoldRust(tmpDir, ex, code); err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("scaffold: %v", err)}
@@ -219,7 +219,7 @@ func runCppTestNative(ctx context.Context, ex Exercise, code string) DockerTestR
 	if err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("create tmpdir: %v", err)}
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	if err := scaffoldCpp(tmpDir, ex, code); err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("scaffold: %v", err)}
@@ -234,7 +234,7 @@ func runCppTestNative(ctx context.Context, ex Exercise, code string) DockerTestR
 
 	// Build with cmake (CMakeLists already has -DEXERCISM_RUN_ALL_TESTS)
 	buildDir := filepath.Join(tmpDir, "build")
-	if err := os.MkdirAll(buildDir, 0755); err != nil {
+	if err := os.MkdirAll(buildDir, 0755); err != nil { //nolint:G301 // build directory, needs exec bit
 		return DockerTestResult{Error: fmt.Sprintf("create build dir: %v", err)}
 	}
 
@@ -303,7 +303,7 @@ func runJavaTestNative(ctx context.Context, ex Exercise, code string) DockerTest
 	if err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("create tmpdir: %v", err)}
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	if err := scaffoldJava(tmpDir, ex, code); err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("scaffold: %v", err)}
@@ -396,7 +396,7 @@ func runSQLTestNative(ctx context.Context, ex Exercise, code string) DockerTestR
 	if err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("create tmpdir: %v", err)}
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	if err := scaffoldSQL(tmpDir, ex, code); err != nil {
 		return DockerTestResult{Error: fmt.Sprintf("scaffold: %v", err)}

@@ -649,7 +649,9 @@ func TestE2ERunLifecycleWithResults(t *testing.T) {
 	}
 
 	// Verify run listing
-	store.CreateRun(EvalRun{ID: "e2e-run-2", Config: EvalRunConfig{}, Status: "completed", StartedAt: now()})
+	if err := store.CreateRun(EvalRun{ID: "e2e-run-2", Config: EvalRunConfig{}, Status: "completed", StartedAt: now()}); err != nil {
+		t.Fatal(err)
+	}
 	runs, _ := store.ListRuns(10)
 	if len(runs) < 2 {
 		t.Fatalf("expected at least 2 runs, got %d", len(runs))
@@ -685,12 +687,14 @@ func TestFailRun(t *testing.T) {
 	db := newTestDB(t)
 	store := NewStore(db)
 
-	store.CreateRun(EvalRun{
+	if err := store.CreateRun(EvalRun{
 		ID:        "fail-run",
 		Config:    EvalRunConfig{},
 		Status:    "running",
 		StartedAt: now(),
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := store.FailRun("fail-run"); err != nil {
 		t.Fatal(err)

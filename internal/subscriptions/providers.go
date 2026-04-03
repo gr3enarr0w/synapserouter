@@ -32,7 +32,6 @@ type anthropicProvider struct {
 	models       []string
 	client       *http.Client
 	mu           sync.Mutex
-	cursor       int
 }
 
 type openAIProvider struct {
@@ -44,7 +43,6 @@ type openAIProvider struct {
 	models       []string
 	client       *http.Client
 	mu           sync.Mutex
-	cursor       int
 }
 
 type geminiProvider struct {
@@ -56,7 +54,6 @@ type geminiProvider struct {
 	models       []string
 	client       *http.Client
 	mu           sync.Mutex
-	cursor       int
 }
 
 func buildProviders(cfg Config) ([]provider, error) {
@@ -889,17 +886,6 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
-func (p *anthropicProvider) nextCredential() ProviderCredential {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.credentials) == 0 {
-		return p.fallbackCredential()
-	}
-	credential := p.credentials[p.cursor%len(p.credentials)]
-	p.cursor = (p.cursor + 1) % len(p.credentials)
-	return credential
-}
-
 func (p *anthropicProvider) credentialSequence(ctx context.Context) []ProviderCredential {
 	if override := preferredUpstreamAPIKey(ctx); override != "" {
 		return []ProviderCredential{{APIKey: override}}
@@ -927,17 +913,6 @@ func (p *anthropicProvider) fallbackCredential() ProviderCredential {
 		SessionToken:   strings.TrimSpace(p.sessionToken),
 		CredentialType: resolveCredentialType(p.apiKey, p.sessionToken, credentialTypeUnknown),
 	}
-}
-
-func (p *openAIProvider) nextCredential() ProviderCredential {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.credentials) == 0 {
-		return p.fallbackCredential()
-	}
-	credential := p.credentials[p.cursor%len(p.credentials)]
-	p.cursor = (p.cursor + 1) % len(p.credentials)
-	return credential
 }
 
 func (p *openAIProvider) credentialSequence(ctx context.Context) []ProviderCredential {
@@ -975,17 +950,6 @@ func (p *openAIProvider) fallbackCredential() ProviderCredential {
 		SessionToken:   strings.TrimSpace(p.sessionToken),
 		CredentialType: resolveCredentialType(p.apiKey, p.sessionToken, credentialTypeUnknown),
 	}
-}
-
-func (p *geminiProvider) nextCredential() ProviderCredential {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.credentials) == 0 {
-		return p.fallbackCredential()
-	}
-	credential := p.credentials[p.cursor%len(p.credentials)]
-	p.cursor = (p.cursor + 1) % len(p.credentials)
-	return credential
 }
 
 func (p *geminiProvider) credentialSequence(ctx context.Context) []ProviderCredential {

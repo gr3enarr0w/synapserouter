@@ -25,7 +25,7 @@ func nativeServiceAccountToken(keyFile string) (string, error) {
 }
 
 func nativeServiceAccountTokenWithClient(keyFile string, client *http.Client) (string, error) {
-	data, err := os.ReadFile(keyFile)
+	data, err := os.ReadFile(keyFile) //nolint:G703 // keyFile is operator-configured path (env var or gcloud default)
 	if err != nil {
 		return "", fmt.Errorf("read service account key: %w", err)
 	}
@@ -94,7 +94,7 @@ func nativeADCTokenWithClient(client *http.Client) (string, error) {
 }
 
 func loadCredentialFile(path string, client *http.Client) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:G703 // path is operator-configured credential file location
 	if err != nil {
 		return "", fmt.Errorf("read credentials file: %w", err)
 	}
