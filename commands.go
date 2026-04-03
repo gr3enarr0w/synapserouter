@@ -428,6 +428,41 @@ func cmdModels(args []string) {
 	}
 }
 
+func cmdRecommend(args []string) {
+	fs := flag.NewFlagSet("recommend", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Parse(args)
+
+	ctx := context.Background()
+	ac, err := app.InitLight(ctx)
+	if err != nil {
+		log.Fatalf("Failed to initialize: %v", err)
+	}
+
+	// Get available models
+	models := app.ListModels(ac.Providers, ac.Profile, "")
+
+	// Convert to ModelInfo for the recommendation engine
+	var available []subscriptions.ModelInfo
+	for _, m := range models {
+		available = append(available, subscriptions.ModelInfo{
+			ID:      stringVal(m, "id"),
+			OwnedBy: stringVal(m, "owned_by"),
+		})
+	}
+
+	// Load catalog and generate recommendation
+	catalog := agent.LoadModelCatalog()
+	report := agent.GenerateRecommendation(available, catalog, ac.Profile)
+
+	if *jsonOutput {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Println(string(data))
+	} else {
+		fmt.Print(agent.FormatRecommendation(report))
+	}
+}
+
 func stringVal(m map[string]interface{}, key string) string {
 	if v, ok := m[key]; ok {
 		return fmt.Sprintf("%v", v)

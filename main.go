@@ -87,6 +87,8 @@ func main() {
 			cmdDoctor(os.Args[2:])
 		case "models":
 			cmdModels(os.Args[2:])
+		case "recommend":
+			cmdRecommend(os.Args[2:])
 		case "eval":
 			cmdEval(os.Args[2:])
 		case "chat":
