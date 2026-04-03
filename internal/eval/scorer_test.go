@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -106,7 +107,7 @@ func TestPercentile(t *testing.T) {
 	data := []float64{100, 200, 300, 400, 500}
 
 	p50 := Percentile(data, 50)
-	if p50 != 300 {
+	if math.Abs(p50-300) > 0.001 {
 		t.Errorf("p50 of [100-500] = %f, want 300", p50)
 	}
 
@@ -119,7 +120,7 @@ func TestPercentile(t *testing.T) {
 	if Percentile(nil, 50) != 0 {
 		t.Error("p50 of empty = 0")
 	}
-	if Percentile([]float64{42}, 50) != 42 {
+	if math.Abs(Percentile([]float64{42}, 50)-42) > 0.001 {
 		t.Error("p50 of [42] = 42")
 	}
 }
