@@ -51,6 +51,9 @@ type CodeRenderer struct {
 	// Profile for banner display
 	providerLabel string
 
+	// Tiers tracking
+	totalTiers int
+
 	// Styling
 	noColor bool
 
@@ -330,11 +333,19 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 			cr.recentTools = cr.recentTools[1:]
 		}
 		if cr.verbosity >= VerbosityNormal {
-			status := ""
+			summary := str(e.Data, "args_summary")
+			statusIcon := "✓"
+			statusColor := "\033[32m"
 			if isErr {
-				status = cr.color("\033[31m", " (error)")
+				statusIcon = "✗"
+				statusColor = "\033[31m"
 			}
-			cr.writeContent(cr.color("\033[2m", fmt.Sprintf("    <- %s %s%s", name, duration, status)))
+			formatted := fmt.Sprintf("  %s %s %s %s",
+				cr.color("\033[36m", "["+name+"]"),
+				summary,
+				cr.color("\033[2m", "("+duration+")"),
+				cr.color(statusColor, statusIcon))
+			cr.writeContent(formatted)
 		}
 
 	case EventEscalation:
@@ -342,7 +353,7 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		if total == 0 {
 			total = 6
 		}
-		cr.writeContent(cr.color("\033[2m", fmt.Sprintf("  %d tiers engaged", total)))
+		cr.totalTiers = total
 
 
 	case EventSubAgentSpawn:
