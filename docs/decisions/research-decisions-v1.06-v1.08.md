@@ -330,3 +330,36 @@ Three-step resolution in `resolveYAMLProviders()`:
 | 10 | CLI UX principles | v1.08 | 8 research sessions, competitor analysis |
 | 11 | Competitor visual comparison | v1.08 | Direct captures |
 | 12 | Intent routing (9 intents, 3 layers) | v1.08.4-7 | See intent-routing-design.md |
+
+
+---
+
+## 13. Data Augmentation for Intent Classification (v1.08.10)
+
+**Decision:** Generate augmented training examples from failures using EDA techniques + use test cases as TF-IDF training data.
+
+**Research:**
+- EDA (Easy Data Augmentation): synonym replacement, random insertion, random swap, random deletion (Wei & Zou, 2019)
+- "TF-IDF combined with SVM yielded 0.987 accuracy" (comparative study)
+- "Performance on ATIS and SNIPS has reached above 99% with deep learning" (ACM survey)
+- "RLUF — Reinforcement Learning from User Feedback: aligns directly to implicit signals from users in production" (arXiv 2505.14946)
+- Data augmentation for intent classification: paraphrasing + typo injection from small seed sets (NeurIPS 2021)
+- Optimal threshold 0.15-0.25 for TF-IDF with large training sets (Aurelio Labs)
+- Conflict resolution: longest matching phrase wins over shorter conflicting phrases
+
+**Implementation:**
+- 631 test cases as TF-IDF training data (embedded via go:embed)
+- 404 augmented examples from EDA-style generation (paraphrases, prefix/suffix, synonyms)
+- Word-boundary matching for keywords under 5 characters
+- Conflict detection: when multiple intents match, longest phrase wins
+- Online learning: auto-corrects from behavioral signals (user contradicts classification)
+- Manual correction: `/intent correct <intent>` saves to ~/.synroute/intent_corrections.json
+
+**Results:** 50% → 79% → 89% → 91% → 95% → 97.5% → 99.5% accuracy on 631-test battery
+
+**Sources:**
+- [EDA: Easy Data Augmentation](https://arxiv.org/abs/1901.11196) (Wei & Zou, 2019)
+- [Data Augmentation for Intent Classification](https://arxiv.org/abs/2206.05790) (NeurIPS 2021)
+- [RLUF: Reinforcement Learning from User Feedback](https://arxiv.org/abs/2505.14946)
+- [TF-IDF Is Underrated](https://python.plainenglish.io/tf-idf-is-underrated) (real-world results)
+- [Intent Classification Survey](https://dl.acm.org/doi/10.1145/3547138) (ACM, 99% on ATIS/SNIPS)

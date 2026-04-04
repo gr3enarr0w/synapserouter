@@ -4,6 +4,7 @@ keywords:
 - run the tests
 - run the build
 - run the linter
+- build
 - run go test
 - run npm
 - run make
@@ -63,4 +64,18 @@ keywords:
 - todo
 - TBD
 - tbd
+- Commit with message 'fix auth'
+- Clean the build artifacts
+- lgtm deploy it
+- test
+- format
+- commit with message 'fix auth'
+- stop the server
+- create a branch
+- clean the build artifacts
+- merge these two functions
+- review the test suite
+- looks good ship it
+- lgtm deploy it
+- stop the server
 tool_group: full

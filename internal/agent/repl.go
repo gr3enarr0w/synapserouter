@@ -272,6 +272,21 @@ func (r *REPL) handleCommand(ctx context.Context, input string) bool {
 			}
 		}
 
+	case "/intent":
+		if len(parts) < 3 || parts[1] != "correct" {
+			fmt.Fprintln(r.out, "Usage: /intent correct <intent>")
+			fmt.Fprintln(r.out, "Example: /intent correct code")
+			return false
+		}
+		intent := parts[2]
+		// Save the last user message + corrected intent
+		if err := saveIntentCorrection(r.agent.conversation.LastUserMessage(), intent); err != nil {
+			fmt.Fprintf(r.out, "Error saving correction: %v\n", err)
+		} else {
+			fmt.Fprintf(r.out, "Saved correction: message -> intent '%s'\n", intent)
+		}
+		return false
+
 	case "/help":
 		fmt.Fprintln(r.out, `Commands:
   /exit      Exit the REPL
@@ -286,6 +301,8 @@ func (r *REPL) handleCommand(ctx context.Context, input string) bool {
   /check     Run self-check phase (build, test, verify)
   /fix <msg> Run targeted implement phase (fix specific issue)
   /research  Run web research (e.g., /research deep <query>)
+  /intent    Intent commands
+    correct <intent> - Correct last message classification
   /help      Show this help`)
 
 	default:

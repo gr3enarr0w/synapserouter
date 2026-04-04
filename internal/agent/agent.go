@@ -706,11 +706,12 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		// Intent classification and tool filtering
 		allTools := a.registry.OpenAIToolDefinitions()
 		filteredTools := allTools
+		var classifiedIntent Intent
 		if a.intentRouter != nil && a.originalRequest != "" {
-			intent := a.intentRouter.Classify(a.originalRequest)
-			log.Printf("[Intent] message=%q → %s (tools: %d→%d)", a.originalRequest[:min(len(a.originalRequest), 50)], intent, len(allTools), len(filterToolsByIntent(intent, allTools)))
-			if intent != IntentUnknown {
-				filteredTools = filterToolsByIntent(intent, allTools)
+			classifiedIntent = a.intentRouter.Classify(a.originalRequest)
+			log.Printf("[Intent] message=%q → %s (tools: %d→%d)", a.originalRequest[:min(len(a.originalRequest), 50)], classifiedIntent, len(allTools), len(filterToolsByIntent(classifiedIntent, allTools)))
+			if classifiedIntent != IntentUnknown {
+				filteredTools = filterToolsByIntent(classifiedIntent, allTools)
 			}
 		}
 
@@ -829,6 +830,49 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		// Reset hallucination recall count when agent makes tool calls (it moved on)
 		if len(msg.ToolCalls) > 0 {
 			a.hallucinationRecallCount = 0
+		}
+
+		// Implicit feedback: compare classified intent with actual tool usage
+		// and save corrections when there's a mismatch
+		if classifiedIntent != IntentUnknown && a.originalRequest != "" {
+			hasToolCalls := len(msg.ToolCalls) > 0
+			hasToolPatternsInText := false
+			
+			// Check for tool call patterns in response text (for models that output tools as text)
+			if msg.Content != "" {
+				toolPatterns := []string{"file_read", "file_write", "bash", "grep", "glob", "git"}
+				for _, pattern := range toolPatterns {
+					if strings.Contains(msg.Content, pattern) {
+						hasToolPatternsInText = true
+						break
+					}
+				}
+			}
+			
+			// Case 1: Classified as chat but LLM used tools → should have been generate/fix
+			if classifiedIntent == IntentChat && (hasToolCalls || hasToolPatternsInText) {
+				correctIntent := IntentGenerate
+				if strings.Contains(strings.ToLower(a.originalRequest), "fix") || 
+				   strings.Contains(strings.ToLower(a.originalRequest), "error") ||
+				   strings.Contains(strings.ToLower(a.originalRequest), "fail") {
+					correctIntent = IntentFix
+				}
+				log.Printf("[IntentFeedback] correction: %q was %s but used tools → %s", 
+					a.originalRequest[:min(len(a.originalRequest), 50)], classifiedIntent, correctIntent)
+				if err := saveIntentCorrection(a.originalRequest, string(correctIntent)); err != nil {
+					log.Printf("[IntentFeedback] warning: failed to save correction: %v", err)
+				}
+			}
+			
+			// Case 2: Classified as generate/fix but LLM responded with only text → likely chat
+			if (classifiedIntent == IntentGenerate || classifiedIntent == IntentFix || 
+			    classifiedIntent == IntentModify) && !hasToolCalls && !hasToolPatternsInText {
+				log.Printf("[IntentFeedback] correction: %q was %s but no tools used → chat", 
+					a.originalRequest[:min(len(a.originalRequest), 50)], classifiedIntent)
+				if err := saveIntentCorrection(a.originalRequest, string(IntentChat)); err != nil {
+					log.Printf("[IntentFeedback] warning: failed to save correction: %v", err)
+				}
+			}
 		}
 
 		// No tool calls → stall detection + pipeline advancement

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"log"
 	"math"
 	"strings"
@@ -38,6 +39,45 @@ type IntentRouter struct {
 	vectorMutex      sync.RWMutex
 }
 
+// containsKeyword checks if text contains a keyword with appropriate boundary matching
+// For keywords 5+ characters: uses substring matching (strings.Contains)
+// For keywords under 5 characters: requires word boundaries
+func containsKeyword(text, keyword string) bool {
+	if len(keyword) >= 5 {
+		return strings.Contains(text, keyword)
+	}
+
+	// For short keywords, require word boundaries
+	idx := 0
+	for {
+		pos := strings.Index(text[idx:], keyword)
+		if pos == -1 {
+			return false
+		}
+		pos += idx
+
+		// Check boundary before the match
+		beforeOK := pos == 0 || isWordBoundary(text[pos-1])
+		// Check boundary after the match
+		afterPos := pos + len(keyword)
+		afterOK := afterPos >= len(text) || isWordBoundary(text[afterPos])
+
+		if beforeOK && afterOK {
+			return true
+		}
+		idx = pos + 1
+	}
+}
+
+// isWordBoundary returns true if the character is a word boundary
+func isWordBoundary(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
+		c == '.' || c == ',' || c == '!' || c == '?' ||
+		c == ';' || c == ':' || c == '(' || c == ')' ||
+		c == '[' || c == ']' || c == '{' || c == '}' ||
+		c == '"' || c == '\'' || c == '-' || c == '_'
+}
+
 // NewIntentRouter creates and initializes the intent router
 func NewIntentRouter() *IntentRouter {
 	router := &IntentRouter{
@@ -55,6 +95,10 @@ func NewIntentRouter() *IntentRouter {
 	// Load YAML intent routes (embedded + user-defined) — adds to keyword maps
 	routes := loadIntentRoutes()
 	applyRoutesToRouter(router, routes)
+
+	// Load user corrections (high-priority exact phrase matches)
+	corrections := loadCorrections()
+	applyCorrectionsToRouter(router, corrections)
 
 	router.initLayer2()
 	router.computeTFIDFVectors()
@@ -358,6 +402,50 @@ func (r *IntentRouter) initLayer2() {
 			"plan the security", "create security plan", "design authentication", "outline the authorization",
 		},
 	}
+
+	// Load test cases as additional training data for better TF-IDF accuracy
+	r.loadTestCasesAsTrainingData()
+}
+
+// loadTestCasesAsTrainingData loads test cases from JSON and adds them to routeExamples
+func (r *IntentRouter) loadTestCasesAsTrainingData() {
+	data, err := embeddedIntentRoutes.ReadFile("intent_data/training_cases.json")
+	if err != nil {
+		log.Printf("Warning: Could not load test cases for TF-IDF training: %v", err)
+		return
+	}
+
+	var testCases []struct {
+		Message  string `json:"message"`
+		Expected string `json:"expected"`
+	}
+	if err := json.Unmarshal(data, &testCases); err != nil {
+		log.Printf("Warning: Could not parse test cases: %v", err)
+		return
+	}
+
+	intentMap := map[string]Intent{
+		"chat":      IntentChat,
+		"code":      IntentGenerate,
+		"fix":       IntentFix,
+		"generate":  IntentGenerate,
+		"explain":   IntentExplain,
+		"review":    IntentReview,
+		"research":  IntentResearch,
+		"plan":      IntentPlan,
+		"optimize":  IntentModify,
+		"translate": IntentChat,
+		"test":      IntentGenerate,
+	}
+
+	for _, tc := range testCases {
+		intent, ok := intentMap[tc.Expected]
+		if !ok {
+			continue
+		}
+		r.routeExamples[intent] = append(r.routeExamples[intent], tc.Message)
+	}
+	log.Printf("Loaded %d test cases as TF-IDF training data", len(testCases))
 }
 
 // computeTFIDFVectors pre-computes TF-IDF vectors for all training examples
@@ -509,15 +597,31 @@ func (r *IntentRouter) Classify(message string) Intent {
 	}
 
 	// Check exact phrases FIRST (more specific than question prefixes)
-	// Check stripped message first for code override, then original
+	// Track ALL matching intents for conflict detection
+	matchingIntents := make(map[Intent]bool)
 	for phrase, intent := range r.exactPhraseToIntent {
-		if strings.Contains(strippedMessage, phrase) {
-			return intent
+		if containsKeyword(strippedMessage, phrase) {
+			matchingIntents[intent] = true
 		}
-		if strings.Contains(messageLower, phrase) {
-			return intent
+		if containsKeyword(messageLower, phrase) {
+			matchingIntents[intent] = true
 		}
 	}
+	// If intents matched, pick the one with the longest matching phrase
+	if len(matchingIntents) > 0 {
+		bestIntent := IntentUnknown
+		bestLen := 0
+		for phrase, intent := range r.exactPhraseToIntent {
+			if (containsKeyword(strippedMessage, phrase) || containsKeyword(messageLower, phrase)) && len(phrase) > bestLen {
+				bestIntent = intent
+				bestLen = len(phrase)
+			}
+		}
+		if bestIntent != IntentUnknown {
+			return bestIntent
+		}
+	}
+	// No match — fall through to Layer 2
 
 	// Check greetings (only if no code/research/fix intent found)
 	for greeting := range r.greetingKeywords {

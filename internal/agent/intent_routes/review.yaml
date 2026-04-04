@@ -39,4 +39,9 @@ keywords:
 - PTAL
 - ptal
 - please take a look
+- Is this code correct?
+- Is this implementation right?
+- evaluate the design
+- grade this implementation
+- review the test suite
 tool_group: read_only

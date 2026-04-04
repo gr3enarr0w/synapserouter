@@ -682,6 +682,25 @@ func (cr *CodeREPL) handleCommand(ctx context.Context, input string) bool {
 			}
 		}
 
+	case "/intent":
+		if len(parts) < 3 || parts[1] != "correct" {
+			cr.renderer.mu.Lock()
+			cr.renderer.writeContent("Usage: /intent correct <intent>")
+			cr.renderer.writeContent("Example: /intent correct code")
+			cr.renderer.mu.Unlock()
+			return false
+		}
+		intent := parts[2]
+		// Save the last user message + corrected intent
+		if err := saveIntentCorrection(cr.agent.conversation.LastUserMessage(), intent); err != nil {
+			cr.renderer.Error(err.Error())
+		} else {
+			cr.renderer.mu.Lock()
+			cr.renderer.writeContent(fmt.Sprintf("Saved correction: message -> intent '%s'", intent))
+			cr.renderer.mu.Unlock()
+		}
+		return false
+
 	case "/help":
 		cr.renderer.ShowHelp()
 

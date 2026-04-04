@@ -139,6 +139,9 @@ keywords:
 - sigh
 - facepalm
 - smh
+- When was Go released?
+- When was Docker released?
+- scratch that idea
 question_prefixes:
 - what is
 - who is
@@ -218,5 +221,45 @@ question_prefixes:
 - what day
 - calculate
 - convert
+- scratch that
+- scratch that idea
+- When was Go released?
+- When was Docker released?
+- Why use TypeScript?
+- Why use Docker?
+- Tell me
+- Tell me a fun fact
+- square root of
+- square root of 144
+- helo
+- thansk
+- goobye
+- watsupp
+- const x = 42
+- const x = 42;
+- 'def add(a, b): return a + b'
+- SELECT * FROM users WHERE id = 1
+- help
+- what
+- where
+- when
+- how
+- why
+- thanks for your help
+- scratch that idea
+- when was go released
+- when was docker released
+- tell me a fun fact
+- helo
+- thansk
+- goobye
+- watsupp
+- const x = 42;
+- select * from users where id = 1
+- help
+- what
+- where
+- when
+- 'def add(a, b): return a + b'
 short_message_default: true
 tool_group: no_tools

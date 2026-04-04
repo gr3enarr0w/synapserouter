@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"embed"
 	"log"
 	"os"
@@ -10,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-//go:embed intent_routes/*.yaml
+//go:embed intent_routes/*.yaml intent_data/*.json
 var embeddedIntentRoutes embed.FS
 
 // IntentRouteConfig represents a YAML intent route file
@@ -106,5 +107,79 @@ func applyRoutesToRouter(r *IntentRouter, routes []IntentRouteConfig) {
 				}
 			}
 		}
+	}
+}
+
+// IntentCorrection represents a user-corrected intent classification
+type IntentCorrection struct {
+	Message string `json:"message"`
+	Intent  string `json:"intent"`
+}
+
+// loadCorrections reads user corrections from ~/.synroute/intent_corrections.json
+func loadCorrections() []IntentCorrection {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	correctionsPath := filepath.Join(home, ".synroute", "intent_corrections.json")
+	data, err := os.ReadFile(correctionsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		log.Printf("[IntentRouter] warning: can't read corrections: %v", err)
+		return nil
+	}
+	var corrections []IntentCorrection
+	if err := json.Unmarshal(data, &corrections); err != nil {
+		log.Printf("[IntentRouter] warning: can't parse corrections: %v", err)
+		return nil
+	}
+	return corrections
+}
+
+// saveIntentCorrection appends a correction to ~/.synroute/intent_corrections.json
+func saveIntentCorrection(message, intent string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(home, ".synroute")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	correctionsPath := filepath.Join(dir, "intent_corrections.json")
+
+	// Load existing corrections
+	var corrections []IntentCorrection
+	data, err := os.ReadFile(correctionsPath)
+	if err == nil {
+		if err := json.Unmarshal(data, &corrections); err != nil {
+			corrections = nil
+		}
+	}
+
+	// Append new correction
+	corrections = append(corrections, IntentCorrection{Message: message, Intent: intent})
+
+	// Write back
+	outData, err := json.MarshalIndent(corrections, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(correctionsPath, outData, 0644)
+}
+
+// applyCorrectionsToRouter adds user corrections as high-priority exact phrase matches
+func applyCorrectionsToRouter(r *IntentRouter, corrections []IntentCorrection) {
+	for _, c := range corrections {
+		msg := strings.ToLower(strings.TrimSpace(c.Message))
+		if msg == "" {
+			continue
+		}
+		intent := Intent(c.Intent)
+		r.exactPhraseToIntent[msg] = intent
+		log.Printf("[IntentRouter] loaded correction: '%s' -> %s", msg, intent)
 	}
 }

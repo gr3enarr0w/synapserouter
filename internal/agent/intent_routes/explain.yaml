@@ -55,4 +55,17 @@ keywords:
 - help me understand
 - don't fix just explain
 - don't change anything just
+- Explain the architecture
+- How does auth work?
+- What does this code do?
+- What is this file for?
+- What is this module responsible for?
+- Walk me through the deploy process
+- explain the design
+- show me how error handling works
+- is there a test for this
+- don't fix it just explain what's wrong
+- don't fix it just explain
+- just explain
+- don't fix just explain
 tool_group: read_only

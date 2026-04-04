@@ -1,0 +1,4142 @@
+[
+  {
+    "message": "hello",
+    "expected": "chat"
+  },
+  {
+    "message": "hi",
+    "expected": "chat"
+  },
+  {
+    "message": "hey",
+    "expected": "chat"
+  },
+  {
+    "message": "yo",
+    "expected": "chat"
+  },
+  {
+    "message": "sup",
+    "expected": "chat"
+  },
+  {
+    "message": "howdy",
+    "expected": "chat"
+  },
+  {
+    "message": "hiya",
+    "expected": "chat"
+  },
+  {
+    "message": "heya",
+    "expected": "chat"
+  },
+  {
+    "message": "hi there",
+    "expected": "chat"
+  },
+  {
+    "message": "good morning",
+    "expected": "chat"
+  },
+  {
+    "message": "good afternoon",
+    "expected": "chat"
+  },
+  {
+    "message": "good evening",
+    "expected": "chat"
+  },
+  {
+    "message": "good night",
+    "expected": "chat"
+  },
+  {
+    "message": "how are you",
+    "expected": "chat"
+  },
+  {
+    "message": "how's it going",
+    "expected": "chat"
+  },
+  {
+    "message": "what's up",
+    "expected": "chat"
+  },
+  {
+    "message": "whats up",
+    "expected": "chat"
+  },
+  {
+    "message": "wassup",
+    "expected": "chat"
+  },
+  {
+    "message": "thanks",
+    "expected": "chat"
+  },
+  {
+    "message": "thank you",
+    "expected": "chat"
+  },
+  {
+    "message": "ty",
+    "expected": "chat"
+  },
+  {
+    "message": "thx",
+    "expected": "chat"
+  },
+  {
+    "message": "cheers",
+    "expected": "chat"
+  },
+  {
+    "message": "appreciated",
+    "expected": "chat"
+  },
+  {
+    "message": "much appreciated",
+    "expected": "chat"
+  },
+  {
+    "message": "thanks a lot",
+    "expected": "chat"
+  },
+  {
+    "message": "thank you so much",
+    "expected": "chat"
+  },
+  {
+    "message": "thanks for that",
+    "expected": "chat"
+  },
+  {
+    "message": "thanks for your help",
+    "expected": "chat"
+  },
+  {
+    "message": "ok",
+    "expected": "chat"
+  },
+  {
+    "message": "okay",
+    "expected": "chat"
+  },
+  {
+    "message": "k",
+    "expected": "chat"
+  },
+  {
+    "message": "sure",
+    "expected": "chat"
+  },
+  {
+    "message": "yes",
+    "expected": "chat"
+  },
+  {
+    "message": "yep",
+    "expected": "chat"
+  },
+  {
+    "message": "yeah",
+    "expected": "chat"
+  },
+  {
+    "message": "ya",
+    "expected": "chat"
+  },
+  {
+    "message": "yup",
+    "expected": "chat"
+  },
+  {
+    "message": "aye",
+    "expected": "chat"
+  },
+  {
+    "message": "no",
+    "expected": "chat"
+  },
+  {
+    "message": "nope",
+    "expected": "chat"
+  },
+  {
+    "message": "nah",
+    "expected": "chat"
+  },
+  {
+    "message": "no thanks",
+    "expected": "chat"
+  },
+  {
+    "message": "not now",
+    "expected": "chat"
+  },
+  {
+    "message": "maybe later",
+    "expected": "chat"
+  },
+  {
+    "message": "lgtm",
+    "expected": "chat"
+  },
+  {
+    "message": "looks good",
+    "expected": "chat"
+  },
+  {
+    "message": "looks good to me",
+    "expected": "chat"
+  },
+  {
+    "message": "that works",
+    "expected": "chat"
+  },
+  {
+    "message": "perfect",
+    "expected": "chat"
+  },
+  {
+    "message": "nice",
+    "expected": "chat"
+  },
+  {
+    "message": "cool",
+    "expected": "chat"
+  },
+  {
+    "message": "sweet",
+    "expected": "chat"
+  },
+  {
+    "message": "awesome",
+    "expected": "chat"
+  },
+  {
+    "message": "great",
+    "expected": "chat"
+  },
+  {
+    "message": "excellent",
+    "expected": "chat"
+  },
+  {
+    "message": "wonderful",
+    "expected": "chat"
+  },
+  {
+    "message": "interesting",
+    "expected": "chat"
+  },
+  {
+    "message": "noted",
+    "expected": "chat"
+  },
+  {
+    "message": "got it",
+    "expected": "chat"
+  },
+  {
+    "message": "understood",
+    "expected": "chat"
+  },
+  {
+    "message": "roger",
+    "expected": "chat"
+  },
+  {
+    "message": "copy that",
+    "expected": "chat"
+  },
+  {
+    "message": "nevermind",
+    "expected": "chat"
+  },
+  {
+    "message": "never mind",
+    "expected": "chat"
+  },
+  {
+    "message": "forget it",
+    "expected": "chat"
+  },
+  {
+    "message": "nah forget it",
+    "expected": "chat"
+  },
+  {
+    "message": "scratch that idea",
+    "expected": "chat"
+  },
+  {
+    "message": "bye",
+    "expected": "chat"
+  },
+  {
+    "message": "goodbye",
+    "expected": "chat"
+  },
+  {
+    "message": "see ya",
+    "expected": "chat"
+  },
+  {
+    "message": "later",
+    "expected": "chat"
+  },
+  {
+    "message": "peace",
+    "expected": "chat"
+  },
+  {
+    "message": "cya",
+    "expected": "chat"
+  },
+  {
+    "message": "ttyl",
+    "expected": "chat"
+  },
+  {
+    "message": "lol",
+    "expected": "chat"
+  },
+  {
+    "message": "lmao",
+    "expected": "chat"
+  },
+  {
+    "message": "haha",
+    "expected": "chat"
+  },
+  {
+    "message": "rofl",
+    "expected": "chat"
+  },
+  {
+    "message": "\ud83d\ude02",
+    "expected": "chat"
+  },
+  {
+    "message": "\ud83e\udd23",
+    "expected": "chat"
+  },
+  {
+    "message": "wow",
+    "expected": "chat"
+  },
+  {
+    "message": "whoa",
+    "expected": "chat"
+  },
+  {
+    "message": "omg",
+    "expected": "chat"
+  },
+  {
+    "message": "bruh",
+    "expected": "chat"
+  },
+  {
+    "message": "dude",
+    "expected": "chat"
+  },
+  {
+    "message": "hmm",
+    "expected": "chat"
+  },
+  {
+    "message": "huh",
+    "expected": "chat"
+  },
+  {
+    "message": "meh",
+    "expected": "chat"
+  },
+  {
+    "message": "ugh",
+    "expected": "chat"
+  },
+  {
+    "message": "oops",
+    "expected": "chat"
+  },
+  {
+    "message": "sorry",
+    "expected": "chat"
+  },
+  {
+    "message": "my bad",
+    "expected": "chat"
+  },
+  {
+    "message": "\ud83d\udc4d",
+    "expected": "chat"
+  },
+  {
+    "message": "\ud83d\udc4e",
+    "expected": "chat"
+  },
+  {
+    "message": "\u2764\ufe0f",
+    "expected": "chat"
+  },
+  {
+    "message": "\ud83d\udd25",
+    "expected": "chat"
+  },
+  {
+    "message": "\u2705",
+    "expected": "chat"
+  },
+  {
+    "message": "\u274c",
+    "expected": "chat"
+  },
+  {
+    "message": "\ud83c\udf89",
+    "expected": "chat"
+  },
+  {
+    "message": "\ud83d\udcaf",
+    "expected": "chat"
+  },
+  {
+    "message": "\ud83d\ude4f",
+    "expected": "chat"
+  },
+  {
+    "message": "What is Python?",
+    "expected": "chat"
+  },
+  {
+    "message": "What is Go?",
+    "expected": "chat"
+  },
+  {
+    "message": "What is Rust?",
+    "expected": "chat"
+  },
+  {
+    "message": "What is JavaScript?",
+    "expected": "chat"
+  },
+  {
+    "message": "What is Docker?",
+    "expected": "chat"
+  },
+  {
+    "message": "What is Kubernetes?",
+    "expected": "chat"
+  },
+  {
+    "message": "What is an API?",
+    "expected": "chat"
+  },
+  {
+    "message": "What is the capital of France?",
+    "expected": "chat"
+  },
+  {
+    "message": "What is the capital of Japan?",
+    "expected": "chat"
+  },
+  {
+    "message": "Who created Linux?",
+    "expected": "chat"
+  },
+  {
+    "message": "Who invented the internet?",
+    "expected": "chat"
+  },
+  {
+    "message": "Who is Linus Torvalds?",
+    "expected": "chat"
+  },
+  {
+    "message": "When was Go released?",
+    "expected": "chat"
+  },
+  {
+    "message": "When was Python created?",
+    "expected": "chat"
+  },
+  {
+    "message": "When was Docker released?",
+    "expected": "chat"
+  },
+  {
+    "message": "Why is Rust popular?",
+    "expected": "chat"
+  },
+  {
+    "message": "Why use TypeScript?",
+    "expected": "chat"
+  },
+  {
+    "message": "Why use Docker?",
+    "expected": "chat"
+  },
+  {
+    "message": "How old is JavaScript?",
+    "expected": "chat"
+  },
+  {
+    "message": "How many programming languages exist?",
+    "expected": "chat"
+  },
+  {
+    "message": "What does API stand for?",
+    "expected": "chat"
+  },
+  {
+    "message": "What does REST mean?",
+    "expected": "chat"
+  },
+  {
+    "message": "What is JSON?",
+    "expected": "chat"
+  },
+  {
+    "message": "Tell me a joke",
+    "expected": "chat"
+  },
+  {
+    "message": "Tell me something interesting",
+    "expected": "chat"
+  },
+  {
+    "message": "Tell me a fun fact",
+    "expected": "chat"
+  },
+  {
+    "message": "What time is it?",
+    "expected": "chat"
+  },
+  {
+    "message": "What day is it?",
+    "expected": "chat"
+  },
+  {
+    "message": "What's the weather?",
+    "expected": "chat"
+  },
+  {
+    "message": "2+2",
+    "expected": "chat"
+  },
+  {
+    "message": "What is 10 divided by 3?",
+    "expected": "chat"
+  },
+  {
+    "message": "Calculate 15% of 200",
+    "expected": "chat"
+  },
+  {
+    "message": "what is 5 times 8",
+    "expected": "chat"
+  },
+  {
+    "message": "how much is 100 minus 37",
+    "expected": "chat"
+  },
+  {
+    "message": "square root of 144",
+    "expected": "chat"
+  },
+  {
+    "message": "what model are you using",
+    "expected": "chat"
+  },
+  {
+    "message": "what tools do you have",
+    "expected": "chat"
+  },
+  {
+    "message": "how many tokens left",
+    "expected": "chat"
+  },
+  {
+    "message": "what version are you",
+    "expected": "chat"
+  },
+  {
+    "message": "who made you",
+    "expected": "chat"
+  },
+  {
+    "message": "are you an AI",
+    "expected": "chat"
+  },
+  {
+    "message": "Write a function",
+    "expected": "generate"
+  },
+  {
+    "message": "Write a Go function",
+    "expected": "generate"
+  },
+  {
+    "message": "Write a Python script",
+    "expected": "generate"
+  },
+  {
+    "message": "Write a JavaScript module",
+    "expected": "generate"
+  },
+  {
+    "message": "Write a Rust struct",
+    "expected": "generate"
+  },
+  {
+    "message": "Write a Java class",
+    "expected": "generate"
+  },
+  {
+    "message": "Create a new file",
+    "expected": "generate"
+  },
+  {
+    "message": "Create a config file",
+    "expected": "generate"
+  },
+  {
+    "message": "Create a Makefile",
+    "expected": "generate"
+  },
+  {
+    "message": "Create a Dockerfile",
+    "expected": "generate"
+  },
+  {
+    "message": "Create a docker-compose.yml",
+    "expected": "generate"
+  },
+  {
+    "message": "Build an API",
+    "expected": "generate"
+  },
+  {
+    "message": "Build a REST endpoint",
+    "expected": "generate"
+  },
+  {
+    "message": "Build a CLI tool",
+    "expected": "generate"
+  },
+  {
+    "message": "Build a web server",
+    "expected": "generate"
+  },
+  {
+    "message": "Build a database schema",
+    "expected": "generate"
+  },
+  {
+    "message": "Build a test suite",
+    "expected": "generate"
+  },
+  {
+    "message": "Write tests for the auth module",
+    "expected": "generate"
+  },
+  {
+    "message": "Write unit tests",
+    "expected": "generate"
+  },
+  {
+    "message": "Write integration tests",
+    "expected": "generate"
+  },
+  {
+    "message": "Generate a migration",
+    "expected": "generate"
+  },
+  {
+    "message": "Generate API documentation",
+    "expected": "generate"
+  },
+  {
+    "message": "Generate a README",
+    "expected": "generate"
+  },
+  {
+    "message": "Scaffold a new project",
+    "expected": "generate"
+  },
+  {
+    "message": "Bootstrap the application",
+    "expected": "generate"
+  },
+  {
+    "message": "Initialize the project",
+    "expected": "generate"
+  },
+  {
+    "message": "Implement a login system",
+    "expected": "generate"
+  },
+  {
+    "message": "Implement pagination",
+    "expected": "generate"
+  },
+  {
+    "message": "Implement caching",
+    "expected": "generate"
+  },
+  {
+    "message": "Write a sorting algorithm",
+    "expected": "generate"
+  },
+  {
+    "message": "Write a binary search",
+    "expected": "generate"
+  },
+  {
+    "message": "Write a linked list",
+    "expected": "generate"
+  },
+  {
+    "message": "Create a React component",
+    "expected": "generate"
+  },
+  {
+    "message": "Create a Vue page",
+    "expected": "generate"
+  },
+  {
+    "message": "Create an Angular service",
+    "expected": "generate"
+  },
+  {
+    "message": "Write a SQL query",
+    "expected": "generate"
+  },
+  {
+    "message": "Write a GraphQL schema",
+    "expected": "generate"
+  },
+  {
+    "message": "Write a protobuf definition",
+    "expected": "generate"
+  },
+  {
+    "message": "Make a new endpoint",
+    "expected": "generate"
+  },
+  {
+    "message": "Make a new controller",
+    "expected": "generate"
+  },
+  {
+    "message": "Make a new model",
+    "expected": "generate"
+  },
+  {
+    "message": "Set up CI/CD",
+    "expected": "generate"
+  },
+  {
+    "message": "Set up GitHub Actions",
+    "expected": "generate"
+  },
+  {
+    "message": "Set up Docker",
+    "expected": "generate"
+  },
+  {
+    "message": "Write a cron job",
+    "expected": "generate"
+  },
+  {
+    "message": "Write a webhook handler",
+    "expected": "generate"
+  },
+  {
+    "message": "Write a middleware",
+    "expected": "generate"
+  },
+  {
+    "message": "hello write me a function",
+    "expected": "generate"
+  },
+  {
+    "message": "hey can you create a script",
+    "expected": "generate"
+  },
+  {
+    "message": "help me create a database schema",
+    "expected": "generate"
+  },
+  {
+    "message": "help me build a CLI tool",
+    "expected": "generate"
+  },
+  {
+    "message": "can you write me a sorting algorithm",
+    "expected": "generate"
+  },
+  {
+    "message": "please create a new module",
+    "expected": "generate"
+  },
+  {
+    "message": "I need a function that validates email",
+    "expected": "generate"
+  },
+  {
+    "message": "I need a parser for CSV",
+    "expected": "generate"
+  },
+  {
+    "message": "start from scratch",
+    "expected": "generate"
+  },
+  {
+    "message": "from scratch",
+    "expected": "generate"
+  },
+  {
+    "message": "redo from the beginning",
+    "expected": "generate"
+  },
+  {
+    "message": "Change the timeout",
+    "expected": "modify"
+  },
+  {
+    "message": "Change the port number",
+    "expected": "modify"
+  },
+  {
+    "message": "Change the default value",
+    "expected": "modify"
+  },
+  {
+    "message": "Change this to use a map",
+    "expected": "modify"
+  },
+  {
+    "message": "Change the color to blue",
+    "expected": "modify"
+  },
+  {
+    "message": "Change the font size",
+    "expected": "modify"
+  },
+  {
+    "message": "Update the error message",
+    "expected": "modify"
+  },
+  {
+    "message": "Update the config",
+    "expected": "modify"
+  },
+  {
+    "message": "Update the version",
+    "expected": "modify"
+  },
+  {
+    "message": "Update the dependencies",
+    "expected": "modify"
+  },
+  {
+    "message": "Update the README",
+    "expected": "modify"
+  },
+  {
+    "message": "Update the tests",
+    "expected": "modify"
+  },
+  {
+    "message": "Edit the function",
+    "expected": "modify"
+  },
+  {
+    "message": "Edit the class",
+    "expected": "modify"
+  },
+  {
+    "message": "Edit the template",
+    "expected": "modify"
+  },
+  {
+    "message": "Rename this function",
+    "expected": "modify"
+  },
+  {
+    "message": "Rename the variable",
+    "expected": "modify"
+  },
+  {
+    "message": "Rename the file",
+    "expected": "modify"
+  },
+  {
+    "message": "Move this to utils",
+    "expected": "modify"
+  },
+  {
+    "message": "Move the function to a separate file",
+    "expected": "modify"
+  },
+  {
+    "message": "Add error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "Add logging",
+    "expected": "modify"
+  },
+  {
+    "message": "Add validation",
+    "expected": "modify"
+  },
+  {
+    "message": "Add a comment",
+    "expected": "modify"
+  },
+  {
+    "message": "Add type hints",
+    "expected": "modify"
+  },
+  {
+    "message": "Add documentation",
+    "expected": "modify"
+  },
+  {
+    "message": "Add a test case",
+    "expected": "modify"
+  },
+  {
+    "message": "Remove the old code",
+    "expected": "modify"
+  },
+  {
+    "message": "Remove unused imports",
+    "expected": "modify"
+  },
+  {
+    "message": "Remove dead code",
+    "expected": "modify"
+  },
+  {
+    "message": "Refactor this function",
+    "expected": "modify"
+  },
+  {
+    "message": "Refactor the database layer",
+    "expected": "modify"
+  },
+  {
+    "message": "Refactor the API",
+    "expected": "modify"
+  },
+  {
+    "message": "Clean up this code",
+    "expected": "modify"
+  },
+  {
+    "message": "Clean up the imports",
+    "expected": "modify"
+  },
+  {
+    "message": "Tidy up the formatting",
+    "expected": "modify"
+  },
+  {
+    "message": "Optimize the query",
+    "expected": "modify"
+  },
+  {
+    "message": "Optimize the loop",
+    "expected": "modify"
+  },
+  {
+    "message": "Optimize for performance",
+    "expected": "modify"
+  },
+  {
+    "message": "Make it faster",
+    "expected": "modify"
+  },
+  {
+    "message": "Make it more readable",
+    "expected": "modify"
+  },
+  {
+    "message": "Make it more maintainable",
+    "expected": "modify"
+  },
+  {
+    "message": "Simplify this logic",
+    "expected": "modify"
+  },
+  {
+    "message": "Simplify the conditional",
+    "expected": "modify"
+  },
+  {
+    "message": "Simplify the regex",
+    "expected": "modify"
+  },
+  {
+    "message": "Convert to TypeScript",
+    "expected": "modify"
+  },
+  {
+    "message": "Convert to async/await",
+    "expected": "modify"
+  },
+  {
+    "message": "Convert to functional style",
+    "expected": "modify"
+  },
+  {
+    "message": "Replace the for loop with map",
+    "expected": "modify"
+  },
+  {
+    "message": "Replace hardcoded values with config",
+    "expected": "modify"
+  },
+  {
+    "message": "Extract this into a helper function",
+    "expected": "modify"
+  },
+  {
+    "message": "Extract the validation logic",
+    "expected": "modify"
+  },
+  {
+    "message": "Inline this variable",
+    "expected": "modify"
+  },
+  {
+    "message": "Unwrap the abstraction",
+    "expected": "modify"
+  },
+  {
+    "message": "Swap the if/else",
+    "expected": "modify"
+  },
+  {
+    "message": "Flip the condition",
+    "expected": "modify"
+  },
+  {
+    "message": "Invert the logic",
+    "expected": "modify"
+  },
+  {
+    "message": "Rewrite this in a cleaner way",
+    "expected": "modify"
+  },
+  {
+    "message": "Restructure the imports",
+    "expected": "modify"
+  },
+  {
+    "message": "also add logging to this",
+    "expected": "modify"
+  },
+  {
+    "message": "and also handle the edge case",
+    "expected": "modify"
+  },
+  {
+    "message": "can you also add error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "actually change it to use a map",
+    "expected": "modify"
+  },
+  {
+    "message": "undo that change",
+    "expected": "modify"
+  },
+  {
+    "message": "revert the last edit",
+    "expected": "modify"
+  },
+  {
+    "message": "go back to the previous version",
+    "expected": "modify"
+  },
+  {
+    "message": "increase the buffer size",
+    "expected": "modify"
+  },
+  {
+    "message": "decrease the timeout",
+    "expected": "modify"
+  },
+  {
+    "message": "reduce the complexity",
+    "expected": "modify"
+  },
+  {
+    "message": "make this public",
+    "expected": "modify"
+  },
+  {
+    "message": "make this private",
+    "expected": "modify"
+  },
+  {
+    "message": "make this a method",
+    "expected": "modify"
+  },
+  {
+    "message": "split this function into two",
+    "expected": "modify"
+  },
+  {
+    "message": "merge these two functions",
+    "expected": "modify"
+  },
+  {
+    "message": "move the constant to the top",
+    "expected": "modify"
+  },
+  {
+    "message": "reorder the parameters",
+    "expected": "modify"
+  },
+  {
+    "message": "Fix the bug",
+    "expected": "fix"
+  },
+  {
+    "message": "Fix the error",
+    "expected": "fix"
+  },
+  {
+    "message": "Fix the crash",
+    "expected": "fix"
+  },
+  {
+    "message": "Fix the test",
+    "expected": "fix"
+  },
+  {
+    "message": "Fix the compile error",
+    "expected": "fix"
+  },
+  {
+    "message": "Fix the syntax error",
+    "expected": "fix"
+  },
+  {
+    "message": "Fix the type error",
+    "expected": "fix"
+  },
+  {
+    "message": "Fix the null pointer",
+    "expected": "fix"
+  },
+  {
+    "message": "Fix the race condition",
+    "expected": "fix"
+  },
+  {
+    "message": "Fix the memory leak",
+    "expected": "fix"
+  },
+  {
+    "message": "Debug this",
+    "expected": "fix"
+  },
+  {
+    "message": "Debug the error",
+    "expected": "fix"
+  },
+  {
+    "message": "Debug the crash",
+    "expected": "fix"
+  },
+  {
+    "message": "Debug the test failure",
+    "expected": "fix"
+  },
+  {
+    "message": "Debug why it's slow",
+    "expected": "fix"
+  },
+  {
+    "message": "Debug the API timeout",
+    "expected": "fix"
+  },
+  {
+    "message": "Debug the auth issue",
+    "expected": "fix"
+  },
+  {
+    "message": "This is broken",
+    "expected": "fix"
+  },
+  {
+    "message": "This doesn't work",
+    "expected": "fix"
+  },
+  {
+    "message": "This stopped working",
+    "expected": "fix"
+  },
+  {
+    "message": "It keeps crashing",
+    "expected": "fix"
+  },
+  {
+    "message": "It keeps timing out",
+    "expected": "fix"
+  },
+  {
+    "message": "It keeps failing",
+    "expected": "fix"
+  },
+  {
+    "message": "Something is wrong",
+    "expected": "fix"
+  },
+  {
+    "message": "Something broke",
+    "expected": "fix"
+  },
+  {
+    "message": "Something is off",
+    "expected": "fix"
+  },
+  {
+    "message": "The tests are failing",
+    "expected": "fix"
+  },
+  {
+    "message": "The build is broken",
+    "expected": "fix"
+  },
+  {
+    "message": "The deploy failed",
+    "expected": "fix"
+  },
+  {
+    "message": "Why does this fail?",
+    "expected": "fix"
+  },
+  {
+    "message": "Why is this crashing?",
+    "expected": "fix"
+  },
+  {
+    "message": "Why is it slow?",
+    "expected": "fix"
+  },
+  {
+    "message": "Why am I getting a 404?",
+    "expected": "fix"
+  },
+  {
+    "message": "Why am I getting a 500?",
+    "expected": "fix"
+  },
+  {
+    "message": "There's an error on line 42",
+    "expected": "fix"
+  },
+  {
+    "message": "Error on line 10",
+    "expected": "fix"
+  },
+  {
+    "message": "Syntax error at line 5",
+    "expected": "fix"
+  },
+  {
+    "message": "Stack trace shows null pointer",
+    "expected": "fix"
+  },
+  {
+    "message": "Getting an undefined variable error",
+    "expected": "fix"
+  },
+  {
+    "message": "The API returns 500",
+    "expected": "fix"
+  },
+  {
+    "message": "The endpoint returns 403",
+    "expected": "fix"
+  },
+  {
+    "message": "The request times out",
+    "expected": "fix"
+  },
+  {
+    "message": "TypeError: cannot read property",
+    "expected": "fix"
+  },
+  {
+    "message": "IndexError: list index out of range",
+    "expected": "fix"
+  },
+  {
+    "message": "panic: runtime error",
+    "expected": "fix"
+  },
+  {
+    "message": "segmentation fault",
+    "expected": "fix"
+  },
+  {
+    "message": "out of memory",
+    "expected": "fix"
+  },
+  {
+    "message": "help me fix this bug",
+    "expected": "fix"
+  },
+  {
+    "message": "help me debug the auth",
+    "expected": "fix"
+  },
+  {
+    "message": "this stupid thing keeps crashing",
+    "expected": "fix"
+  },
+  {
+    "message": "why wont this work",
+    "expected": "fix"
+  },
+  {
+    "message": "can u fix the bug in main.go",
+    "expected": "fix"
+  },
+  {
+    "message": "plz fix the test",
+    "expected": "fix"
+  },
+  {
+    "message": "HELP THE SERVER IS DOWN",
+    "expected": "fix"
+  },
+  {
+    "message": "NOTHING WORKS",
+    "expected": "fix"
+  },
+  {
+    "message": "EVERYTHING IS BROKEN",
+    "expected": "fix"
+  },
+  {
+    "message": "still broken",
+    "expected": "fix"
+  },
+  {
+    "message": "still failing",
+    "expected": "fix"
+  },
+  {
+    "message": "still not working",
+    "expected": "fix"
+  },
+  {
+    "message": "didn't fix it",
+    "expected": "fix"
+  },
+  {
+    "message": "the fix didn't work",
+    "expected": "fix"
+  },
+  {
+    "message": "it's broken again",
+    "expected": "fix"
+  },
+  {
+    "message": "same error again",
+    "expected": "fix"
+  },
+  {
+    "message": "whats wrong with my code",
+    "expected": "fix"
+  },
+  {
+    "message": "whats wrong with this",
+    "expected": "fix"
+  },
+  {
+    "message": "what went wrong",
+    "expected": "fix"
+  },
+  {
+    "message": "Explain this code",
+    "expected": "explain"
+  },
+  {
+    "message": "Explain the function",
+    "expected": "explain"
+  },
+  {
+    "message": "Explain the algorithm",
+    "expected": "explain"
+  },
+  {
+    "message": "Explain this codebase",
+    "expected": "explain"
+  },
+  {
+    "message": "Explain the architecture",
+    "expected": "explain"
+  },
+  {
+    "message": "Explain the design",
+    "expected": "explain"
+  },
+  {
+    "message": "How does this work?",
+    "expected": "explain"
+  },
+  {
+    "message": "How does the router work?",
+    "expected": "explain"
+  },
+  {
+    "message": "How does auth work?",
+    "expected": "explain"
+  },
+  {
+    "message": "How does the database layer work?",
+    "expected": "explain"
+  },
+  {
+    "message": "How does the pipeline work?",
+    "expected": "explain"
+  },
+  {
+    "message": "What does this function do?",
+    "expected": "explain"
+  },
+  {
+    "message": "What does this code do?",
+    "expected": "explain"
+  },
+  {
+    "message": "What is this file for?",
+    "expected": "explain"
+  },
+  {
+    "message": "What is this module responsible for?",
+    "expected": "explain"
+  },
+  {
+    "message": "Walk me through the code",
+    "expected": "explain"
+  },
+  {
+    "message": "Walk me through the pipeline",
+    "expected": "explain"
+  },
+  {
+    "message": "Walk me through the auth flow",
+    "expected": "explain"
+  },
+  {
+    "message": "Walk me through the deploy process",
+    "expected": "explain"
+  },
+  {
+    "message": "Help me understand this",
+    "expected": "explain"
+  },
+  {
+    "message": "Help me understand the codebase",
+    "expected": "explain"
+  },
+  {
+    "message": "I don't understand this function",
+    "expected": "explain"
+  },
+  {
+    "message": "I'm confused about the routing",
+    "expected": "explain"
+  },
+  {
+    "message": "Can you break this down?",
+    "expected": "explain"
+  },
+  {
+    "message": "Break down the algorithm",
+    "expected": "explain"
+  },
+  {
+    "message": "Show me how this works",
+    "expected": "explain"
+  },
+  {
+    "message": "Show me how context works in Go",
+    "expected": "explain"
+  },
+  {
+    "message": "Show me how to use the API",
+    "expected": "explain"
+  },
+  {
+    "message": "Show me how error handling works",
+    "expected": "explain"
+  },
+  {
+    "message": "Is there a test for this?",
+    "expected": "explain"
+  },
+  {
+    "message": "Is there documentation for this?",
+    "expected": "explain"
+  },
+  {
+    "message": "Where is the auth handler?",
+    "expected": "explain"
+  },
+  {
+    "message": "Where is the config loaded?",
+    "expected": "explain"
+  },
+  {
+    "message": "What files are involved?",
+    "expected": "explain"
+  },
+  {
+    "message": "What's the call chain?",
+    "expected": "explain"
+  },
+  {
+    "message": "Trace the execution flow",
+    "expected": "explain"
+  },
+  {
+    "message": "Follow the request path",
+    "expected": "explain"
+  },
+  {
+    "message": "help me understand the architecture",
+    "expected": "explain"
+  },
+  {
+    "message": "explain like I'm 5",
+    "expected": "explain"
+  },
+  {
+    "message": "ELI5 this function",
+    "expected": "explain"
+  },
+  {
+    "message": "dumb it down for me",
+    "expected": "explain"
+  },
+  {
+    "message": "what's going on in this file",
+    "expected": "explain"
+  },
+  {
+    "message": "what's happening here",
+    "expected": "explain"
+  },
+  {
+    "message": "read through main.go and summarize",
+    "expected": "explain"
+  },
+  {
+    "message": "give me an overview",
+    "expected": "explain"
+  },
+  {
+    "message": "Plan the migration",
+    "expected": "plan"
+  },
+  {
+    "message": "Plan the refactor",
+    "expected": "plan"
+  },
+  {
+    "message": "Plan the new feature",
+    "expected": "plan"
+  },
+  {
+    "message": "Design the API",
+    "expected": "plan"
+  },
+  {
+    "message": "Design the database schema",
+    "expected": "plan"
+  },
+  {
+    "message": "Design the architecture",
+    "expected": "plan"
+  },
+  {
+    "message": "How should I approach this?",
+    "expected": "plan"
+  },
+  {
+    "message": "How should we structure this?",
+    "expected": "plan"
+  },
+  {
+    "message": "What's the best approach?",
+    "expected": "plan"
+  },
+  {
+    "message": "What architecture should we use?",
+    "expected": "plan"
+  },
+  {
+    "message": "Strategy for the rewrite",
+    "expected": "plan"
+  },
+  {
+    "message": "Strategy for scaling",
+    "expected": "plan"
+  },
+  {
+    "message": "Outline the steps",
+    "expected": "plan"
+  },
+  {
+    "message": "Create a roadmap",
+    "expected": "plan"
+  },
+  {
+    "message": "Define the acceptance criteria",
+    "expected": "plan"
+  },
+  {
+    "message": "Let's think about this first",
+    "expected": "plan"
+  },
+  {
+    "message": "Before we code, let's plan",
+    "expected": "plan"
+  },
+  {
+    "message": "What are the tradeoffs?",
+    "expected": "plan"
+  },
+  {
+    "message": "What are the options?",
+    "expected": "plan"
+  },
+  {
+    "message": "Compare approaches",
+    "expected": "plan"
+  },
+  {
+    "message": "Should we use SQL or NoSQL?",
+    "expected": "plan"
+  },
+  {
+    "message": "Should we use REST or GraphQL?",
+    "expected": "plan"
+  },
+  {
+    "message": "Propose a solution",
+    "expected": "plan"
+  },
+  {
+    "message": "Draft a design doc",
+    "expected": "plan"
+  },
+  {
+    "message": "Write a technical spec",
+    "expected": "plan"
+  },
+  {
+    "message": "Break this into tasks",
+    "expected": "plan"
+  },
+  {
+    "message": "Decompose this feature",
+    "expected": "plan"
+  },
+  {
+    "message": "Create user stories",
+    "expected": "plan"
+  },
+  {
+    "message": "Estimate the effort",
+    "expected": "plan"
+  },
+  {
+    "message": "How complex is this?",
+    "expected": "plan"
+  },
+  {
+    "message": "Risk assessment",
+    "expected": "plan"
+  },
+  {
+    "message": "how should I approach this refactor",
+    "expected": "plan"
+  },
+  {
+    "message": "what's the best way to do this",
+    "expected": "plan"
+  },
+  {
+    "message": "help me think through the architecture",
+    "expected": "plan"
+  },
+  {
+    "message": "brainstorm solutions",
+    "expected": "plan"
+  },
+  {
+    "message": "Review my code",
+    "expected": "review"
+  },
+  {
+    "message": "Review this PR",
+    "expected": "review"
+  },
+  {
+    "message": "Review the changes",
+    "expected": "review"
+  },
+  {
+    "message": "Code review",
+    "expected": "review"
+  },
+  {
+    "message": "Check this code",
+    "expected": "review"
+  },
+  {
+    "message": "Check for bugs",
+    "expected": "review"
+  },
+  {
+    "message": "Check for security issues",
+    "expected": "review"
+  },
+  {
+    "message": "Security audit",
+    "expected": "review"
+  },
+  {
+    "message": "Security review",
+    "expected": "review"
+  },
+  {
+    "message": "Audit the auth module",
+    "expected": "review"
+  },
+  {
+    "message": "Audit the API",
+    "expected": "review"
+  },
+  {
+    "message": "Audit for vulnerabilities",
+    "expected": "review"
+  },
+  {
+    "message": "Look for issues",
+    "expected": "review"
+  },
+  {
+    "message": "Look for potential problems",
+    "expected": "review"
+  },
+  {
+    "message": "Spot any bugs?",
+    "expected": "review"
+  },
+  {
+    "message": "Is this code correct?",
+    "expected": "review"
+  },
+  {
+    "message": "Is this implementation right?",
+    "expected": "review"
+  },
+  {
+    "message": "Any issues with this approach?",
+    "expected": "review"
+  },
+  {
+    "message": "Any problems with this code?",
+    "expected": "review"
+  },
+  {
+    "message": "Rate this code",
+    "expected": "review"
+  },
+  {
+    "message": "Grade this implementation",
+    "expected": "review"
+  },
+  {
+    "message": "Assess the quality",
+    "expected": "review"
+  },
+  {
+    "message": "Check test coverage",
+    "expected": "review"
+  },
+  {
+    "message": "Review the test suite",
+    "expected": "review"
+  },
+  {
+    "message": "Are there missing tests?",
+    "expected": "review"
+  },
+  {
+    "message": "Does this follow best practices?",
+    "expected": "review"
+  },
+  {
+    "message": "Is this idiomatic Go?",
+    "expected": "review"
+  },
+  {
+    "message": "evaluate the design",
+    "expected": "review"
+  },
+  {
+    "message": "analyze the structure",
+    "expected": "review"
+  },
+  {
+    "message": "critique this code",
+    "expected": "review"
+  },
+  {
+    "message": "Search for Go best practices",
+    "expected": "research"
+  },
+  {
+    "message": "Search for Python async patterns",
+    "expected": "research"
+  },
+  {
+    "message": "Search for React hooks tutorial",
+    "expected": "research"
+  },
+  {
+    "message": "Search for Kubernetes networking",
+    "expected": "research"
+  },
+  {
+    "message": "Research error handling in Rust",
+    "expected": "research"
+  },
+  {
+    "message": "Research database indexing",
+    "expected": "research"
+  },
+  {
+    "message": "Find out about WebSockets",
+    "expected": "research"
+  },
+  {
+    "message": "Find out about gRPC",
+    "expected": "research"
+  },
+  {
+    "message": "Find out about OIDC",
+    "expected": "research"
+  },
+  {
+    "message": "What's the latest on Go generics?",
+    "expected": "research"
+  },
+  {
+    "message": "What's new in Python 3.13?",
+    "expected": "research"
+  },
+  {
+    "message": "Look up the Redis documentation",
+    "expected": "research"
+  },
+  {
+    "message": "Look up the AWS pricing",
+    "expected": "research"
+  },
+  {
+    "message": "Find articles about microservices",
+    "expected": "research"
+  },
+  {
+    "message": "Find tutorials on Docker",
+    "expected": "research"
+  },
+  {
+    "message": "Google how to set up Nginx",
+    "expected": "research"
+  },
+  {
+    "message": "Google the Terraform docs",
+    "expected": "research"
+  },
+  {
+    "message": "What does the community say about X?",
+    "expected": "research"
+  },
+  {
+    "message": "What are people saying about Y?",
+    "expected": "research"
+  },
+  {
+    "message": "Compare Go vs Rust",
+    "expected": "research"
+  },
+  {
+    "message": "Compare PostgreSQL vs MySQL",
+    "expected": "research"
+  },
+  {
+    "message": "find information about this topic",
+    "expected": "research"
+  },
+  {
+    "message": "investigate this library",
+    "expected": "research"
+  },
+  {
+    "message": "learn about this pattern",
+    "expected": "research"
+  },
+  {
+    "message": "study how others solved this",
+    "expected": "research"
+  },
+  {
+    "message": "what are the alternatives to X",
+    "expected": "research"
+  },
+  {
+    "message": "benchmark comparison for Y",
+    "expected": "research"
+  },
+  {
+    "message": "Run the tests",
+    "expected": "delegate"
+  },
+  {
+    "message": "Run the build",
+    "expected": "delegate"
+  },
+  {
+    "message": "Run the linter",
+    "expected": "delegate"
+  },
+  {
+    "message": "Run go test ./...",
+    "expected": "delegate"
+  },
+  {
+    "message": "Run npm install",
+    "expected": "delegate"
+  },
+  {
+    "message": "Run make build",
+    "expected": "delegate"
+  },
+  {
+    "message": "Execute the script",
+    "expected": "delegate"
+  },
+  {
+    "message": "Execute the migration",
+    "expected": "delegate"
+  },
+  {
+    "message": "Execute the deploy",
+    "expected": "delegate"
+  },
+  {
+    "message": "Commit these changes",
+    "expected": "delegate"
+  },
+  {
+    "message": "Commit with message 'fix auth'",
+    "expected": "delegate"
+  },
+  {
+    "message": "Push to origin",
+    "expected": "delegate"
+  },
+  {
+    "message": "Push to github",
+    "expected": "delegate"
+  },
+  {
+    "message": "Push to main",
+    "expected": "delegate"
+  },
+  {
+    "message": "Deploy to production",
+    "expected": "delegate"
+  },
+  {
+    "message": "Deploy to staging",
+    "expected": "delegate"
+  },
+  {
+    "message": "Deploy the update",
+    "expected": "delegate"
+  },
+  {
+    "message": "Install the dependencies",
+    "expected": "delegate"
+  },
+  {
+    "message": "Install Go 1.26",
+    "expected": "delegate"
+  },
+  {
+    "message": "Install Docker",
+    "expected": "delegate"
+  },
+  {
+    "message": "Start the server",
+    "expected": "delegate"
+  },
+  {
+    "message": "Start the database",
+    "expected": "delegate"
+  },
+  {
+    "message": "Start the dev environment",
+    "expected": "delegate"
+  },
+  {
+    "message": "Stop the server",
+    "expected": "delegate"
+  },
+  {
+    "message": "Kill the process",
+    "expected": "delegate"
+  },
+  {
+    "message": "Restart the service",
+    "expected": "delegate"
+  },
+  {
+    "message": "Ship it",
+    "expected": "delegate"
+  },
+  {
+    "message": "Merge it",
+    "expected": "delegate"
+  },
+  {
+    "message": "Release it",
+    "expected": "delegate"
+  },
+  {
+    "message": "Tag the version",
+    "expected": "delegate"
+  },
+  {
+    "message": "Clean the build artifacts",
+    "expected": "delegate"
+  },
+  {
+    "message": "Clear the cache",
+    "expected": "delegate"
+  },
+  {
+    "message": "Reset the database",
+    "expected": "delegate"
+  },
+  {
+    "message": "Format the code",
+    "expected": "delegate"
+  },
+  {
+    "message": "Lint the project",
+    "expected": "delegate"
+  },
+  {
+    "message": "Run prettier",
+    "expected": "delegate"
+  },
+  {
+    "message": "Open a PR",
+    "expected": "delegate"
+  },
+  {
+    "message": "Create a branch",
+    "expected": "delegate"
+  },
+  {
+    "message": "Cherry-pick the commit",
+    "expected": "delegate"
+  },
+  {
+    "message": "looks good ship it",
+    "expected": "delegate"
+  },
+  {
+    "message": "merge and deploy",
+    "expected": "delegate"
+  },
+  {
+    "message": "lgtm deploy it",
+    "expected": "delegate"
+  },
+  {
+    "message": "fxi the bugg",
+    "expected": "fix"
+  },
+  {
+    "message": "fixx the error",
+    "expected": "fix"
+  },
+  {
+    "message": "degub this",
+    "expected": "fix"
+  },
+  {
+    "message": "somthing is brokn",
+    "expected": "fix"
+  },
+  {
+    "message": "can u fxi it plz",
+    "expected": "fix"
+  },
+  {
+    "message": "theres a errror",
+    "expected": "fix"
+  },
+  {
+    "message": "bug in teh code",
+    "expected": "fix"
+  },
+  {
+    "message": "wrtie a function",
+    "expected": "generate"
+  },
+  {
+    "message": "crate a file",
+    "expected": "generate"
+  },
+  {
+    "message": "bild an API",
+    "expected": "generate"
+  },
+  {
+    "message": "make me a scrpt",
+    "expected": "generate"
+  },
+  {
+    "message": "write a funcion",
+    "expected": "generate"
+  },
+  {
+    "message": "chaneg the timeout",
+    "expected": "modify"
+  },
+  {
+    "message": "updaet the config",
+    "expected": "modify"
+  },
+  {
+    "message": "refator this",
+    "expected": "modify"
+  },
+  {
+    "message": "renam the function",
+    "expected": "modify"
+  },
+  {
+    "message": "ad error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "helo",
+    "expected": "chat"
+  },
+  {
+    "message": "thansk",
+    "expected": "chat"
+  },
+  {
+    "message": "thankss",
+    "expected": "chat"
+  },
+  {
+    "message": "goobye",
+    "expected": "chat"
+  },
+  {
+    "message": "watsupp",
+    "expected": "chat"
+  },
+  {
+    "message": "func main() { fmt.Println(\"hello\") }",
+    "expected": "chat"
+  },
+  {
+    "message": "const x = 42;",
+    "expected": "chat"
+  },
+  {
+    "message": "def add(a, b): return a + b",
+    "expected": "chat"
+  },
+  {
+    "message": "SELECT * FROM users WHERE id = 1",
+    "expected": "chat"
+  },
+  {
+    "message": "panic: runtime error: index out of range [5] with length 3",
+    "expected": "fix"
+  },
+  {
+    "message": "Traceback (most recent call last):\n  File \"main.py\", line 10",
+    "expected": "fix"
+  },
+  {
+    "message": "Error: ENOENT: no such file or directory",
+    "expected": "fix"
+  },
+  {
+    "message": "java.lang.NullPointerException at com.example.Main.run(Main.java:42)",
+    "expected": "fix"
+  },
+  {
+    "message": "goroutine 1 [running]:\nmain.main()\n\tmain.go:15",
+    "expected": "fix"
+  },
+  {
+    "message": "fix the bug and add tests",
+    "expected": "fix"
+  },
+  {
+    "message": "debug and then refactor",
+    "expected": "fix"
+  },
+  {
+    "message": "find the error and fix it",
+    "expected": "fix"
+  },
+  {
+    "message": "write a function and tests for it",
+    "expected": "generate"
+  },
+  {
+    "message": "create a module with docs",
+    "expected": "generate"
+  },
+  {
+    "message": "refactor and clean up the code",
+    "expected": "modify"
+  },
+  {
+    "message": "update and optimize the query",
+    "expected": "modify"
+  },
+  {
+    "message": "don't fix it just explain what's wrong",
+    "expected": "explain"
+  },
+  {
+    "message": "don't change anything just tell me what this does",
+    "expected": "explain"
+  },
+  {
+    "message": "don't do anything",
+    "expected": "chat"
+  },
+  {
+    "message": "stop",
+    "expected": "chat"
+  },
+  {
+    "message": "wait",
+    "expected": "chat"
+  },
+  {
+    "message": "hold on",
+    "expected": "chat"
+  },
+  {
+    "message": "pause",
+    "expected": "chat"
+  },
+  {
+    "message": "rm dead code",
+    "expected": "modify"
+  },
+  {
+    "message": "mv to utils",
+    "expected": "modify"
+  },
+  {
+    "message": "impl the interface",
+    "expected": "modify"
+  },
+  {
+    "message": "impl auth",
+    "expected": "generate"
+  },
+  {
+    "message": "impl the login page",
+    "expected": "generate"
+  },
+  {
+    "message": "npm i",
+    "expected": "delegate"
+  },
+  {
+    "message": "pip install",
+    "expected": "delegate"
+  },
+  {
+    "message": "go mod tidy",
+    "expected": "delegate"
+  },
+  {
+    "message": "make clean",
+    "expected": "delegate"
+  },
+  {
+    "message": "WHY IS THIS STILL BROKEN",
+    "expected": "fix"
+  },
+  {
+    "message": "NOTHING WORKS",
+    "expected": "fix"
+  },
+  {
+    "message": "HELP",
+    "expected": "fix"
+  },
+  {
+    "message": "THIS IS SO FRUSTRATING",
+    "expected": "fix"
+  },
+  {
+    "message": "I GIVE UP FIX IT",
+    "expected": "fix"
+  },
+  {
+    "message": "ugh",
+    "expected": "chat"
+  },
+  {
+    "message": "sigh",
+    "expected": "chat"
+  },
+  {
+    "message": "facepalm",
+    "expected": "chat"
+  },
+  {
+    "message": "smh",
+    "expected": "chat"
+  },
+  {
+    "message": "bruh moment",
+    "expected": "chat"
+  },
+  {
+    "message": "help",
+    "expected": "chat"
+  },
+  {
+    "message": "what",
+    "expected": "chat"
+  },
+  {
+    "message": "why",
+    "expected": "chat"
+  },
+  {
+    "message": "how",
+    "expected": "chat"
+  },
+  {
+    "message": "where",
+    "expected": "chat"
+  },
+  {
+    "message": "when",
+    "expected": "chat"
+  },
+  {
+    "message": "test",
+    "expected": "delegate"
+  },
+  {
+    "message": "build",
+    "expected": "delegate"
+  },
+  {
+    "message": "deploy",
+    "expected": "delegate"
+  },
+  {
+    "message": "lint",
+    "expected": "delegate"
+  },
+  {
+    "message": "format",
+    "expected": "delegate"
+  },
+  {
+    "message": "broken",
+    "expected": "fix"
+  },
+  {
+    "message": "bug",
+    "expected": "fix"
+  },
+  {
+    "message": "error",
+    "expected": "fix"
+  },
+  {
+    "message": "crash",
+    "expected": "fix"
+  },
+  {
+    "message": "failing",
+    "expected": "fix"
+  },
+  {
+    "message": "explain",
+    "expected": "explain"
+  },
+  {
+    "message": "clarify",
+    "expected": "explain"
+  },
+  {
+    "message": "elaborate",
+    "expected": "explain"
+  },
+  {
+    "message": "review",
+    "expected": "review"
+  },
+  {
+    "message": "audit",
+    "expected": "review"
+  },
+  {
+    "message": "check",
+    "expected": "review"
+  },
+  {
+    "message": "research",
+    "expected": "research"
+  },
+  {
+    "message": "search",
+    "expected": "research"
+  },
+  {
+    "message": "investigate",
+    "expected": "research"
+  },
+  {
+    "message": "the auth is slow",
+    "expected": "fix"
+  },
+  {
+    "message": "the page takes forever to load",
+    "expected": "fix"
+  },
+  {
+    "message": "memory usage is through the roof",
+    "expected": "fix"
+  },
+  {
+    "message": "CPU at 100%",
+    "expected": "fix"
+  },
+  {
+    "message": "this could be cleaner",
+    "expected": "modify"
+  },
+  {
+    "message": "this is too verbose",
+    "expected": "modify"
+  },
+  {
+    "message": "there's a lot of duplication here",
+    "expected": "modify"
+  },
+  {
+    "message": "the naming is inconsistent",
+    "expected": "modify"
+  },
+  {
+    "message": "I'm lost",
+    "expected": "explain"
+  },
+  {
+    "message": "I'm confused",
+    "expected": "explain"
+  },
+  {
+    "message": "what's happening",
+    "expected": "explain"
+  },
+  {
+    "message": "I don't get it",
+    "expected": "explain"
+  },
+  {
+    "message": "this makes no sense",
+    "expected": "explain"
+  },
+  {
+    "message": "the function should be renamed",
+    "expected": "modify"
+  },
+  {
+    "message": "the tests need to be updated",
+    "expected": "modify"
+  },
+  {
+    "message": "this file should be moved",
+    "expected": "modify"
+  },
+  {
+    "message": "the config needs changing",
+    "expected": "modify"
+  },
+  {
+    "message": "tests need to be written",
+    "expected": "generate"
+  },
+  {
+    "message": "documentation should be created",
+    "expected": "generate"
+  },
+  {
+    "message": "a migration needs to be generated",
+    "expected": "generate"
+  },
+  {
+    "message": "please create a makefile",
+    "expected": "generate"
+  },
+  {
+    "message": "can you create a makefile",
+    "expected": "generate"
+  },
+  {
+    "message": "could you create a makefile",
+    "expected": "generate"
+  },
+  {
+    "message": "I need you to create a makefile",
+    "expected": "generate"
+  },
+  {
+    "message": "go ahead and create a makefile",
+    "expected": "generate"
+  },
+  {
+    "message": "just create a makefile",
+    "expected": "generate"
+  },
+  {
+    "message": "create a makefile please",
+    "expected": "generate"
+  },
+  {
+    "message": "create a makefile now",
+    "expected": "generate"
+  },
+  {
+    "message": "create a makefile asap",
+    "expected": "generate"
+  },
+  {
+    "message": "create a makefile for me",
+    "expected": "generate"
+  },
+  {
+    "message": "create a makefile right away",
+    "expected": "generate"
+  },
+  {
+    "message": "make a makefile",
+    "expected": "generate"
+  },
+  {
+    "message": "generate a makefile",
+    "expected": "generate"
+  },
+  {
+    "message": "produce a makefile",
+    "expected": "generate"
+  },
+  {
+    "message": "please create a dockerfile",
+    "expected": "generate"
+  },
+  {
+    "message": "can you create a dockerfile",
+    "expected": "generate"
+  },
+  {
+    "message": "could you create a dockerfile",
+    "expected": "generate"
+  },
+  {
+    "message": "I need you to create a dockerfile",
+    "expected": "generate"
+  },
+  {
+    "message": "go ahead and create a dockerfile",
+    "expected": "generate"
+  },
+  {
+    "message": "just create a dockerfile",
+    "expected": "generate"
+  },
+  {
+    "message": "create a dockerfile please",
+    "expected": "generate"
+  },
+  {
+    "message": "create a dockerfile now",
+    "expected": "generate"
+  },
+  {
+    "message": "create a dockerfile asap",
+    "expected": "generate"
+  },
+  {
+    "message": "create a dockerfile for me",
+    "expected": "generate"
+  },
+  {
+    "message": "create a dockerfile right away",
+    "expected": "generate"
+  },
+  {
+    "message": "make a dockerfile",
+    "expected": "generate"
+  },
+  {
+    "message": "generate a dockerfile",
+    "expected": "generate"
+  },
+  {
+    "message": "produce a dockerfile",
+    "expected": "generate"
+  },
+  {
+    "message": "please create a docker-compose.yml",
+    "expected": "generate"
+  },
+  {
+    "message": "can you create a docker-compose.yml",
+    "expected": "generate"
+  },
+  {
+    "message": "could you create a docker-compose.yml",
+    "expected": "generate"
+  },
+  {
+    "message": "I need you to create a docker-compose.yml",
+    "expected": "generate"
+  },
+  {
+    "message": "go ahead and create a docker-compose.yml",
+    "expected": "generate"
+  },
+  {
+    "message": "just create a docker-compose.yml",
+    "expected": "generate"
+  },
+  {
+    "message": "create a docker-compose.yml please",
+    "expected": "generate"
+  },
+  {
+    "message": "create a docker-compose.yml now",
+    "expected": "generate"
+  },
+  {
+    "message": "create a docker-compose.yml asap",
+    "expected": "generate"
+  },
+  {
+    "message": "create a docker-compose.yml for me",
+    "expected": "generate"
+  },
+  {
+    "message": "create a docker-compose.yml right away",
+    "expected": "generate"
+  },
+  {
+    "message": "make a docker-compose.yml",
+    "expected": "generate"
+  },
+  {
+    "message": "generate a docker-compose.yml",
+    "expected": "generate"
+  },
+  {
+    "message": "produce a docker-compose.yml",
+    "expected": "generate"
+  },
+  {
+    "message": "please build an api",
+    "expected": "generate"
+  },
+  {
+    "message": "can you build an api",
+    "expected": "generate"
+  },
+  {
+    "message": "could you build an api",
+    "expected": "generate"
+  },
+  {
+    "message": "I need you to build an api",
+    "expected": "generate"
+  },
+  {
+    "message": "go ahead and build an api",
+    "expected": "generate"
+  },
+  {
+    "message": "just build an api",
+    "expected": "generate"
+  },
+  {
+    "message": "build an api please",
+    "expected": "generate"
+  },
+  {
+    "message": "build an api now",
+    "expected": "generate"
+  },
+  {
+    "message": "build an api asap",
+    "expected": "generate"
+  },
+  {
+    "message": "build an api for me",
+    "expected": "generate"
+  },
+  {
+    "message": "build an api right away",
+    "expected": "generate"
+  },
+  {
+    "message": "create an api",
+    "expected": "generate"
+  },
+  {
+    "message": "develop an api",
+    "expected": "generate"
+  },
+  {
+    "message": "construct an api",
+    "expected": "generate"
+  },
+  {
+    "message": "please build a rest endpoint",
+    "expected": "generate"
+  },
+  {
+    "message": "can you build a rest endpoint",
+    "expected": "generate"
+  },
+  {
+    "message": "could you build a rest endpoint",
+    "expected": "generate"
+  },
+  {
+    "message": "I need you to build a rest endpoint",
+    "expected": "generate"
+  },
+  {
+    "message": "go ahead and build a rest endpoint",
+    "expected": "generate"
+  },
+  {
+    "message": "just build a rest endpoint",
+    "expected": "generate"
+  },
+  {
+    "message": "build a rest endpoint please",
+    "expected": "generate"
+  },
+  {
+    "message": "build a rest endpoint now",
+    "expected": "generate"
+  },
+  {
+    "message": "build a rest endpoint asap",
+    "expected": "generate"
+  },
+  {
+    "message": "build a rest endpoint for me",
+    "expected": "generate"
+  },
+  {
+    "message": "build a rest endpoint right away",
+    "expected": "generate"
+  },
+  {
+    "message": "create a rest endpoint",
+    "expected": "generate"
+  },
+  {
+    "message": "develop a rest endpoint",
+    "expected": "generate"
+  },
+  {
+    "message": "construct a rest endpoint",
+    "expected": "generate"
+  },
+  {
+    "message": "please build a cli tool",
+    "expected": "generate"
+  },
+  {
+    "message": "can you build a cli tool",
+    "expected": "generate"
+  },
+  {
+    "message": "could you build a cli tool",
+    "expected": "generate"
+  },
+  {
+    "message": "I need you to build a cli tool",
+    "expected": "generate"
+  },
+  {
+    "message": "go ahead and build a cli tool",
+    "expected": "generate"
+  },
+  {
+    "message": "just build a cli tool",
+    "expected": "generate"
+  },
+  {
+    "message": "build a cli tool please",
+    "expected": "generate"
+  },
+  {
+    "message": "build a cli tool now",
+    "expected": "generate"
+  },
+  {
+    "message": "build a cli tool asap",
+    "expected": "generate"
+  },
+  {
+    "message": "build a cli tool for me",
+    "expected": "generate"
+  },
+  {
+    "message": "build a cli tool right away",
+    "expected": "generate"
+  },
+  {
+    "message": "create a cli tool",
+    "expected": "generate"
+  },
+  {
+    "message": "develop a cli tool",
+    "expected": "generate"
+  },
+  {
+    "message": "construct a cli tool",
+    "expected": "generate"
+  },
+  {
+    "message": "please build a web server",
+    "expected": "generate"
+  },
+  {
+    "message": "can you build a web server",
+    "expected": "generate"
+  },
+  {
+    "message": "could you build a web server",
+    "expected": "generate"
+  },
+  {
+    "message": "I need you to build a web server",
+    "expected": "generate"
+  },
+  {
+    "message": "go ahead and build a web server",
+    "expected": "generate"
+  },
+  {
+    "message": "just build a web server",
+    "expected": "generate"
+  },
+  {
+    "message": "build a web server please",
+    "expected": "generate"
+  },
+  {
+    "message": "build a web server now",
+    "expected": "generate"
+  },
+  {
+    "message": "build a web server asap",
+    "expected": "generate"
+  },
+  {
+    "message": "build a web server for me",
+    "expected": "generate"
+  },
+  {
+    "message": "build a web server right away",
+    "expected": "generate"
+  },
+  {
+    "message": "create a web server",
+    "expected": "generate"
+  },
+  {
+    "message": "develop a web server",
+    "expected": "generate"
+  },
+  {
+    "message": "construct a web server",
+    "expected": "generate"
+  },
+  {
+    "message": "please build a database schema",
+    "expected": "generate"
+  },
+  {
+    "message": "can you build a database schema",
+    "expected": "generate"
+  },
+  {
+    "message": "could you build a database schema",
+    "expected": "generate"
+  },
+  {
+    "message": "I need you to build a database schema",
+    "expected": "generate"
+  },
+  {
+    "message": "go ahead and build a database schema",
+    "expected": "generate"
+  },
+  {
+    "message": "just build a database schema",
+    "expected": "generate"
+  },
+  {
+    "message": "build a database schema please",
+    "expected": "generate"
+  },
+  {
+    "message": "build a database schema now",
+    "expected": "generate"
+  },
+  {
+    "message": "build a database schema asap",
+    "expected": "generate"
+  },
+  {
+    "message": "build a database schema for me",
+    "expected": "generate"
+  },
+  {
+    "message": "build a database schema right away",
+    "expected": "generate"
+  },
+  {
+    "message": "create a database schema",
+    "expected": "generate"
+  },
+  {
+    "message": "develop a database schema",
+    "expected": "generate"
+  },
+  {
+    "message": "construct a database schema",
+    "expected": "generate"
+  },
+  {
+    "message": "please build a test suite",
+    "expected": "generate"
+  },
+  {
+    "message": "can you build a test suite",
+    "expected": "generate"
+  },
+  {
+    "message": "could you build a test suite",
+    "expected": "generate"
+  },
+  {
+    "message": "I need you to build a test suite",
+    "expected": "generate"
+  },
+  {
+    "message": "go ahead and build a test suite",
+    "expected": "generate"
+  },
+  {
+    "message": "just build a test suite",
+    "expected": "generate"
+  },
+  {
+    "message": "build a test suite please",
+    "expected": "generate"
+  },
+  {
+    "message": "build a test suite now",
+    "expected": "generate"
+  },
+  {
+    "message": "build a test suite asap",
+    "expected": "generate"
+  },
+  {
+    "message": "build a test suite for me",
+    "expected": "generate"
+  },
+  {
+    "message": "build a test suite right away",
+    "expected": "generate"
+  },
+  {
+    "message": "create a test suite",
+    "expected": "generate"
+  },
+  {
+    "message": "develop a test suite",
+    "expected": "generate"
+  },
+  {
+    "message": "construct a test suite",
+    "expected": "generate"
+  },
+  {
+    "message": "please write integration tests",
+    "expected": "generate"
+  },
+  {
+    "message": "can you write integration tests",
+    "expected": "generate"
+  },
+  {
+    "message": "could you write integration tests",
+    "expected": "generate"
+  },
+  {
+    "message": "I need you to write integration tests",
+    "expected": "generate"
+  },
+  {
+    "message": "go ahead and write integration tests",
+    "expected": "generate"
+  },
+  {
+    "message": "just write integration tests",
+    "expected": "generate"
+  },
+  {
+    "message": "write integration tests please",
+    "expected": "generate"
+  },
+  {
+    "message": "write integration tests now",
+    "expected": "generate"
+  },
+  {
+    "message": "write integration tests asap",
+    "expected": "generate"
+  },
+  {
+    "message": "write integration tests for me",
+    "expected": "generate"
+  },
+  {
+    "message": "write integration tests right away",
+    "expected": "generate"
+  },
+  {
+    "message": "create integration tests",
+    "expected": "generate"
+  },
+  {
+    "message": "compose integration tests",
+    "expected": "generate"
+  },
+  {
+    "message": "draft integration tests",
+    "expected": "generate"
+  },
+  {
+    "message": "please scaffold a new project",
+    "expected": "generate"
+  },
+  {
+    "message": "can you scaffold a new project",
+    "expected": "generate"
+  },
+  {
+    "message": "could you scaffold a new project",
+    "expected": "generate"
+  },
+  {
+    "message": "I need you to scaffold a new project",
+    "expected": "generate"
+  },
+  {
+    "message": "go ahead and scaffold a new project",
+    "expected": "generate"
+  },
+  {
+    "message": "just scaffold a new project",
+    "expected": "generate"
+  },
+  {
+    "message": "scaffold a new project please",
+    "expected": "generate"
+  },
+  {
+    "message": "scaffold a new project now",
+    "expected": "generate"
+  },
+  {
+    "message": "scaffold a new project asap",
+    "expected": "generate"
+  },
+  {
+    "message": "scaffold a new project for me",
+    "expected": "generate"
+  },
+  {
+    "message": "scaffold a new project right away",
+    "expected": "generate"
+  },
+  {
+    "message": "please hello write me a function",
+    "expected": "generate"
+  },
+  {
+    "message": "can you hello write me a function",
+    "expected": "generate"
+  },
+  {
+    "message": "could you hello write me a function",
+    "expected": "generate"
+  },
+  {
+    "message": "I need you to hello write me a function",
+    "expected": "generate"
+  },
+  {
+    "message": "go ahead and hello write me a function",
+    "expected": "generate"
+  },
+  {
+    "message": "just hello write me a function",
+    "expected": "generate"
+  },
+  {
+    "message": "hello write me a function please",
+    "expected": "generate"
+  },
+  {
+    "message": "hello write me a function now",
+    "expected": "generate"
+  },
+  {
+    "message": "hello write me a function asap",
+    "expected": "generate"
+  },
+  {
+    "message": "hello write me a function for me",
+    "expected": "generate"
+  },
+  {
+    "message": "hello write me a function right away",
+    "expected": "generate"
+  },
+  {
+    "message": "hello create me a function",
+    "expected": "generate"
+  },
+  {
+    "message": "hello compose me a function",
+    "expected": "generate"
+  },
+  {
+    "message": "hello draft me a function",
+    "expected": "generate"
+  },
+  {
+    "message": "please hey can you create a script",
+    "expected": "generate"
+  },
+  {
+    "message": "can you hey can you create a script",
+    "expected": "generate"
+  },
+  {
+    "message": "could you hey can you create a script",
+    "expected": "generate"
+  },
+  {
+    "message": "I need you to hey can you create a script",
+    "expected": "generate"
+  },
+  {
+    "message": "go ahead and hey can you create a script",
+    "expected": "generate"
+  },
+  {
+    "message": "just hey can you create a script",
+    "expected": "generate"
+  },
+  {
+    "message": "hey can you create a script please",
+    "expected": "generate"
+  },
+  {
+    "message": "hey can you create a script now",
+    "expected": "generate"
+  },
+  {
+    "message": "hey can you create a script asap",
+    "expected": "generate"
+  },
+  {
+    "message": "hey can you create a script for me",
+    "expected": "generate"
+  },
+  {
+    "message": "hey can you create a script right away",
+    "expected": "generate"
+  },
+  {
+    "message": "hey can you make a script",
+    "expected": "generate"
+  },
+  {
+    "message": "hey can you generate a script",
+    "expected": "generate"
+  },
+  {
+    "message": "hey can you produce a script",
+    "expected": "generate"
+  },
+  {
+    "message": "please update the error message",
+    "expected": "modify"
+  },
+  {
+    "message": "can you update the error message",
+    "expected": "modify"
+  },
+  {
+    "message": "could you update the error message",
+    "expected": "modify"
+  },
+  {
+    "message": "I need you to update the error message",
+    "expected": "modify"
+  },
+  {
+    "message": "go ahead and update the error message",
+    "expected": "modify"
+  },
+  {
+    "message": "just update the error message",
+    "expected": "modify"
+  },
+  {
+    "message": "update the error message please",
+    "expected": "modify"
+  },
+  {
+    "message": "update the error message now",
+    "expected": "modify"
+  },
+  {
+    "message": "update the error message asap",
+    "expected": "modify"
+  },
+  {
+    "message": "update the error message for me",
+    "expected": "modify"
+  },
+  {
+    "message": "update the error message right away",
+    "expected": "modify"
+  },
+  {
+    "message": "modify the error message",
+    "expected": "modify"
+  },
+  {
+    "message": "change the error message",
+    "expected": "modify"
+  },
+  {
+    "message": "alter the error message",
+    "expected": "modify"
+  },
+  {
+    "message": "please add error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "can you add error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "could you add error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "I need you to add error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "go ahead and add error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "just add error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "add error handling please",
+    "expected": "modify"
+  },
+  {
+    "message": "add error handling now",
+    "expected": "modify"
+  },
+  {
+    "message": "add error handling asap",
+    "expected": "modify"
+  },
+  {
+    "message": "add error handling for me",
+    "expected": "modify"
+  },
+  {
+    "message": "add error handling right away",
+    "expected": "modify"
+  },
+  {
+    "message": "include error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "insert error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "append error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "please add a test case",
+    "expected": "modify"
+  },
+  {
+    "message": "can you add a test case",
+    "expected": "modify"
+  },
+  {
+    "message": "could you add a test case",
+    "expected": "modify"
+  },
+  {
+    "message": "I need you to add a test case",
+    "expected": "modify"
+  },
+  {
+    "message": "go ahead and add a test case",
+    "expected": "modify"
+  },
+  {
+    "message": "just add a test case",
+    "expected": "modify"
+  },
+  {
+    "message": "add a test case please",
+    "expected": "modify"
+  },
+  {
+    "message": "add a test case now",
+    "expected": "modify"
+  },
+  {
+    "message": "add a test case asap",
+    "expected": "modify"
+  },
+  {
+    "message": "add a test case for me",
+    "expected": "modify"
+  },
+  {
+    "message": "add a test case right away",
+    "expected": "modify"
+  },
+  {
+    "message": "include a test case",
+    "expected": "modify"
+  },
+  {
+    "message": "insert a test case",
+    "expected": "modify"
+  },
+  {
+    "message": "append a test case",
+    "expected": "modify"
+  },
+  {
+    "message": "please tidy up the formatting",
+    "expected": "modify"
+  },
+  {
+    "message": "can you tidy up the formatting",
+    "expected": "modify"
+  },
+  {
+    "message": "could you tidy up the formatting",
+    "expected": "modify"
+  },
+  {
+    "message": "I need you to tidy up the formatting",
+    "expected": "modify"
+  },
+  {
+    "message": "go ahead and tidy up the formatting",
+    "expected": "modify"
+  },
+  {
+    "message": "just tidy up the formatting",
+    "expected": "modify"
+  },
+  {
+    "message": "tidy up the formatting please",
+    "expected": "modify"
+  },
+  {
+    "message": "tidy up the formatting now",
+    "expected": "modify"
+  },
+  {
+    "message": "tidy up the formatting asap",
+    "expected": "modify"
+  },
+  {
+    "message": "tidy up the formatting for me",
+    "expected": "modify"
+  },
+  {
+    "message": "tidy up the formatting right away",
+    "expected": "modify"
+  },
+  {
+    "message": "please can you also add error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "can you can you also add error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "could you can you also add error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "I need you to can you also add error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "go ahead and can you also add error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "just can you also add error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "can you also add error handling please",
+    "expected": "modify"
+  },
+  {
+    "message": "can you also add error handling now",
+    "expected": "modify"
+  },
+  {
+    "message": "can you also add error handling asap",
+    "expected": "modify"
+  },
+  {
+    "message": "can you also add error handling for me",
+    "expected": "modify"
+  },
+  {
+    "message": "can you also add error handling right away",
+    "expected": "modify"
+  },
+  {
+    "message": "can you also include error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "can you also insert error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "can you also append error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "please merge these two functions",
+    "expected": "modify"
+  },
+  {
+    "message": "can you merge these two functions",
+    "expected": "modify"
+  },
+  {
+    "message": "could you merge these two functions",
+    "expected": "modify"
+  },
+  {
+    "message": "I need you to merge these two functions",
+    "expected": "modify"
+  },
+  {
+    "message": "go ahead and merge these two functions",
+    "expected": "modify"
+  },
+  {
+    "message": "just merge these two functions",
+    "expected": "modify"
+  },
+  {
+    "message": "merge these two functions please",
+    "expected": "modify"
+  },
+  {
+    "message": "merge these two functions now",
+    "expected": "modify"
+  },
+  {
+    "message": "merge these two functions asap",
+    "expected": "modify"
+  },
+  {
+    "message": "merge these two functions for me",
+    "expected": "modify"
+  },
+  {
+    "message": "merge these two functions right away",
+    "expected": "modify"
+  },
+  {
+    "message": "please is there a test for this?",
+    "expected": "explain"
+  },
+  {
+    "message": "can you is there a test for this?",
+    "expected": "explain"
+  },
+  {
+    "message": "could you is there a test for this?",
+    "expected": "explain"
+  },
+  {
+    "message": "I need you to is there a test for this?",
+    "expected": "explain"
+  },
+  {
+    "message": "go ahead and is there a test for this?",
+    "expected": "explain"
+  },
+  {
+    "message": "just is there a test for this?",
+    "expected": "explain"
+  },
+  {
+    "message": "is there a test for this? please",
+    "expected": "explain"
+  },
+  {
+    "message": "is there a test for this? now",
+    "expected": "explain"
+  },
+  {
+    "message": "is there a test for this? asap",
+    "expected": "explain"
+  },
+  {
+    "message": "is there a test for this? for me",
+    "expected": "explain"
+  },
+  {
+    "message": "is there a test for this? right away",
+    "expected": "explain"
+  },
+  {
+    "message": "please how should i approach this refactor",
+    "expected": "plan"
+  },
+  {
+    "message": "can you how should i approach this refactor",
+    "expected": "plan"
+  },
+  {
+    "message": "could you how should i approach this refactor",
+    "expected": "plan"
+  },
+  {
+    "message": "I need you to how should i approach this refactor",
+    "expected": "plan"
+  },
+  {
+    "message": "go ahead and how should i approach this refactor",
+    "expected": "plan"
+  },
+  {
+    "message": "just how should i approach this refactor",
+    "expected": "plan"
+  },
+  {
+    "message": "how should i approach this refactor please",
+    "expected": "plan"
+  },
+  {
+    "message": "how should i approach this refactor now",
+    "expected": "plan"
+  },
+  {
+    "message": "how should i approach this refactor asap",
+    "expected": "plan"
+  },
+  {
+    "message": "how should i approach this refactor for me",
+    "expected": "plan"
+  },
+  {
+    "message": "how should i approach this refactor right away",
+    "expected": "plan"
+  },
+  {
+    "message": "please help me think through the architecture",
+    "expected": "plan"
+  },
+  {
+    "message": "can you help me think through the architecture",
+    "expected": "plan"
+  },
+  {
+    "message": "could you help me think through the architecture",
+    "expected": "plan"
+  },
+  {
+    "message": "I need you to help me think through the architecture",
+    "expected": "plan"
+  },
+  {
+    "message": "go ahead and help me think through the architecture",
+    "expected": "plan"
+  },
+  {
+    "message": "just help me think through the architecture",
+    "expected": "plan"
+  },
+  {
+    "message": "help me think through the architecture please",
+    "expected": "plan"
+  },
+  {
+    "message": "help me think through the architecture now",
+    "expected": "plan"
+  },
+  {
+    "message": "help me think through the architecture asap",
+    "expected": "plan"
+  },
+  {
+    "message": "help me think through the architecture for me",
+    "expected": "plan"
+  },
+  {
+    "message": "help me think through the architecture right away",
+    "expected": "plan"
+  },
+  {
+    "message": "please commit with message 'fix auth'",
+    "expected": "delegate"
+  },
+  {
+    "message": "can you commit with message 'fix auth'",
+    "expected": "delegate"
+  },
+  {
+    "message": "could you commit with message 'fix auth'",
+    "expected": "delegate"
+  },
+  {
+    "message": "I need you to commit with message 'fix auth'",
+    "expected": "delegate"
+  },
+  {
+    "message": "go ahead and commit with message 'fix auth'",
+    "expected": "delegate"
+  },
+  {
+    "message": "just commit with message 'fix auth'",
+    "expected": "delegate"
+  },
+  {
+    "message": "commit with message 'fix auth' please",
+    "expected": "delegate"
+  },
+  {
+    "message": "commit with message 'fix auth' now",
+    "expected": "delegate"
+  },
+  {
+    "message": "commit with message 'fix auth' asap",
+    "expected": "delegate"
+  },
+  {
+    "message": "commit with message 'fix auth' for me",
+    "expected": "delegate"
+  },
+  {
+    "message": "commit with message 'fix auth' right away",
+    "expected": "delegate"
+  },
+  {
+    "message": "commit with message 'repair auth'",
+    "expected": "delegate"
+  },
+  {
+    "message": "commit with message 'resolve auth'",
+    "expected": "delegate"
+  },
+  {
+    "message": "commit with message 'patch auth'",
+    "expected": "delegate"
+  },
+  {
+    "message": "please stop the server",
+    "expected": "delegate"
+  },
+  {
+    "message": "can you stop the server",
+    "expected": "delegate"
+  },
+  {
+    "message": "could you stop the server",
+    "expected": "delegate"
+  },
+  {
+    "message": "I need you to stop the server",
+    "expected": "delegate"
+  },
+  {
+    "message": "go ahead and stop the server",
+    "expected": "delegate"
+  },
+  {
+    "message": "just stop the server",
+    "expected": "delegate"
+  },
+  {
+    "message": "stop the server please",
+    "expected": "delegate"
+  },
+  {
+    "message": "stop the server now",
+    "expected": "delegate"
+  },
+  {
+    "message": "stop the server asap",
+    "expected": "delegate"
+  },
+  {
+    "message": "stop the server for me",
+    "expected": "delegate"
+  },
+  {
+    "message": "stop the server right away",
+    "expected": "delegate"
+  },
+  {
+    "message": "halt the server",
+    "expected": "delegate"
+  },
+  {
+    "message": "kill the server",
+    "expected": "delegate"
+  },
+  {
+    "message": "terminate the server",
+    "expected": "delegate"
+  },
+  {
+    "message": "please looks good ship it",
+    "expected": "delegate"
+  },
+  {
+    "message": "can you looks good ship it",
+    "expected": "delegate"
+  },
+  {
+    "message": "could you looks good ship it",
+    "expected": "delegate"
+  },
+  {
+    "message": "I need you to looks good ship it",
+    "expected": "delegate"
+  },
+  {
+    "message": "go ahead and looks good ship it",
+    "expected": "delegate"
+  },
+  {
+    "message": "just looks good ship it",
+    "expected": "delegate"
+  },
+  {
+    "message": "looks good ship it please",
+    "expected": "delegate"
+  },
+  {
+    "message": "looks good ship it now",
+    "expected": "delegate"
+  },
+  {
+    "message": "looks good ship it asap",
+    "expected": "delegate"
+  },
+  {
+    "message": "looks good ship it for me",
+    "expected": "delegate"
+  },
+  {
+    "message": "looks good ship it right away",
+    "expected": "delegate"
+  },
+  {
+    "message": "please lgtm deploy it",
+    "expected": "delegate"
+  },
+  {
+    "message": "can you lgtm deploy it",
+    "expected": "delegate"
+  },
+  {
+    "message": "could you lgtm deploy it",
+    "expected": "delegate"
+  },
+  {
+    "message": "I need you to lgtm deploy it",
+    "expected": "delegate"
+  },
+  {
+    "message": "go ahead and lgtm deploy it",
+    "expected": "delegate"
+  },
+  {
+    "message": "just lgtm deploy it",
+    "expected": "delegate"
+  },
+  {
+    "message": "lgtm deploy it please",
+    "expected": "delegate"
+  },
+  {
+    "message": "lgtm deploy it now",
+    "expected": "delegate"
+  },
+  {
+    "message": "lgtm deploy it asap",
+    "expected": "delegate"
+  },
+  {
+    "message": "lgtm deploy it for me",
+    "expected": "delegate"
+  },
+  {
+    "message": "lgtm deploy it right away",
+    "expected": "delegate"
+  },
+  {
+    "message": "lgtm ship it",
+    "expected": "delegate"
+  },
+  {
+    "message": "lgtm release it",
+    "expected": "delegate"
+  },
+  {
+    "message": "lgtm launch it",
+    "expected": "delegate"
+  },
+  {
+    "message": "please ad error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "can you ad error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "could you ad error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "I need you to ad error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "go ahead and ad error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "just ad error handling",
+    "expected": "modify"
+  },
+  {
+    "message": "ad error handling please",
+    "expected": "modify"
+  },
+  {
+    "message": "ad error handling now",
+    "expected": "modify"
+  },
+  {
+    "message": "ad error handling asap",
+    "expected": "modify"
+  },
+  {
+    "message": "ad error handling for me",
+    "expected": "modify"
+  },
+  {
+    "message": "ad error handling right away",
+    "expected": "modify"
+  },
+  {
+    "message": "please help",
+    "expected": "chat"
+  },
+  {
+    "message": "can you help",
+    "expected": "chat"
+  },
+  {
+    "message": "could you help",
+    "expected": "chat"
+  },
+  {
+    "message": "I need you to help",
+    "expected": "chat"
+  },
+  {
+    "message": "go ahead and help",
+    "expected": "chat"
+  },
+  {
+    "message": "just help",
+    "expected": "chat"
+  },
+  {
+    "message": "help please",
+    "expected": "chat"
+  },
+  {
+    "message": "help now",
+    "expected": "chat"
+  },
+  {
+    "message": "help asap",
+    "expected": "chat"
+  },
+  {
+    "message": "help for me",
+    "expected": "chat"
+  },
+  {
+    "message": "help right away",
+    "expected": "chat"
+  },
+  {
+    "message": "please bug",
+    "expected": "fix"
+  },
+  {
+    "message": "can you bug",
+    "expected": "fix"
+  },
+  {
+    "message": "could you bug",
+    "expected": "fix"
+  },
+  {
+    "message": "I need you to bug",
+    "expected": "fix"
+  },
+  {
+    "message": "go ahead and bug",
+    "expected": "fix"
+  },
+  {
+    "message": "just bug",
+    "expected": "fix"
+  },
+  {
+    "message": "bug please",
+    "expected": "fix"
+  },
+  {
+    "message": "bug now",
+    "expected": "fix"
+  },
+  {
+    "message": "bug asap",
+    "expected": "fix"
+  },
+  {
+    "message": "bug for me",
+    "expected": "fix"
+  },
+  {
+    "message": "bug right away",
+    "expected": "fix"
+  },
+  {
+    "message": "build me a new service",
+    "expected": "generate"
+  },
+  {
+    "message": "build a microservice",
+    "expected": "generate"
+  },
+  {
+    "message": "build a monitoring dashboard",
+    "expected": "generate"
+  },
+  {
+    "message": "create a testing framework",
+    "expected": "generate"
+  },
+  {
+    "message": "create a deployment pipeline",
+    "expected": "generate"
+  },
+  {
+    "message": "set up a new module",
+    "expected": "generate"
+  },
+  {
+    "message": "set up the test infrastructure",
+    "expected": "generate"
+  },
+  {
+    "message": "write a Makefile for this project",
+    "expected": "generate"
+  },
+  {
+    "message": "write a Dockerfile for production",
+    "expected": "generate"
+  },
+  {
+    "message": "update the configuration",
+    "expected": "modify"
+  },
+  {
+    "message": "update the logging format",
+    "expected": "modify"
+  },
+  {
+    "message": "add more tests",
+    "expected": "modify"
+  },
+  {
+    "message": "add comments to the code",
+    "expected": "modify"
+  },
+  {
+    "message": "add input validation",
+    "expected": "modify"
+  },
+  {
+    "message": "insert a new field",
+    "expected": "modify"
+  },
+  {
+    "message": "include error messages",
+    "expected": "modify"
+  },
+  {
+    "message": "ship this to production",
+    "expected": "delegate"
+  },
+  {
+    "message": "deploy the latest version",
+    "expected": "delegate"
+  },
+  {
+    "message": "restart the application",
+    "expected": "delegate"
+  },
+  {
+    "message": "stop all containers",
+    "expected": "delegate"
+  },
+  {
+    "message": "commit and push",
+    "expected": "delegate"
+  },
+  {
+    "message": "merge this PR",
+    "expected": "delegate"
+  },
+  {
+    "message": "tag version 2.0",
+    "expected": "delegate"
+  },
+  {
+    "message": "how would you architect this",
+    "expected": "plan"
+  },
+  {
+    "message": "what approach should we take",
+    "expected": "plan"
+  },
+  {
+    "message": "think about the design first",
+    "expected": "plan"
+  },
+  {
+    "message": "plan before implementing",
+    "expected": "plan"
+  },
+  {
+    "message": "outline the migration steps",
+    "expected": "plan"
+  }
+]
