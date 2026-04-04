@@ -32,6 +32,7 @@ func cmdCode(args []string) {
 	sessionID := fs.String("session", "", "Resume specific session ID")
 	verbose := fs.Int("verbose", 1, "Verbosity level: 0=compact, 1=normal, 2=verbose")
 	usePipeline := fs.Bool("pipeline", false, "Force legacy 6-phase pipeline (default: frontier model with pipeline tools)")
+	confidential := fs.Bool("confidential", false, "Confidential mode: blocks external API calls (web_search, web_fetch)")
 	screenReader := fs.Bool("screen-reader", os.Getenv("SYNROUTE_SCREEN_READER") != "", "Screen-reader-friendly output")
 	fs.Parse(args)
 
@@ -102,6 +103,11 @@ func cmdCode(args []string) {
 	}
 	config.Providers = providerNames
 	config.AutoOrchestrate = *usePipeline
+	config.Confidential = *confidential || os.Getenv("SYNROUTE_CONFIDENTIAL") == "true"
+	if config.Confidential {
+		log.Println("[Security] Confidential mode enabled — external API calls blocked")
+		tools.SetConfidentialMode(true)
+	}
 	config.Verbosity = *verbose
 
 	// MCP client — load config and connect to registered servers
@@ -198,7 +204,7 @@ func cmdCode(args []string) {
 	codeRenderer.SetVersion(version)
 	codeRenderer.SetVerbosity(*verbose)
 	codeRenderer.SetProviderLabel(ac.Profile)
-	codeRenderer.SetScreenReaderMode(*screenReader)
+	codeRenderer.SetScreenReaderMode(*screenReader || os.Getenv("SYNROUTE_SCREEN_READER") != "")
 
 	// Subscribe renderer to event bus
 	events := bus.Subscribe()
