@@ -121,9 +121,10 @@ func cmdCode(args []string) {
 
 	ctx := context.Background()
 
-	// Worktree isolation
+	// Worktree isolation - mandatory for --message mode to prevent writes to main repo
 	var wt *worktree.Worktree
-	if *useWorktree {
+	useWorktreeForMessage := *message != "" || *useWorktree
+	if useWorktreeForMessage {
 		wtMgr, err := worktree.NewManager(worktree.DefaultConfig())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating worktree manager: %v\n", err)
@@ -133,6 +134,7 @@ func cmdCode(args []string) {
 		wt, err = wtMgr.Create(cwd, "code")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating worktree: %v\n", err)
+			fmt.Fprintf(os.Stderr, "ABORTING: Cannot run --message mode without worktree isolation\n")
 			os.Exit(1)
 		}
 

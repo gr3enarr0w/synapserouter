@@ -686,10 +686,11 @@ func cmdChat(args []string) {
 
 	ctx := context.Background()
 
-	// Set up worktree isolation if requested
+	// Worktree isolation - mandatory for --message mode to prevent writes to main repo
 	var wtMgr *worktree.Manager
 	var wt *worktree.Worktree
-	if *useWorktree {
+	useWorktreeForMessage := *message != "" || *useWorktree
+	if useWorktreeForMessage {
 		wtMgr, err = worktree.NewManager(worktree.DefaultConfig())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating worktree manager: %v\n", err)
@@ -699,6 +700,9 @@ func cmdChat(args []string) {
 		wt, err = wtMgr.Create(cwd, "chat")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating worktree: %v\n", err)
+			if *message != "" {
+				fmt.Fprintf(os.Stderr, "ABORTING: Cannot run --message mode without worktree isolation\n")
+			}
 			os.Exit(1)
 		}
 
