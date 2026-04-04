@@ -64,6 +64,9 @@ type Config struct {
 
 	// Non-interactive mode (--message flag) — suppresses follow-up questions
 	NonInteractive bool
+
+	// Pipeline mode for slash commands in --message mode
+	PipelineMode string // "research", "plan", "review", "check", "fix", or "" for normal
 }
 
 // ModelTier classifies escalation levels by capability cost.

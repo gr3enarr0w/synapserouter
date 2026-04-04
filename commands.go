@@ -807,7 +807,34 @@ func cmdChat(args []string) {
 		}
 
 		// One-shot mode: work in the current directory so created files persist.
-		response, err := agent.RunOneShot(ctx, ac.ProxyRouter, registry, config, *message)
+		// Parse slash commands before passing to RunOneShot
+		msg := *message
+		if strings.HasPrefix(msg, "/") {
+			parts := strings.SplitN(strings.TrimPrefix(msg, "/"), " ", 2)
+			cmd := parts[0]
+			arg := ""
+			if len(parts) > 1 {
+				arg = parts[1]
+			}
+			switch cmd {
+			case "research":
+				config.PipelineMode = "research"
+				msg = arg
+			case "plan":
+				config.PipelineMode = "plan"
+				msg = arg
+			case "review":
+				config.PipelineMode = "review"
+				msg = arg
+			case "check":
+				config.PipelineMode = "check"
+				msg = arg
+			case "fix":
+				config.PipelineMode = "fix"
+				msg = arg
+			}
+		}
+		response, err := agent.RunOneShot(ctx, ac.ProxyRouter, registry, config, msg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
