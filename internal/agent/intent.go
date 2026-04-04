@@ -241,11 +241,17 @@ type GitContext struct {
 // DetectGitContext inspects the working directory's git state.
 // Returns nil if not a git repo. Does not fail — returns best-effort data.
 func DetectGitContext(workDir string) *GitContext {
-	// Check if git repo
-	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+	// Check if git repo using rev-parse --git-dir (more reliable than --is-inside-work-tree)
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
 	cmd.Dir = workDir
-	if out, err := cmd.Output(); err != nil || strings.TrimSpace(string(out)) != "true" {
+	if out, err := cmd.Output(); err != nil {
 		return nil
+	} else {
+		gitDir := strings.TrimSpace(string(out))
+		if gitDir == "" || gitDir == ".git" && workDir == "/" {
+			// Edge case: root directory with no git
+			return nil
+		}
 	}
 
 	ctx := &GitContext{IsRepo: true}
