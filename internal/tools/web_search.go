@@ -893,11 +893,14 @@ func formatSearchResults(results []SearchResult) string {
 // formatSearchResultsWithScore formats search results with quality scores
 func formatSearchResultsWithScore(results []SearchResultWithScore) string {
 	var sb strings.Builder
+	filter := NewResultFilter(nil)
 	for i, r := range results {
 		if i > 0 {
 			sb.WriteString("\n\n")
 		}
-		sb.WriteString(fmt.Sprintf("[%d] %s (score: %.2f)\n    %s", i+1, r.Title, r.QualityScore, r.URL))
+		credibility := filter.ClassifySourceCredibility(r.URL)
+		reliability := GetReliabilityLevel(r.QualityScore)
+		sb.WriteString(fmt.Sprintf("[%d] %s (score: %.2f) [%s] [%s]\n    %s", i+1, r.Title, r.QualityScore, credibility, reliability, r.URL))
 		if r.Snippet != "" {
 			sb.WriteString(fmt.Sprintf("\n    %s", r.Snippet))
 		}

@@ -26,6 +26,89 @@ type ResultFilter struct {
 	goodDomains      map[string]float64 // domain -> base score
 }
 
+// SourceCredibility represents the type of source
+type SourceCredibility string
+
+const (
+	CredibilityOfficialDocs SourceCredibility = "official_docs"
+	CredibilityCommunity    SourceCredibility = "community"
+	CredibilityBlog         SourceCredibility = "blog"
+	CredibilitySocial       SourceCredibility = "social"
+	CredibilityUnknown      SourceCredibility = "unknown"
+)
+
+// ClassifySourceCredibility categorizes a URL by source type
+func (rf *ResultFilter) ClassifySourceCredibility(rawURL string) SourceCredibility {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return CredibilityUnknown
+	}
+	host := strings.ToLower(parsed.Hostname())
+	host = strings.TrimPrefix(host, "www.")
+
+	// Official documentation domains
+	officialDocs := []string{
+		"microsoft.com", "learn.microsoft.com", "docs.microsoft.com",
+		"google.com", "developers.google.com", "cloud.google.com",
+		"amazon.com", "aws.amazon.com", "docs.aws.amazon.com",
+		"github.com", "docs.github.com",
+		"python.org", "docs.python.org",
+		"golang.org", "go.dev",
+		"rust-lang.org", "doc.rust-lang.org",
+		"java.com", "oracle.com", "docs.oracle.com",
+		"spring.io", "springframework.org",
+		"apache.org", "kubernetes.io", "docker.com",
+		"postgresql.org", "mysql.com", "mongodb.com",
+		"redis.io", "nginx.com", "terraform.io",
+	}
+	for _, d := range officialDocs {
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return CredibilityOfficialDocs
+		}
+	}
+
+	// Community/knowledge sites
+	community := []string{
+		"stackoverflow.com", "reddit.com", "medium.com",
+		"dev.to", "hashnode.com", "freecodecamp.org",
+		"geeksforgeeks.org", "tutorialspoint.com",
+	}
+	for _, d := range community {
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return CredibilityCommunity
+		}
+	}
+
+	// Social media
+	social := []string{
+		"twitter.com", "x.com", "linkedin.com", "facebook.com",
+		"youtube.com", "tiktok.com", "instagram.com",
+	}
+	for _, d := range social {
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return CredibilitySocial
+		}
+	}
+
+	// Personal blogs and unknown
+	if strings.Contains(host, "blogspot") || strings.Contains(host, "wordpress") ||
+		strings.Contains(host, "substack") || strings.Contains(host, "ghost") {
+		return CredibilityBlog
+	}
+
+	return CredibilityUnknown
+}
+
+// GetReliabilityLevel converts a score to human-readable reliability
+func GetReliabilityLevel(score float64) string {
+	if score >= 0.8 {
+		return "high"
+	} else if score >= 0.5 {
+		return "medium"
+	}
+	return "low"
+}
+
 // NewResultFilter creates a new ResultFilter with default patterns
 func NewResultFilter(redactor *security.Redactor) *ResultFilter {
 	// Internal/private URL patterns

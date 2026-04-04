@@ -19,11 +19,12 @@ type ResearchConfig struct {
 
 // ResearchHit is a single search result from one backend in one round.
 type ResearchHit struct {
-	URL     string
-	Title   string
-	Snippet string
-	Source  string // backend name
-	Round   int
+	URL          string
+	Title        string
+	Snippet      string
+	Source       string  // backend name
+	Round        int
+	QualityScore float64 // 0-1 quality score
 }
 
 // ResearchRound holds the results of one search round.

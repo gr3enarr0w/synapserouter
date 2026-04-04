@@ -28,6 +28,9 @@ func (a *Agent) RunResearch(ctx context.Context, query, depth string) (*Research
 
 	// Select backends for this query + depth
 	selected := SelectBackends(tagged, queryTypes, config.Depth)
+
+	// Initialize result filter for quality scoring
+	resultFilter := tools.NewResultFilter(nil)
 	if len(selected) == 0 {
 		return nil, fmt.Errorf("no search backends available")
 	}
@@ -91,12 +94,21 @@ func (a *Agent) RunResearch(ctx context.Context, query, depth string) (*Research
 					}
 					seenURLs[normURL] = true
 					roundResult.NewURLs++
+
+					// Calculate quality score using result filter
+					scoredResult, _ := resultFilter.FilterResult(sr, query)
+					qualityScore := 0.5 // default medium score
+					if scoredResult != nil {
+						qualityScore = scoredResult.QualityScore
+					}
+
 					roundResult.Hits = append(roundResult.Hits, ResearchHit{
-						URL:     sr.URL,
-						Title:   sr.Title,
-						Snippet: sr.Snippet,
-						Source:  br.BackendName,
-						Round:   round + 1,
+						URL:          sr.URL,
+						Title:        sr.Title,
+						Snippet:      sr.Snippet,
+						Source:       br.BackendName,
+						Round:        round + 1,
+						QualityScore: qualityScore,
 					})
 				}
 			}
@@ -188,7 +200,14 @@ func SynthesizeFindings(report *ResearchReport) (string, []string) {
 				snippet = snippet[:297] + "..."
 			}
 
-			fmt.Fprintf(&sb, "- **%s** [%d] — %s _(via %s)_\n", hit.Title, citNum, snippet, hit.Source)
+			// Determine reliability based on source
+			reliability := "medium"
+			if hit.QualityScore >= 0.8 {
+				reliability = "high"
+			} else if hit.QualityScore < 0.5 {
+				reliability = "low"
+			}
+			fmt.Fprintf(&sb, "- **%s** [%d] (reliability: %s) — %s _(via %s)_\n", hit.Title, citNum, reliability, snippet, hit.Source)
 		}
 	}
 
