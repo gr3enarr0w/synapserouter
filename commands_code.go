@@ -35,6 +35,7 @@ func cmdCode(args []string) {
 	verbose := fs.Int("verbose", 1, "Verbosity level: 0=compact, 1=normal, 2=verbose")
 	usePipeline := fs.Bool("pipeline", false, "Force legacy 6-phase pipeline (default: frontier model with pipeline tools)")
 	confidential := fs.Bool("confidential", false, "Confidential mode: blocks external API calls (web_search, web_fetch)")
+	dryRun := fs.Bool("dry-run", false, "Dry-run mode: preview changes without writing files")
 	screenReader := fs.Bool("screen-reader", os.Getenv("SYNROUTE_SCREEN_READER") != "", "Screen-reader-friendly output")
 	jsonEvents := fs.Bool("json-events", false, "Emit events as JSON lines to stderr")
 	fs.Parse(args)
@@ -116,6 +117,11 @@ func cmdCode(args []string) {
 	if config.Confidential {
 		log.Println("[Security] Confidential mode enabled — external API calls blocked")
 		tools.SetConfidentialMode(true)
+	}
+	config.DryRun = *dryRun
+	if config.DryRun {
+		log.Println("[Dry-Run] Mode enabled — file changes will be previewed only")
+		tools.SetDryRunMode(true)
 	}
 	config.Verbosity = *verbose
 

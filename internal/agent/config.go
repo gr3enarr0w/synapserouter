@@ -56,6 +56,7 @@ type Config struct {
 	// Security
 	Confidential bool // When true, blocks external API calls (web_search, web_fetch)
 	ReadOnlyMode bool // When true, disables write operations (untrusted directory)
+	DryRun       bool // When true, previews file changes without writing
 
 	// Pipeline tuning
 	MaxPhaseTurns int // Hard cap on LLM calls per pipeline phase (0 = auto-detect from spec complexity)

@@ -48,6 +48,20 @@ func (t *FileWriteTool) Execute(ctx context.Context, args map[string]interface{}
 
 	content := stringArg(args, "content")
 
+	// Dry-run mode: preview changes without writing
+	if DryRunMode {
+		lines := strings.Split(content, "\n")
+		preview := content
+		if len(lines) > 20 {
+			preview = strings.Join(lines[:20], "\n") + "\n... (" + fmt.Sprintf("%d more lines", len(lines)-20) + ")"
+		}
+		exists := ""
+		if _, err := os.Stat(path); err == nil {
+			exists = " (overwriting existing file)"
+		}
+		return &ToolResult{Output: fmt.Sprintf("DRY RUN: Would write %d bytes to %s%s\n\n--- Preview (first 20 lines) ---\n%s", len(content), path, exists, preview)}, nil
+	}
+
 	// Check for duplicate files with the same basename in the work directory
 	var warningMsg string
 	basename := filepath.Base(path)

@@ -232,6 +232,7 @@ func (cr *CodeRenderer) Init() {
 
 	fmt.Fprintln(cr.out)
 	fmt.Fprintln(cr.out, cr.color("\033[2m", "  /plan  /review  /check  /fix  /help"))
+	fmt.Fprintln(cr.out, cr.color("\033[2m", "  Tip: Use @file to reference files"))
 
 	// synroute.md detection handled by CodeREPL.detectProjectFiles()
 	fmt.Fprintln(cr.out)

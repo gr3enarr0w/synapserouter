@@ -93,6 +93,12 @@ func (t *FileEditTool) Execute(ctx context.Context, args map[string]interface{},
 		result = strings.Replace(content, oldStr, newStr, 1)
 	}
 
+	// Dry-run mode: show diff without applying
+	if DryRunMode {
+		diff := generateUnifiedDiff(path, content, result, oldStr, newStr)
+		return &ToolResult{Output: fmt.Sprintf("DRY RUN: Would replace %d occurrence(s) in %s\n\n%s", count, path, diff)}, nil
+	}
+
 	if err := os.WriteFile(path, []byte(result), fileMode); err != nil { //nolint:G703 // path validated by agent tool permission system
 		return &ToolResult{Error: err.Error()}, nil
 	}
@@ -110,4 +116,43 @@ func (t *FileEditTool) Execute(ctx context.Context, args map[string]interface{},
 		replacements = count
 	}
 	return &ToolResult{Output: fmt.Sprintf("replaced %d occurrence(s) in %s", replacements, path)}, nil
+}
+
+// generateUnifiedDiff creates a simple unified diff preview
+func generateUnifiedDiff(path, oldContent, newContent, oldStr, newStr string) string {
+	lines := strings.Split(newContent, "\n")
+	preview := ""
+	startLine := 0
+	for i, line := range lines {
+		if strings.Contains(line, newStr) && startLine == 0 {
+			startLine = max(0, i-3)
+			endLine := min(len(lines), i+4)
+			for j := startLine; j < endLine; j++ {
+				prefix := " "
+				if j == i {
+					prefix = "+"
+				}
+				preview += fmt.Sprintf("%s%s\n", prefix, lines[j])
+			}
+			break
+		}
+	}
+	if preview == "" {
+		preview = strings.Join(lines[:min(10, len(lines))], "\n")
+	}
+	return fmt.Sprintf("--- %s (old)\n+++ %s (new)\n%s", path, path, preview)
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

@@ -14,6 +14,14 @@ func SetConfidentialMode(enabled bool) {
 	ConfidentialMode = enabled
 }
 
+// DryRunMode is a package-level flag that previews changes without writing when true.
+var DryRunMode bool
+
+// SetDryRunMode enables or disables dry-run mode across all tools.
+func SetDryRunMode(enabled bool) {
+	DryRunMode = enabled
+}
+
 // Registry manages a collection of tools and provides lookup/execution.
 type Registry struct {
 	mu    sync.RWMutex
