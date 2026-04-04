@@ -563,6 +563,18 @@ func cmdChat(args []string) {
 	usePipeline := fs.Bool("pipeline", false, "Force legacy 6-phase pipeline (default: frontier model with pipeline tools)")
 	fs.Parse(args)
 
+	// BUG 2 (11.1): If --message was explicitly passed but empty, error and exit
+	messageFlagSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "message" {
+			messageFlagSet = true
+		}
+	})
+	if messageFlagSet && *message == "" {
+		fmt.Fprintln(os.Stderr, "Error: --message flag requires a non-empty value")
+		os.Exit(1)
+	}
+
 	// Support -v / -vv shorthand via remaining args
 	for _, a := range fs.Args() {
 		if a == "-v" {

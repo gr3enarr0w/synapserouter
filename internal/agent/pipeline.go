@@ -454,16 +454,16 @@ func RunCleanup() {
 		"synroute_test",
 		".aider.chat.history.md",
 		".aider.input.history",
-	}
-
-	// SQL files that don't belong in root
-	sqlJunk := []string{
-		"top_10_customers_production.sql",
-		"top_10_customers_by_order_value.sql",
+		"add.go",
+		"*.sql",
 	}
 
 	// Remove root-level package.json (this is a Go project)
 	rootPackageJSON := "package.json"
+	_ = rootPackageJSON
+
+	// SQL files in root that agent creates
+	sqlJunk, _ := filepath.Glob("*.sql")
 
 	log.Printf("[Cleanup] Starting junk file cleanup...")
 	removedCount := 0

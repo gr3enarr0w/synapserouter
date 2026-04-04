@@ -13,9 +13,45 @@ func Banner() string {
 }
 
 // BannerForWidth returns a banner appropriate for the terminal width.
-// Currently returns the standard banner; width parameter reserved for future use.
+// At <50 cols: minimal text "synroute vX.X"
+// At 50-79 cols: compact text-only banner
+// At >=80 cols: full gradient banner
 func BannerForWidth(width int, noColor bool) string {
+	if width < 50 {
+		return renderMinimalBanner(noColor)
+	} else if width < 80 {
+		return renderCompactBanner(noColor)
+	}
 	return renderBanner(noColor)
+}
+
+// renderMinimalBanner returns a minimal text banner for very narrow terminals.
+func renderMinimalBanner(noColor bool) string {
+	version := "v1.08.6"
+	if noColor {
+		return fmt.Sprintf("\n  synroute %s\n", version)
+	}
+	return fmt.Sprintf("\n  \033[1;36msynroute\033[0m %s\n", version)
+}
+
+// renderCompactBanner returns a compact text-only banner for narrow terminals.
+func renderCompactBanner(noColor bool) string {
+	wordmark := "synroute"
+	subtitle := "neural routing engine"
+
+	var b strings.Builder
+	b.WriteString("\n")
+
+	if noColor {
+		b.WriteString("  " + wordmark + "\n")
+		b.WriteString("  " + subtitle + "\n")
+	} else {
+		// Solid cyan color for compact mode
+		b.WriteString("  \033[1;36m" + wordmark + "\033[0m\n")
+		b.WriteString("\033[2m  " + subtitle + "\033[0m\n")
+	}
+
+	return b.String()
 }
 
 func renderBanner(noColor bool) string {
