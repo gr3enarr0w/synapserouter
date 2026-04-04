@@ -42,6 +42,7 @@ type Agent struct {
 	registry     *tools.Registry
 	permissions       *tools.PermissionChecker
 	permissionPrompt tools.PermissionPromptFunc
+	intentRouter *IntentRouter
 	conversation *Conversation
 	renderer     TerminalRenderer
 	config       Config
@@ -169,6 +170,7 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRende
 		bus:               config.EventBus,
 		cachedPromptLevel: -1, // force rebuild on first call
 		reviewTracker:     &ReviewCycleTracker{},
+		intentRouter:      NewIntentRouter(),
 	}
 	if isSpeculationEnabled() {
 		a.speculator = NewSpeculativeCache()
@@ -701,11 +703,22 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			}
 		}
 
+		// Intent classification and tool filtering
+		allTools := a.registry.OpenAIToolDefinitions()
+		filteredTools := allTools
+		if a.intentRouter != nil && a.originalRequest != "" {
+			intent := a.intentRouter.Classify(a.originalRequest)
+			log.Printf("[Intent] message=%q → %s (tools: %d→%d)", a.originalRequest[:min(len(a.originalRequest), 50)], intent, len(allTools), len(filterToolsByIntent(intent, allTools)))
+			if intent != IntentUnknown {
+				filteredTools = filterToolsByIntent(intent, allTools)
+			}
+		}
+
 		// LLM call
 		req := providers.ChatRequest{
 			Model:      a.config.Model,
 			Messages:   a.buildMessages(),
-			Tools:      a.registry.OpenAIToolDefinitions(),
+			Tools:      filteredTools,
 			ToolChoice: "auto", // Required for many open-source models to use function calling
 		}
 
@@ -769,7 +782,8 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		}
 		// Text-based tool call fallback: some models (especially open-source via Ollama)
 		// output tool calls as text markers instead of structured JSON. Parse them.
-		if len(msg.ToolCalls) == 0 && msg.Content != "" {
+		// Skip when intent router classified as chat (no tools allowed).
+		if len(msg.ToolCalls) == 0 && msg.Content != "" && len(filteredTools) > 0 {
 			if textToolCalls, cleanedContent := extractTextToolCalls(msg.Content); len(textToolCalls) > 0 {
 				msg.ToolCalls = textToolCalls
 				msg.Content = cleanedContent

@@ -487,9 +487,47 @@ The parent REPL agent starts at the configured conversation tier. Default: front
 
 **Configuration:** Auto-detected from chain position. Override with `OLLAMA_CHAIN_TIERS` env var (pipe-separated, matching OLLAMA_CHAIN levels). See design doc in `docs/designs/` for full details.
 
-### 2.14 Intent Detection
+### 2.14 Intent Routing (Hybrid Three-Layer)
 
-*(Design complete -- #232, #235, Epic #303; heuristic implementation in `internal/agent/intent.go`)*
+Three-layer intent routing prevents unnecessary tool calls and token waste. Research (AppSelectBench 2025, GTA 2024) shows LLMs are <63% accurate at tool selection. Smaller models are worse. Users should never burn tokens on tool calls for greetings or knowledge questions.
+
+**Layer 1: Keyword matching (0ms, deterministic)**
+Exact/prefix matching for obvious intents — no LLM call needed:
+- Greetings: "hello", "hi", "hey", "good morning", "how are you" → direct text, zero tools
+- Simple questions: "what is", "who is", "when was" (no file/code context) → direct text
+- Slash commands: "/exit", "/help", "/model", "/research" → REPL dispatch
+- Result: skip tool-use entirely for trivial queries
+
+**Layer 2: Semantic routing (~15ms, embedding similarity)**
+For ambiguous queries, classify by cosine similarity against pre-computed route embeddings. Uses synroute's existing TF-IDF feature hashing (no external model needed). 50+ utterance examples per route.
+
+| Route | Tool Access | Example Utterances |
+|-------|------------|-------------------|
+| chat | None | "what is Go?", "explain closures", "why use interfaces" |
+| code | All tools | "write a function", "create a file", "build an API" |
+| fix | read + edit | "debug the error", "fix the test", "this is broken" |
+| research | web tools | "search for", "find out about", "what's the latest on" |
+| explain | read-only | "how does this work", "walk me through", "what does X do" |
+| review | read-only | "review my code", "check for issues", "audit this" |
+| plan | planning | "design a system", "plan the architecture", "how should I approach" |
+
+Confidence threshold: 0.25 (research: 0.2-0.3 optimal for intent routing). Below threshold → fall through to Layer 3.
+
+**Layer 3: LLM decision (fallback)**
+When semantic routing confidence is low, let the LLM decide — current behavior. Inject system prompt hint: "Consider whether this query needs tools or can be answered directly."
+
+**Implementation:** `internal/agent/intent_router.go`
+- Pre-compute route embeddings at startup from utterance examples
+- Reuse VectorMemory's TF-IDF infrastructure for embeddings
+- Check intent before first LLM call in agent loop
+- If route matched: restrict tool access per route table above
+- If no match: full LLM decision (current behavior)
+
+**Research basis:** Aurelio Labs semantic-router, vLLM Semantic Router (ModernBERT), SkillRouter (arXiv 2026), AWS Multi-LLM routing, AppSelectBench, GTA benchmark. Hybrid approach recommended by AWS for production systems.
+
+### 2.15 Intent Detection (Legacy Heuristics)
+
+*(Heuristic implementation in `internal/agent/intent.go` — retained as additional signal)*
 
 The frontier model determines what to do — pipeline phases are tools it can invoke, not a forced mode. The model reads the user's message and decides whether to answer directly, invoke a single phase tool, or trigger the full pipeline.
 
