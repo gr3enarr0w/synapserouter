@@ -481,14 +481,11 @@ func (cr *CodeRenderer) ShowHelp() {
 	cr.writeContent("")
 }
 
-// SetVerbosity updates the verbosity level and shows feedback.
+// SetVerbosity updates the verbosity level (internal state only — no visual feedback).
 func (cr *CodeRenderer) SetVerbosity(level int) {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 	cr.verbosity = level
-	names := []string{"compact", "normal", "verbose"}
-	name := names[level%3]
-	cr.writeContent(cr.color("\033[33m", fmt.Sprintf("  verbosity: %s", name)))
 }
 
 // SetScreenReaderMode enables or disables screen reader mode.

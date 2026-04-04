@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -37,7 +38,7 @@ func cmdCode(args []string) {
 	jsonEvents := fs.Bool("json-events", false, "Emit events as JSON lines to stderr")
 	fs.Parse(args)
 
-	registry := tools.DefaultRegistry()
+	// Set up timestamped log file BEFORE tool registry creation so all logs go to file
 	cwd, _ := os.Getwd()
 
 	// Derive project name for status bar
@@ -55,16 +56,22 @@ func cmdCode(args []string) {
 		projectName = *project
 	}
 
-	// Set up timestamped log file BEFORE provider init so all logs go to file
+	// Set up log file BEFORE tool registry creation (NewWebSearchTool logs during init)
 	logDir := filepath.Join(cwd, ".synroute", "logs")
 	os.MkdirAll(logDir, 0755)
 	logTimestamp := time.Now().Format("2006-01-02T15-04-05")
 	logPath := filepath.Join(logDir, fmt.Sprintf("run-%s.log", logTimestamp))
-	if logFile, err := os.Create(logPath); err == nil {
+	logFile, err := os.Create(logPath)
+	if err == nil {
 		// In code mode, logs go to file ONLY (not stderr — that's the TUI)
 		log.SetOutput(logFile)
 		defer logFile.Close()
+	} else {
+		// If log file creation fails, discard logs to avoid leaking to stderr
+		log.SetOutput(io.Discard)
 	}
+
+	registry := tools.DefaultRegistry()
 
 	ac, err := app.InitLight(context.Background())
 	if err != nil {
