@@ -241,6 +241,37 @@ func (r *REPL) handleCommand(ctx context.Context, input string) bool {
 			}
 		}
 
+	case "/research":
+		msg := strings.TrimSpace(strings.TrimPrefix(input, "/research"))
+		if msg == "" {
+			fmt.Fprintln(r.out, "  usage: /research [quick|standard|deep] <query>")
+		} else {
+			// Parse optional depth prefix
+			depth := "standard"
+			parts := strings.SplitN(msg, " ", 2)
+			switch parts[0] {
+			case "quick", "standard", "deep":
+				depth = parts[0]
+				if len(parts) > 1 {
+					msg = parts[1]
+				} else {
+					fmt.Fprintln(r.out, "  usage: /research [quick|standard|deep] <query>")
+					break
+				}
+			}
+
+			config := DefaultResearchConfig(depth)
+			fmt.Fprintf(r.out, "  researching (%s): %d rounds, %d max queries, %d budget...\n",
+				depth, config.MaxRounds, config.MaxQueries, config.MaxAPICalls)
+
+			report, err := r.agent.RunResearch(ctx, msg, depth)
+			if err != nil {
+				fmt.Fprintf(r.out, "error: %s\n", err)
+			} else if report != nil {
+				fmt.Fprintln(r.out, report.Findings)
+			}
+		}
+
 	case "/help":
 		fmt.Fprintln(r.out, `Commands:
   /exit      Exit the REPL
@@ -254,6 +285,7 @@ func (r *REPL) handleCommand(ctx context.Context, input string) bool {
   /review    Run code review phase (independent assessment)
   /check     Run self-check phase (build, test, verify)
   /fix <msg> Run targeted implement phase (fix specific issue)
+  /research  Run web research (e.g., /research deep <query>)
   /help      Show this help`)
 
 	default:
