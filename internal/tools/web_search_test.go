@@ -216,7 +216,7 @@ func (m *mockSearchBackend) Search(ctx context.Context, query string, maxResults
 	}
 	return m.Results, m.Err
 }
-func (m *mockSearchBackend) CostTier() string { return "free" }
+func (m *mockSearchBackend) CostPer1K() float64 { return 0 }
 
 func TestNormalizeURL(t *testing.T) {
 	tests := []struct {

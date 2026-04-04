@@ -54,7 +54,7 @@ type SearchResult struct {
 // SearchBackend is the interface for pluggable search providers.
 type SearchBackend interface {
 	Name() string
-	CostTier() string // "free", "cheap", "mid", "expensive"
+	CostPer1K() float64 // Cost per 1000 queries in USD
 	Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error)
 }
 
@@ -296,11 +296,10 @@ func (t *WebSearchTool) executeFusion(ctx context.Context, query string, maxResu
 	}
 
 	// Sort backends by cost tier (free first, then cheap, mid, expensive)
-	costOrder := map[string]int{"free": 0, "cheap": 1, "mid": 2, "expensive": 3}
 	sortedBackends := make([]SearchBackend, len(t.backends))
 	copy(sortedBackends, t.backends)
 	sort.Slice(sortedBackends, func(i, j int) bool {
-		return costOrder[sortedBackends[i].CostTier()] < costOrder[sortedBackends[j].CostTier()]
+		return sortedBackends[i].CostPer1K() < sortedBackends[j].CostPer1K()
 	})
 
 	// Filter out backends with open circuit breakers
@@ -386,10 +385,10 @@ func selectBackendsWithCostBalance(backends []SearchBackend, maxBackends int) []
 	// Separate backends by cost tier
 	var freeBackends, cheapMidBackends, expensiveBackends []SearchBackend
 	for _, b := range backends {
-		tier := b.CostTier()
-		if tier == "free" {
+		cost := b.CostPer1K()
+		if cost == 0 {
 			freeBackends = append(freeBackends, b)
-		} else if tier == "cheap" || tier == "mid" {
+		} else if cost <= 10.0 {
 			cheapMidBackends = append(cheapMidBackends, b)
 		} else {
 			expensiveBackends = append(expensiveBackends, b)
@@ -440,7 +439,7 @@ func selectBackendsWithCostBalance(backends []SearchBackend, maxBackends int) []
 type DuckDuckGoBackend struct{}
 
 func (b *DuckDuckGoBackend) Name() string { return "duckduckgo" }
-func (b *DuckDuckGoBackend) CostTier() string { return "free" }
+func (b *DuckDuckGoBackend) CostPer1K() float64 { return 0 }
 func (b *DuckDuckGoBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	return duckDuckGoSearch(ctx, query, maxResults)
 }
@@ -576,7 +575,7 @@ type TavilyBackend struct {
 }
 
 func (b *TavilyBackend) Name() string { return "tavily" }
-func (b *TavilyBackend) CostTier() string { return "cheap" }
+func (b *TavilyBackend) CostPer1K() float64 { return 8.00 }
 
 func (b *TavilyBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	reqBody, _ := json.Marshal(map[string]interface{}{
@@ -635,7 +634,7 @@ type SearXNGBackend struct {
 }
 
 func (b *SearXNGBackend) Name() string { return "searxng" }
-func (b *SearXNGBackend) CostTier() string { return "free" }
+func (b *SearXNGBackend) CostPer1K() float64 { return 0 }
 
 func (b *SearXNGBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	u, err := url.Parse(b.baseURL + "/search")
@@ -694,7 +693,7 @@ func (b *SearXNGBackend) Search(ctx context.Context, query string, maxResults in
 type SerperBackend struct{ apiKey string }
 
 func (b *SerperBackend) Name() string { return "serper" }
-func (b *SerperBackend) CostTier() string { return "cheap" }
+func (b *SerperBackend) CostPer1K() float64 { return 0.30 }
 
 func (b *SerperBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	reqBody, _ := json.Marshal(map[string]interface{}{"q": query, "num": maxResults})
@@ -737,7 +736,7 @@ func (b *SerperBackend) Search(ctx context.Context, query string, maxResults int
 type BraveBackend struct{ apiKey string }
 
 func (b *BraveBackend) Name() string { return "brave" }
-func (b *BraveBackend) CostTier() string { return "cheap" }
+func (b *BraveBackend) CostPer1K() float64 { return 5.00 }
 
 func (b *BraveBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	u, _ := url.Parse("https://api.search.brave.com/res/v1/web/search")
@@ -787,7 +786,7 @@ func (b *BraveBackend) Search(ctx context.Context, query string, maxResults int)
 type ExaBackend struct{ apiKey string }
 
 func (b *ExaBackend) Name() string { return "exa" }
-func (b *ExaBackend) CostTier() string { return "mid" }
+func (b *ExaBackend) CostPer1K() float64 { return 7.00 }
 
 func (b *ExaBackend) Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	reqBody, _ := json.Marshal(map[string]interface{}{"query": query, "numResults": maxResults, "type": "auto"})

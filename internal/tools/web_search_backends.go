@@ -14,7 +14,7 @@ import (
 
 type YouBackend struct{ apiKey string }
 
-func (b *YouBackend) CostTier() string { return "mid" }
+func (b *YouBackend) CostPer1K() float64 { return 5.00 }
 
 func (b *YouBackend) Name() string { return "you" }
 
@@ -70,7 +70,7 @@ func (b *YouBackend) Search(ctx context.Context, query string, maxResults int) (
 
 type SerpAPIBackend struct{ apiKey string }
 
-func (b *SerpAPIBackend) CostTier() string { return "mid" }
+func (b *SerpAPIBackend) CostPer1K() float64 { return 10.00 }
 
 func (b *SerpAPIBackend) Name() string { return "serpapi" }
 
@@ -120,7 +120,7 @@ func (b *SerpAPIBackend) Search(ctx context.Context, query string, maxResults in
 
 type JinaBackend struct{ apiKey string }
 
-func (b *JinaBackend) CostTier() string { return "mid" }
+func (b *JinaBackend) CostPer1K() float64 { return 5.00 }
 
 func (b *JinaBackend) Name() string { return "jina" }
 
@@ -173,7 +173,7 @@ func (b *JinaBackend) Search(ctx context.Context, query string, maxResults int) 
 
 type KagiBackend struct{ apiKey string }
 
-func (b *KagiBackend) CostTier() string { return "expensive" }
+func (b *KagiBackend) CostPer1K() float64 { return 25.00 }
 
 func (b *KagiBackend) Name() string { return "kagi" }
 
@@ -225,7 +225,7 @@ func (b *KagiBackend) Search(ctx context.Context, query string, maxResults int) 
 
 type LinkupBackend struct{ apiKey string }
 
-func (b *LinkupBackend) CostTier() string { return "mid" }
+func (b *LinkupBackend) CostPer1K() float64 { return 5.50 }
 
 func (b *LinkupBackend) Name() string { return "linkup" }
 
@@ -334,13 +334,13 @@ func (b *SemanticScholarBackend) Search(ctx context.Context, query string, maxRe
 	return results, nil
 }
 
-func (b *SemanticScholarBackend) CostTier() string { return "free" }
+func (b *SemanticScholarBackend) CostPer1K() float64 { return 0 }
 
 // --- OpenAlex Backend (openalex.org — 260M academic works, fully open) ---
 
 type OpenAlexBackend struct{}
 
-func (b *OpenAlexBackend) CostTier() string { return "free" }
+func (b *OpenAlexBackend) CostPer1K() float64 { return 0 }
 
 func (b *OpenAlexBackend) Name() string { return "openalex" }
 
@@ -396,7 +396,7 @@ func (b *OpenAlexBackend) Search(ctx context.Context, query string, maxResults i
 
 type GitHubSearchBackend struct{ token string }
 
-func (b *GitHubSearchBackend) CostTier() string { return "free" }
+func (b *GitHubSearchBackend) CostPer1K() float64 { return 0 }
 
 func (b *GitHubSearchBackend) Name() string { return "github" }
 
@@ -452,7 +452,7 @@ func (b *GitHubSearchBackend) Search(ctx context.Context, query string, maxResul
 
 type SourcegraphBackend struct{ token string }
 
-func (b *SourcegraphBackend) CostTier() string { return "free" }
+func (b *SourcegraphBackend) CostPer1K() float64 { return 0 }
 
 func (b *SourcegraphBackend) Name() string { return "sourcegraph" }
 
@@ -519,7 +519,7 @@ func (b *SourcegraphBackend) Search(ctx context.Context, query string, maxResult
 
 type NewsAPIBackend struct{ apiKey string }
 
-func (b *NewsAPIBackend) CostTier() string { return "cheap" }
+func (b *NewsAPIBackend) CostPer1K() float64 { return 0 }
 
 func (b *NewsAPIBackend) Name() string { return "newsapi" }
 
@@ -569,7 +569,7 @@ func (b *NewsAPIBackend) Search(ctx context.Context, query string, maxResults in
 
 type SearchAPIBackend struct{ apiKey string }
 
-func (b *SearchAPIBackend) CostTier() string { return "mid" }
+func (b *SearchAPIBackend) CostPer1K() float64 { return 5.00 }
 
 func (b *SearchAPIBackend) Name() string { return "searchapi" }
 
@@ -619,7 +619,7 @@ func (b *SearchAPIBackend) Search(ctx context.Context, query string, maxResults 
 
 type NewsdataBackend struct{ apiKey string }
 
-func (b *NewsdataBackend) CostTier() string { return "cheap" }
+func (b *NewsdataBackend) CostPer1K() float64 { return 0 }
 
 func (b *NewsdataBackend) Name() string { return "newsdata" }
 
@@ -669,7 +669,7 @@ func (b *NewsdataBackend) Search(ctx context.Context, query string, maxResults i
 
 type TheNewsAPIBackend struct{ apiKey string }
 
-func (b *TheNewsAPIBackend) CostTier() string { return "cheap" }
+func (b *TheNewsAPIBackend) CostPer1K() float64 { return 0 }
 
 func (b *TheNewsAPIBackend) Name() string { return "thenewsapi" }
 
