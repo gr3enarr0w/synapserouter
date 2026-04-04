@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gr3enarr0w/synapserouter/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/security"
 )
 
 const (
@@ -148,10 +149,20 @@ func (t *WebSearchTool) InputSchema() map[string]interface{} {
 }
 
 func (t *WebSearchTool) Execute(ctx context.Context, args map[string]interface{}, workDir string) (*ToolResult, error) {
+	if ConfidentialMode {
+		return &ToolResult{Error: "web search is disabled in confidential mode"}, nil
+	}
 	query := stringArg(args, "query")
 	if query == "" {
 		return &ToolResult{Error: "query is required"}, nil
 	}
+
+	// Redact sensitive information from query before sending to backends
+	redactedQuery, redactedCount := security.RedactQuery(query)
+	if redactedCount > 0 {
+		log.Printf("[Search] redacted %d secrets from query before sending to backends", redactedCount)
+	}
+	query = redactedQuery
 
 	maxResults := intArg(args, "max_results", maxSearchResults)
 	if maxResults > maxSearchResults {
@@ -183,7 +194,15 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]interface{}
 		return &ToolResult{Output: "no results found"}, nil
 	}
 
-	return &ToolResult{Output: formatSearchResults(results)}, nil
+	// Filter results for sensitive data and quality
+	filter := NewResultFilter(nil)
+	filteredResults, _ := filter.Filter(results, query)
+
+	if len(filteredResults) == 0 {
+		return &ToolResult{Output: "no results found"}, nil
+	}
+
+	return &ToolResult{Output: formatSearchResultsWithScore(filteredResults)}, nil
 }
 
 // isBackendCircuitOpen checks if a search backend's circuit breaker is open
@@ -352,7 +371,13 @@ func (t *WebSearchTool) executeFusion(ctx context.Context, query string, maxResu
 				if len(trimmed) > maxResults {
 					trimmed = trimmed[:maxResults]
 				}
-				return &ToolResult{Output: formatSearchResults(trimmed)}, nil
+				// Filter results for sensitive data and quality
+				filter := NewResultFilter(nil)
+				filteredResults, _ := filter.Filter(trimmed, query)
+				if len(filteredResults) == 0 {
+					return &ToolResult{Output: "no results found"}, nil
+				}
+				return &ToolResult{Output: formatSearchResultsWithScore(filteredResults)}, nil
 			}
 		}
 	}
@@ -360,17 +385,43 @@ func (t *WebSearchTool) executeFusion(ctx context.Context, query string, maxResu
 	// Merge via RRF
 	merged := mergeRRF(backendResults, maxResults)
 
-	// Optional LLM re-rank when 2+ backends contributed
-	if t.completer != nil && successCount >= 2 && len(merged) > 1 {
-		merged = llmRerank(ctx, t.completer, query, merged)
+	// Filter results for sensitive data and quality
+	filter := NewResultFilter(nil)
+	filteredResults, filteredCount := filter.Filter(merged, query)
+	if filteredCount > 0 {
+		log.Printf("[SearchFusion] filtered %d sensitive results", filteredCount)
 	}
 
-	if len(merged) == 0 {
+	// Optional LLM re-rank when 2+ backends contributed
+	if t.completer != nil && successCount >= 2 && len(filteredResults) > 1 {
+		// Convert back to SearchResult for LLM reranking
+		rerankInput := make([]SearchResult, len(filteredResults))
+		for i, r := range filteredResults {
+			rerankInput[i] = SearchResult{Title: r.Title, URL: r.URL, Snippet: r.Snippet}
+		}
+		reranked := llmRerank(ctx, t.completer, query, rerankInput)
+		// Re-apply scores to reranked results
+		scoreMap := make(map[string]float64)
+		for _, r := range filteredResults {
+			scoreMap[r.URL] = r.QualityScore
+		}
+		filteredResults = make([]SearchResultWithScore, len(reranked))
+		for i, r := range reranked {
+			filteredResults[i] = SearchResultWithScore{
+				Title:        r.Title,
+				URL:          r.URL,
+				Snippet:      r.Snippet,
+				QualityScore: scoreMap[r.URL],
+			}
+		}
+	}
+
+	if len(filteredResults) == 0 {
 		return &ToolResult{Output: "no results found"}, nil
 	}
 
 	log.Printf("[SearchFusion] merged %d results from %d backends", len(merged), successCount)
-	return &ToolResult{Output: formatSearchResults(merged)}, nil
+	return &ToolResult{Output: formatSearchResultsWithScore(filteredResults)}, nil
 }
 
 // selectBackendsWithCostBalance selects backends with balanced cost tiers:
@@ -832,6 +883,21 @@ func formatSearchResults(results []SearchResult) string {
 			sb.WriteString("\n\n")
 		}
 		sb.WriteString(fmt.Sprintf("[%d] %s\n    %s", i+1, r.Title, r.URL))
+		if r.Snippet != "" {
+			sb.WriteString(fmt.Sprintf("\n    %s", r.Snippet))
+		}
+	}
+	return sb.String()
+}
+
+// formatSearchResultsWithScore formats search results with quality scores
+func formatSearchResultsWithScore(results []SearchResultWithScore) string {
+	var sb strings.Builder
+	for i, r := range results {
+		if i > 0 {
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString(fmt.Sprintf("[%d] %s (score: %.2f)\n    %s", i+1, r.Title, r.QualityScore, r.URL))
 		if r.Snippet != "" {
 			sb.WriteString(fmt.Sprintf("\n    %s", r.Snippet))
 		}

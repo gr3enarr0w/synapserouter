@@ -39,6 +39,9 @@ func (t *WebFetchTool) InputSchema() map[string]interface{} {
 }
 
 func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{}, workDir string) (*ToolResult, error) {
+	if ConfidentialMode {
+		return &ToolResult{Error: "web fetch is disabled in confidential mode"}, nil
+	}
 	rawURL := stringArg(args, "url")
 	if rawURL == "" {
 		return &ToolResult{Error: "url is required"}, nil

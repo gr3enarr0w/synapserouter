@@ -53,6 +53,9 @@ type Config struct {
 	// Session lineage — enables sub-agents to recall parent tool outputs
 	ParentSessionIDs []string // ordered: [parent, grandparent, ...] session IDs
 
+	// Security
+	Confidential bool // When true, blocks external API calls (web_search, web_fetch)
+
 	// Pipeline tuning
 	MaxPhaseTurns int // Hard cap on LLM calls per pipeline phase (0 = auto-detect from spec complexity)
 

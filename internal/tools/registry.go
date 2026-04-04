@@ -6,6 +6,14 @@ import (
 	"sync"
 )
 
+// ConfidentialMode is a package-level flag that blocks external API calls when true.
+var ConfidentialMode bool
+
+// SetConfidentialMode enables or disables confidential mode across all tools.
+func SetConfidentialMode(enabled bool) {
+	ConfidentialMode = enabled
+}
+
 // Registry manages a collection of tools and provides lookup/execution.
 type Registry struct {
 	mu    sync.RWMutex

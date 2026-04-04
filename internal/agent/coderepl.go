@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/term"
+
+	"github.com/gr3enarr0w/synapserouter/internal/security"
 )
 
 // CodeREPL implements the code mode interactive loop with readline-based input
@@ -697,6 +699,95 @@ func (cr *CodeREPL) handleCommand(ctx context.Context, input string) bool {
 		} else {
 			cr.renderer.mu.Lock()
 			cr.renderer.writeContent(fmt.Sprintf("Saved correction: message -> intent '%s'", intent))
+			cr.renderer.mu.Unlock()
+		}
+		return false
+
+	case "/redact":
+		if len(parts) < 2 {
+			cr.renderer.mu.Lock()
+			cr.renderer.writeContent("Usage: /redact <add|ignore|list|test> [args]")
+			cr.renderer.writeContent("  /redact add <name> <regex>  - Add custom redaction pattern")
+			cr.renderer.writeContent("  /redact ignore <name>       - Ignore a built-in pattern")
+			cr.renderer.writeContent("  /redact list                - List all active patterns")
+			cr.renderer.writeContent("  /redact test <text>         - Test redaction on text")
+			cr.renderer.mu.Unlock()
+			return false
+		}
+		subcmd := parts[1]
+		redactor := security.NewRedactor()
+		rulesPath := os.ExpandEnv("$HOME/.synroute/redaction_rules.json")
+
+		switch subcmd {
+		case "add":
+			if len(parts) < 4 {
+				cr.renderer.mu.Lock()
+				cr.renderer.writeContent("Usage: /redact add <name> <regex>")
+				cr.renderer.mu.Unlock()
+				return false
+			}
+			name := parts[2]
+			regex := strings.Join(parts[3:], " ")
+			if err := security.SaveCustomRule(rulesPath, name, regex, "redact"); err != nil {
+				cr.renderer.Error(err.Error())
+			} else {
+				cr.renderer.mu.Lock()
+				cr.renderer.writeContent(fmt.Sprintf("Added redaction rule '%s': %s", name, regex))
+				cr.renderer.mu.Unlock()
+			}
+		case "ignore":
+			if len(parts) < 3 {
+				cr.renderer.mu.Lock()
+				cr.renderer.writeContent("Usage: /redact ignore <name>")
+				cr.renderer.mu.Unlock()
+				return false
+			}
+			name := parts[2]
+			if err := security.SaveCustomRule(rulesPath, name, "", "ignore"); err != nil {
+				cr.renderer.Error(err.Error())
+			} else {
+				cr.renderer.mu.Lock()
+				cr.renderer.writeContent(fmt.Sprintf("Ignored pattern '%s'", name))
+				cr.renderer.mu.Unlock()
+			}
+		case "list":
+			if err := redactor.LoadCustomRules(rulesPath); err != nil {
+				cr.renderer.Error(fmt.Sprintf("Error loading rules: %v", err))
+			}
+			active := redactor.GetActivePatterns()
+			ignored := redactor.GetIgnoredPatterns()
+			cr.renderer.mu.Lock()
+			cr.renderer.writeContent("Active redaction patterns:")
+			for _, p := range active {
+				cr.renderer.writeContent(fmt.Sprintf("  - %s", p))
+			}
+			if len(ignored) > 0 {
+				cr.renderer.writeContent("Ignored patterns:")
+				for _, p := range ignored {
+					cr.renderer.writeContent(fmt.Sprintf("  - %s", p))
+				}
+			}
+			cr.renderer.mu.Unlock()
+		case "test":
+			if len(parts) < 3 {
+				cr.renderer.mu.Lock()
+				cr.renderer.writeContent("Usage: /redact test <text>")
+				cr.renderer.mu.Unlock()
+				return false
+			}
+			text := strings.Join(parts[2:], " ")
+			if err := redactor.LoadCustomRules(rulesPath); err != nil {
+				log.Printf("[Redact] error loading custom rules: %v", err)
+			}
+			result := redactor.TestRedaction(text)
+			cr.renderer.mu.Lock()
+			cr.renderer.writeContent(fmt.Sprintf("Original: %s", text))
+			cr.renderer.writeContent(fmt.Sprintf("Redacted: %s", result.Text))
+			cr.renderer.writeContent(fmt.Sprintf("Redacted %d items", result.RedactedCount))
+			cr.renderer.mu.Unlock()
+		default:
+			cr.renderer.mu.Lock()
+			cr.renderer.writeContent(fmt.Sprintf("Unknown /redact subcommand: %s", subcmd))
 			cr.renderer.mu.Unlock()
 		}
 		return false

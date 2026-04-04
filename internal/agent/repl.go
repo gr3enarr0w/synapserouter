@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gr3enarr0w/synapserouter/internal/security"
 	"github.com/gr3enarr0w/synapserouter/internal/tools"
 )
 
@@ -284,6 +285,77 @@ func (r *REPL) handleCommand(ctx context.Context, input string) bool {
 			fmt.Fprintf(r.out, "Error saving correction: %v\n", err)
 		} else {
 			fmt.Fprintf(r.out, "Saved correction: message -> intent '%s'\n", intent)
+		}
+		return false
+
+	case "/redact":
+		if len(parts) < 2 {
+			fmt.Fprintln(r.out, "Usage: /redact <add|ignore|list|test> [args]")
+			fmt.Fprintln(r.out, "  /redact add <name> <regex>  - Add custom redaction pattern")
+			fmt.Fprintln(r.out, "  /redact ignore <name>       - Ignore a built-in pattern")
+			fmt.Fprintln(r.out, "  /redact list                - List all active patterns")
+			fmt.Fprintln(r.out, "  /redact test <text>         - Test redaction on text")
+			return false
+		}
+		subcmd := parts[1]
+		redactor := security.NewRedactor()
+		rulesPath := os.ExpandEnv("$HOME/.synroute/redaction_rules.json")
+		
+		switch subcmd {
+		case "add":
+			if len(parts) < 4 {
+				fmt.Fprintln(r.out, "Usage: /redact add <name> <regex>")
+				return false
+			}
+			name := parts[2]
+			regex := strings.Join(parts[3:], " ")
+			if err := security.SaveCustomRule(rulesPath, name, regex, "redact"); err != nil {
+				fmt.Fprintf(r.out, "Error saving rule: %v\n", err)
+			} else {
+				fmt.Fprintf(r.out, "Added redaction rule '%s': %s\n", name, regex)
+			}
+		case "ignore":
+			if len(parts) < 3 {
+				fmt.Fprintln(r.out, "Usage: /redact ignore <name>")
+				return false
+			}
+			name := parts[2]
+			if err := security.SaveCustomRule(rulesPath, name, "", "ignore"); err != nil {
+				fmt.Fprintf(r.out, "Error saving ignore rule: %v\n", err)
+			} else {
+				fmt.Fprintf(r.out, "Pattern '%s' will be ignored\n", name)
+			}
+		case "list":
+			if err := redactor.LoadCustomRules(rulesPath); err != nil {
+				fmt.Fprintf(r.out, "Error loading rules: %v\n", err)
+			}
+			active := redactor.GetActivePatterns()
+			ignored := redactor.GetIgnoredPatterns()
+			fmt.Fprintf(r.out, "Active patterns (%d):\n", len(active))
+			for _, p := range active {
+				fmt.Fprintf(r.out, "  - %s\n", p)
+			}
+			if len(ignored) > 0 {
+				fmt.Fprintf(r.out, "Ignored patterns (%d):\n", len(ignored))
+				for _, p := range ignored {
+					fmt.Fprintf(r.out, "  - %s\n", p)
+				}
+			}
+		case "test":
+			if len(parts) < 3 {
+				fmt.Fprintln(r.out, "Usage: /redact test <text>")
+				return false
+			}
+			if err := redactor.LoadCustomRules(rulesPath); err != nil {
+				fmt.Fprintf(r.out, "Error loading rules: %v\n", err)
+			}
+			text := strings.Join(parts[2:], " ")
+			result := redactor.TestRedaction(text)
+			fmt.Fprintf(r.out, "Original: %s\n", text)
+			fmt.Fprintf(r.out, "Redacted: %s\n", result.Text)
+			fmt.Fprintf(r.out, "Redacted %d items\n", result.RedactedCount)
+		default:
+			fmt.Fprintf(r.out, "Unknown /redact subcommand: %s\n", subcmd)
 		}
 		return false
 

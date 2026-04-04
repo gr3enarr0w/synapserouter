@@ -21,6 +21,7 @@ import (
 	"github.com/gr3enarr0w/synapserouter/internal/mcp"
 	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
 	"github.com/gr3enarr0w/synapserouter/internal/providers"
+	"github.com/gr3enarr0w/synapserouter/internal/security"
 	"github.com/gr3enarr0w/synapserouter/internal/tools"
 	"github.com/gr3enarr0w/synapserouter/internal/worktree"
 )
@@ -107,6 +108,7 @@ type Agent struct {
 	exhaustionRedirects   int      // how many times we've hit chain-exhausted redirect (cap at 3)
 	filesModified         map[string]bool // tracks files modified in current session
 	turnsSinceFileMod     int      // turns since last file modification (warn at 10)
+	confidentialMode      bool     // when true, blocks external API calls (web_search, web_fetch)
 
 	// Durable execution — checkpoint state
 	toolCallLog []string // IDs of completed tool calls for resume
@@ -171,6 +173,7 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRende
 		cachedPromptLevel: -1, // force rebuild on first call
 		reviewTracker:     &ReviewCycleTracker{},
 		intentRouter:      NewIntentRouter(),
+		confidentialMode:  config.Confidential,
 	}
 	if isSpeculationEnabled() {
 		a.speculator = NewSpeculativeCache()
@@ -1192,6 +1195,13 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 				resultContent = result.Error + "\n" + resultContent
 				isError = true
 			}
+			// Scrub secrets from tool output before displaying/storing
+			scrubbed := security.NewRedactor()
+			scrubResult := scrubbed.Redact(resultContent)
+			if scrubResult.RedactedCount > 0 {
+				log.Printf("[Security] scrubbed %d secrets from tool output", scrubResult.RedactedCount)
+			}
+			resultContent = scrubResult.Text
 			if a.renderer != nil {
 				// Show colored diff for file edits
 				if name == "file_edit" && !isError {

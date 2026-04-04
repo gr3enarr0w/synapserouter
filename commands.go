@@ -555,6 +555,7 @@ func cmdChat(args []string) {
 	system := fs.String("system", "", "Custom system prompt")
 	project := fs.String("project", "", "Project name — creates ~/Development/<name>/ and works there")
 	useWorktree := fs.Bool("worktree", false, "Run in isolated git worktree")
+	confidential := fs.Bool("confidential", false, "Confidential mode: blocks external API calls (web_search, web_fetch)")
 	maxAgents := fs.Int("max-agents", 5, "Max concurrent sub-agents")
 	budgetTokens := fs.Int64("budget", 0, "Max total tokens budget (0 = unlimited)")
 	resume := fs.Bool("resume", false, "Resume most recent session")
@@ -665,6 +666,11 @@ func cmdChat(args []string) {
 	}
 	config.Providers = providerNames
 	config.AutoOrchestrate = *usePipeline
+	config.Confidential = *confidential || os.Getenv("SYNROUTE_CONFIDENTIAL") == "true"
+	if config.Confidential {
+		log.Println("[Security] Confidential mode enabled — external API calls blocked")
+		tools.SetConfidentialMode(true)
+	}
 
 	// MCP client — load config and connect to registered servers
 	mcpCfg, mcpErr := mcp.LoadConfig(mcp.DefaultConfigPath())
