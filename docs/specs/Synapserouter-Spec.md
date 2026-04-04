@@ -498,32 +498,52 @@ Exact/prefix matching for obvious intents — no LLM call needed:
 - Slash commands: "/exit", "/help", "/model", "/research" → REPL dispatch
 - Result: skip tool-use entirely for trivial queries
 
-**Layer 2: Semantic routing (~15ms, embedding similarity)**
-For ambiguous queries, classify by cosine similarity against pre-computed route embeddings. Uses synroute's existing TF-IDF feature hashing (no external model needed). 50+ utterance examples per route.
+**Layer 2: Semantic routing (~15ms, TF-IDF cosine similarity)**
+For ambiguous queries, classify by cosine similarity against pre-computed route embeddings. Uses synroute's existing TF-IDF feature hashing (no external model needed). 500+ utterance examples per route from CLINC150 + Programming by Chat research.
 
-| Route | Tool Access | Example Utterances |
-|-------|------------|-------------------|
-| chat | None | "what is Go?", "explain closures", "why use interfaces" |
-| code | All tools | "write a function", "create a file", "build an API" |
-| fix | read + edit | "debug the error", "fix the test", "this is broken" |
-| research | web tools | "search for", "find out about", "what's the latest on" |
-| explain | read-only | "how does this work", "walk me through", "what does X do" |
-| review | read-only | "review my code", "check for issues", "audit this" |
-| plan | planning | "design a system", "plan the architecture", "how should I approach" |
+9 intents in 5 tool access groups (see `docs/decisions/intent-routing-design.md` for full research basis):
 
-Confidence threshold: 0.25 (research: 0.2-0.3 optimal for intent routing). Below threshold → fall through to Layer 3.
+| Route | Tool Group | Real-World % | Covers |
+|-------|-----------|-------------|--------|
+| chat | no_tools | ~45% | Greetings, knowledge, math, translate, sentiment, thanks, confirm |
+| generate | full | ~6% | New code, test writing, docs, deploy configs, migrations |
+| modify | read_write | ~25% | Edit existing, refactor, optimize, add features |
+| fix | read_write | ~24% | Debug, errors, broken, log paste, stack traces |
+| explain | read_only | ~8% | Comprehend, "how does X work", "walk me through" |
+| plan | no_tools | ~8% | Architecture, design, approach, strategy |
+| review | read_only | ~3% | Code review, audit, security check, quality |
+| research | web | synroute-specific | Web search, "find out about", "what's the latest" |
+| delegate | full | ~16% | Run command, execute, commit, deploy action |
+
+Tool access groups:
+
+| Group | Tools Available |
+|-------|---------------|
+| no_tools | None — direct text response |
+| read_only | file_read, grep, glob, recall |
+| read_write | file_read, file_edit, bash, grep, glob |
+| full | All tools |
+| web | web_search, web_fetch, recall |
+
+Confidence threshold: 0.25 (research: 0.2-0.3 optimal per Aurelio Labs).
 
 **Layer 3: LLM decision (fallback)**
-When semantic routing confidence is low, let the LLM decide — current behavior. Inject system prompt hint: "Consider whether this query needs tools or can be answered directly."
+When semantic routing confidence < 0.25, let the LLM decide — current behavior. All tools available. System prompt includes hint: "Consider whether this query needs tools or can be answered directly."
+
+**Utterance data:** 3,000-5,000 utterances across 9 intents.
+- CLINC150 (chat): 500+ utterances from 51 mapped general assistant intents
+- Programming by Chat patterns: 100+ per coding intent from 11,579 session analysis
+- Handwritten: 50+ per intent for coding-specific edge cases
+- Stored in `internal/agent/intent_data/` as JSON, embedded via `go:embed`
 
 **Implementation:** `internal/agent/intent_router.go`
 - Pre-compute route embeddings at startup from utterance examples
 - Reuse VectorMemory's TF-IDF infrastructure for embeddings
 - Check intent before first LLM call in agent loop
-- If route matched: restrict tool access per route table above
+- If route matched: restrict tool access per tool group above
 - If no match: full LLM decision (current behavior)
 
-**Research basis:** Aurelio Labs semantic-router, vLLM Semantic Router (ModernBERT), SkillRouter (arXiv 2026), AWS Multi-LLM routing, AppSelectBench, GTA benchmark. Hybrid approach recommended by AWS for production systems.
+**Research basis:** See `docs/decisions/intent-routing-design.md` for complete analysis with 11 cited sources including AppSelectBench, GTA, Programming by Chat (arXiv 2604.00436), Profound 50M+ prompt study, CLINC150, Aurelio Labs, vLLM Semantic Router, AWS Multi-LLM routing, SkillRouter, and Claude Code architecture analysis.
 
 ### 2.15 Intent Detection (Legacy Heuristics)
 
