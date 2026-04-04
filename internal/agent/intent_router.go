@@ -11,12 +11,14 @@ type Intent string
 
 const (
 	IntentChat     Intent = "chat"
-	IntentCode     Intent = "code"
+	IntentGenerate Intent = "generate"
+	IntentModify   Intent = "modify"
 	IntentFix      Intent = "fix"
 	IntentResearch Intent = "research"
 	IntentExplain  Intent = "explain"
 	IntentReview   Intent = "review"
 	IntentPlan     Intent = "plan"
+	IntentDelegate Intent = "delegate"
 	IntentUnknown  Intent = "unknown"
 )
 
@@ -107,21 +109,23 @@ func (r *IntentRouter) initLayer1() {
 		"simple math": IntentChat,
 
 		// Code phrases
-		"write code": IntentCode,
-		"create a function": IntentCode,
-		"implement this": IntentCode,
-		"code this": IntentCode,
-		"build this": IntentCode,
-		"develop a solution": IntentCode,
-		"write a script": IntentCode,
-		"create a class": IntentCode,
-		"implement a feature": IntentCode,
-		"code a module": IntentCode,
-		"list all files": IntentCode,
-		"show me the git log": IntentCode,
-		"run the tests": IntentCode,
-		"commit these changes": IntentCode,
-		"deploy to": IntentCode,
+		// Generate (new files)
+		"write code": IntentGenerate,
+		"create a function": IntentGenerate,
+		"implement this": IntentGenerate,
+		"code this": IntentGenerate,
+		"build this": IntentGenerate,
+		"develop a solution": IntentGenerate,
+		"write a script": IntentGenerate,
+		"create a class": IntentGenerate,
+		"implement a feature": IntentGenerate,
+		"code a module": IntentGenerate,
+		// Delegate (commands, git, deploy)
+		"list all files": IntentDelegate,
+		"show me the git log": IntentDelegate,
+		"run the tests": IntentDelegate,
+		"commit these changes": IntentDelegate,
+		"deploy to": IntentDelegate,
 
 		// Fix phrases
 		"fix this": IntentFix,
@@ -142,12 +146,25 @@ func (r *IntentRouter) initLayer1() {
 		"not working": IntentFix,
 		"broken": IntentFix,
 		"doesn't work": IntentFix,
-		"write me a": IntentCode,
-		"write me": IntentCode,
-		"can you write": IntentCode,
-		"can you create": IntentCode,
-		"can you build": IntentCode,
-		"can you make": IntentCode,
+		// Generate prefixes
+		"write me a": IntentGenerate,
+		"write me": IntentGenerate,
+		"can you write": IntentGenerate,
+		"can you create": IntentGenerate,
+		"can you build": IntentGenerate,
+		"can you make": IntentGenerate,
+		// Modify prefixes
+		"change this": IntentModify,
+		"update this": IntentModify,
+		"edit this": IntentModify,
+		"refactor this": IntentModify,
+		"modify this": IntentModify,
+		"adjust this": IntentModify,
+		// Delegate prefixes
+		"execute": IntentDelegate,
+		"run command": IntentDelegate,
+		"start the": IntentDelegate,
+		"install the": IntentDelegate,
 
 		// Research phrases
 		"research this": IntentResearch,
@@ -231,7 +248,7 @@ func (r *IntentRouter) initLayer2() {
 			"good to see you", "great to see you", "pleased to meet you",
 			"nice talking to you", "let's talk", "just chatting", "friendly chat",
 		},
-		IntentCode: {
+		IntentGenerate: {
 			"write a function", "create a class", "implement a feature", "code this module",
 			"build a solution", "develop this", "write the code", "create a script",
 			"implement the algorithm", "code the logic", "write a program", "build this feature",
@@ -546,12 +563,16 @@ func GetAllowedTools(intent Intent, allTools []string) []string {
 // filterToolsByIntent filters OpenAI tool definitions by intent
 func filterToolsByIntent(intent Intent, allTools []map[string]interface{}) []map[string]interface{} {
 	switch intent {
-	case IntentChat:
-		return nil // no tools for chat
+	case IntentChat, IntentPlan:
+		return nil // no_tools: chat, plan
 	case IntentExplain, IntentReview:
-		return filterToolNames(allTools, "file_read", "glob", "grep", "recall")
+		return filterToolNames(allTools, "file_read", "glob", "grep", "recall") // read_only
+	case IntentModify, IntentFix:
+		return filterToolNames(allTools, "file_read", "file_edit", "bash", "grep", "glob", "recall") // read_write
+	case IntentGenerate, IntentDelegate:
+		return allTools // full access
 	case IntentResearch:
-		return filterToolNames(allTools, "web_search", "web_fetch", "recall")
+		return filterToolNames(allTools, "web_search", "web_fetch", "recall") // web
 	default:
 		return allTools
 	}
