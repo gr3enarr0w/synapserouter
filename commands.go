@@ -625,6 +625,13 @@ func cmdChat(args []string) {
 		os.Exit(1)
 	}
 
+	// First-time hint
+	home, _ := os.UserHomeDir()
+	configPath := filepath.Join(home, ".synroute", "config.yaml")
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		fmt.Fprintln(os.Stderr, "First time? Run 'synroute setup' for guided configuration.")
+	}
+
 	ac.InitFull()
 
 	registry := tools.DefaultRegistry()

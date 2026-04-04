@@ -28,6 +28,7 @@ import (
 	"github.com/gr3enarr0w/synapserouter/internal/orchestration"
 	"github.com/gr3enarr0w/synapserouter/internal/providers"
 	"github.com/gr3enarr0w/synapserouter/internal/router"
+	"github.com/gr3enarr0w/synapserouter/internal/setup"
 	"github.com/gr3enarr0w/synapserouter/internal/subscriptions"
 	"github.com/gr3enarr0w/synapserouter/internal/tools"
 	"github.com/gr3enarr0w/synapserouter/internal/usage"
@@ -110,6 +111,8 @@ func main() {
 			cmdTasks(os.Args[2:])
 		case "auth":
 			cmdAuth(os.Args[2:])
+		case "setup":
+			setup.Wizard()
 		case "version":
 			cmdVersion()
 		case "help", "--help", "-h":
