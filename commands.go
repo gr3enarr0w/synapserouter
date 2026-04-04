@@ -50,8 +50,12 @@ func resolveVersionInfo() {
 		return
 	}
 
-	// If ldflags set a real version, don't override.
-	if version == "dev" {
+	// Check if we should override the current version with git tag info.
+	// We override if: version is "dev", OR version looks like a module pseudo-version
+	// (e.g., v1.0.3-0.20260404210859-96ecb4de7580+dirty instead of a clean tag like v1.09).
+	shouldOverride := version == "dev" || isModulePseudoVersion(version)
+
+	if shouldOverride {
 		// Prefer git describe (gives clean tag-based version like v1.0.1).
 		if desc, err := gitDescribe(); err == nil && desc != "" {
 			version = desc
@@ -122,6 +126,31 @@ func gitDescribe() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// isModulePseudoVersion checks if a version string looks like a Go module
+// pseudo-version (e.g., v1.0.3-0.20260404210859-96ecb4de7580+dirty)
+// instead of a clean git tag (e.g., v1.09, v1.0.1).
+// Pseudo-versions contain a timestamp and commit hash after the base version.
+func isModulePseudoVersion(v string) bool {
+	if v == "" || v == "dev" {
+		return false
+	}
+	// Pseudo-versions have format: vX.Y.Z-YYYYMMDDHHMMSS-<commit>[-dirty]
+	// They contain a 14-digit timestamp after the first dash.
+	parts := strings.Split(v, "-")
+	if len(parts) >= 3 {
+		// Check if second part looks like a timestamp (14 digits)
+		if len(parts[1]) == 14 {
+			for _, c := range parts[1] {
+				if c < '0' || c > '9' {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return false
 }
 
 func cmdVersion() {
