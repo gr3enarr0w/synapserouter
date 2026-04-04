@@ -15,6 +15,7 @@ import (
 	"github.com/gr3enarr0w/synapserouter/internal/app"
 	"github.com/gr3enarr0w/synapserouter/internal/environment"
 	"github.com/gr3enarr0w/synapserouter/internal/mcp"
+	"github.com/gr3enarr0w/synapserouter/internal/setup"
 	"github.com/gr3enarr0w/synapserouter/internal/tools"
 	"github.com/gr3enarr0w/synapserouter/internal/worktree"
 )
@@ -194,6 +195,22 @@ func cmdCode(args []string) {
 	if config.ProjectLanguage == "" {
 		if env := environment.Detect(cwd); env != nil && env.Language != "" {
 			config.ProjectLanguage = env.Language
+		}
+	}
+
+	// Trust dialog - skip in non-interactive mode (--message flag)
+	if *message == "" {
+		trustLevel := setup.CheckTrust(cwd)
+		if trustLevel == setup.Untrusted {
+			trusted, err := setup.TrustDialog(cwd)
+			if err != nil {
+				log.Printf("Warning: trust dialog error: %v", err)
+			}
+			if !trusted {
+				// Read-only mode: disable write operations
+				config.ReadOnlyMode = true
+				fmt.Println("\nRunning in read-only mode. Write operations are disabled.")
+			}
 		}
 	}
 

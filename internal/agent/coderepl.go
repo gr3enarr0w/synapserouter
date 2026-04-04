@@ -40,6 +40,7 @@ func NewCodeREPL(agent *Agent, renderer *CodeRenderer, _ *Terminal) *CodeREPL {
 func (cr *CodeREPL) Run(ctx context.Context) error {
 	// Initialize the screen layout (prints launch banner)
 	cr.renderer.Init()
+	cr.renderer.RenderStatusBar()
 
 	// Detect spec/synroute.md in working directory
 	cr.detectProjectFiles()
@@ -254,6 +255,9 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		} else if err == nil {
 			log.Printf("[REPL] warning: agent returned empty response with no error")
 		}
+
+		// Render status bar after agent completes
+		cr.renderer.RenderStatusBar()
 
 		// Re-enter raw mode for next prompt
 		if isTerminal {
