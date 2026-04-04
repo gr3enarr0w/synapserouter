@@ -25,6 +25,12 @@ func SetProtectedPaths(paths []string) {
 
 // IsProtectedPath returns true if the resolved path matches a protected file.
 func IsProtectedPath(path string) bool {
+	// Check spec file patterns
+	base := filepath.Base(path)
+	if strings.HasSuffix(base, "spec.md") || base == "specification.md" {
+		return true
+	}
+
 	protectedMu.RLock()
 	defer protectedMu.RUnlock()
 	for _, p := range protectedPaths {

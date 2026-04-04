@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -602,8 +603,8 @@ func cmdChat(args []string) {
 	defer logFile.Close()
 
 	// Redirect logs based on mode BEFORE InitLight (so provider init logs are also suppressed)
-	if *message != "" {
-		// --message mode: logs to file only, user sees only response
+	if *message != "" && *verbose == 0 {
+		// --message mode (non-verbose): logs to file only, user sees only response
 		log.SetOutput(logFile)
 	} else {
 		// Interactive mode: logs to stderr and file
@@ -1288,4 +1289,85 @@ func detectLanguageFromSpec(content string) string {
 	}
 
 	return ""
+}
+
+func cmdSearch(args []string) {
+	if len(args) == 0 {
+		fmt.Println("Usage: synroute search <subcommand>")
+		fmt.Println("Subcommands:")
+		fmt.Println("  stats    Show search backend circuit breaker statistics")
+		os.Exit(1)
+	}
+
+	switch args[0] {
+	case "stats":
+		runSearchStats()
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown search subcommand: %s\n", args[0])
+		os.Exit(1)
+	}
+}
+
+func runSearchStats() {
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		home, _ := os.UserHomeDir()
+		dbPath = filepath.Join(home, ".mcp", "proxy", "usage.db")
+	}
+	if strings.HasPrefix(dbPath, "~/") {
+		home, _ := os.UserHomeDir()
+		dbPath = filepath.Join(home, dbPath[2:])
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	rows, err := db.Query(`
+		SELECT backend_name, state, failure_count, last_failure, cooldown_until
+		FROM search_circuit_breakers
+		ORDER BY backend_name
+	`)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error querying circuit breakers: %v\n", err)
+		os.Exit(1)
+	}
+	defer rows.Close()
+
+	var found bool
+	fmt.Println("Search Backend Circuit Breaker Status")
+	fmt.Println("=====================================")
+	fmt.Printf("%-20s %-10s %-8s %-20s %-20s\n", "Backend", "State", "Failures", "Last Failure", "Cooldown Until")
+	fmt.Println(strings.Repeat("-", 90))
+
+	for rows.Next() {
+		found = true
+		var backendName, state string
+		var failureCount int
+		var lastFailure, cooldownUntil sql.NullString
+
+		if err := rows.Scan(&backendName, &state, &failureCount, &lastFailure, &cooldownUntil); err != nil {
+			fmt.Fprintf(os.Stderr, "Error scanning row: %v\n", err)
+			continue
+		}
+
+		lastFailureStr := "N/A"
+		if lastFailure.Valid {
+			lastFailureStr = lastFailure.String
+		}
+
+		cooldownStr := "N/A"
+		if cooldownUntil.Valid {
+			cooldownStr = cooldownUntil.String
+		}
+
+		fmt.Printf("%-20s %-10s %-8d %-20s %-20s\n", backendName, state, failureCount, lastFailureStr, cooldownStr)
+	}
+
+	if !found {
+		fmt.Println("\nNo search stats yet — run some searches first.")
+	}
 }

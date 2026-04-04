@@ -43,7 +43,7 @@ func (t *FileWriteTool) Execute(ctx context.Context, args map[string]interface{}
 
 	// Spec file protection — enforced at tool layer, not prompt layer
 	if IsProtectedPath(path) {
-		return &ToolResult{Error: fmt.Sprintf("Cannot overwrite protected file '%s'. This is the source spec — write plan output to synroute.md instead.", filepath.Base(path))}, nil
+		return &ToolResult{Error: "Cannot overwrite spec file — spec is read-only during implementation."}, nil
 	}
 
 	content := stringArg(args, "content")

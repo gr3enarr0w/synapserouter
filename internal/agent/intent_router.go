@@ -105,6 +105,13 @@ func (r *IntentRouter) initLayer1() {
 		"thanks": IntentChat,
 		"thank you": IntentChat,
 		"nevermind": IntentChat,
+		"ship it": IntentDelegate, "deploy it": IntentDelegate, "push it": IntentDelegate, "merge it": IntentDelegate,
+		"scratch that": IntentGenerate, "start over": IntentGenerate, "redo": IntentGenerate, "from scratch": IntentGenerate,
+		"make it faster": IntentModify, "speed it up": IntentModify, "optimize": IntentModify, "too slow": IntentModify,
+		"clean up": IntentModify, "clean this": IntentModify, "tidy up": IntentModify, "prettify": IntentModify,
+		"undo": IntentModify, "revert": IntentModify, "roll back": IntentModify, "go back": IntentModify,
+		"keeps crashing": IntentFix, "wont work": IntentFix, "doesnt work": IntentFix, "stopped working": IntentFix,
+		"not responding": IntentFix, "freezing": IntentFix,
 		"2+2": IntentChat,
 		"simple math": IntentChat,
 
@@ -247,6 +254,11 @@ func (r *IntentRouter) initLayer2() {
 			"anything new", "what's going on", "how's life", "how are you today",
 			"good to see you", "great to see you", "pleased to meet you",
 			"nice talking to you", "let's talk", "just chatting", "friendly chat",
+			"ok", "k", "yes", "no", "sure", "yep", "nope", "nah", "lol", "lmao", "idk",
+			"ty", "thx", "np", "gg", "lgtm", "interesting", "nice", "cool", "sweet",
+			"awesome", "perfect", "great", "wow", "hmm", "huh", "meh", "ugh", "oops",
+			"sorry", "please", "thanks", "thank you", "goodbye", "bye", "see ya",
+			"cheers", "yo", "sup", "hey",
 		},
 		IntentGenerate: {
 			"write a function", "create a class", "implement a feature", "code this module",
@@ -457,6 +469,23 @@ func hasFileReferences(message string) bool {
 func (r *IntentRouter) Classify(message string) Intent {
 	message = strings.TrimSpace(message)
 	messageLower := strings.ToLower(message)
+	
+	// Short message default: <=3 chars → chat
+	if len(messageLower) <= 3 && messageLower != "" {
+		return IntentChat
+	}
+	
+	// Help me patterns
+	if strings.Contains(messageLower, "help me make") || strings.Contains(messageLower, "help me create") ||
+		strings.Contains(messageLower, "help me build") || strings.Contains(messageLower, "help me write") {
+		return IntentGenerate
+	}
+	if strings.Contains(messageLower, "help me fix") || strings.Contains(messageLower, "help me debug") {
+		return IntentFix
+	}
+	if strings.Contains(messageLower, "help me understand") {
+		return IntentExplain
+	}
 
 	// LAYER 1: Keyword matching (deterministic, 0ms)
 

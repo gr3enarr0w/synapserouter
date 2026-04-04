@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 )
 
@@ -49,7 +48,7 @@ func (t *FileEditTool) Execute(ctx context.Context, args map[string]interface{},
 
 	// Spec file protection
 	if IsProtectedPath(path) {
-		return &ToolResult{Error: fmt.Sprintf("Cannot modify protected file '%s'. This is the source spec.", filepath.Base(path))}, nil
+		return &ToolResult{Error: "Cannot overwrite spec file — spec is read-only during implementation."}, nil
 	}
 
 	oldStr := stringArg(args, "old_string")
