@@ -1,0 +1,56 @@
+description: Create new files, write new code, scaffold projects, implement features from scratch
+intent: generate
+keywords:
+- write a
+- write me
+- write new
+- write the
+- create a
+- create new
+- create the
+- create me
+- build a
+- build an
+- build me
+- build the
+- make a
+- make me
+- make new
+- implement
+- implement a
+- implement the
+- scaffold
+- bootstrap
+- initialize
+- init
+- generate a
+- generate the
+- set up
+- setup
+- write tests
+- write unit tests
+- write integration tests
+- Dockerfile
+- docker-compose
+- Makefile
+- CI/CD
+- from scratch
+- start over
+- redo
+- start fresh
+- help me create
+- help me build
+- help me write
+- help me make
+- can you write
+- can you create
+- can you build
+- can you make
+- I need a
+- I need an
+- I want a
+- tests need to be written
+- documentation should be created
+- impl auth
+- impl the
+tool_group: full

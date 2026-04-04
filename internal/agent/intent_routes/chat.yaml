@@ -1,0 +1,222 @@
+description: Greetings, knowledge questions, confirmations, casual conversation, emojis, meta questions about the tool
+intent: chat
+keywords:
+- hello
+- hi
+- hey
+- yo
+- sup
+- howdy
+- hiya
+- heya
+- hi there
+- good morning
+- good afternoon
+- good evening
+- good night
+- how are you
+- how's it going
+- what's up
+- whats up
+- wassup
+- thanks
+- thank you
+- ty
+- thx
+- cheers
+- appreciated
+- much appreciated
+- thanks a lot
+- thank you so much
+- ok
+- okay
+- k
+- sure
+- 'yes'
+- yep
+- yeah
+- ya
+- yup
+- aye
+- 'no'
+- nope
+- nah
+- no thanks
+- not now
+- maybe later
+- not yet
+- lgtm
+- looks good
+- looks good to me
+- that works
+- perfect
+- nice
+- cool
+- sweet
+- awesome
+- great
+- excellent
+- wonderful
+- interesting
+- noted
+- got it
+- understood
+- roger
+- copy that
+- good job
+- well done
+- nice work
+- good work
+- ACK
+- ack
+- NACK
+- nack
+- nevermind
+- never mind
+- forget it
+- nah forget it
+- bye
+- goodbye
+- see ya
+- later
+- peace
+- cya
+- ttyl
+- lol
+- lmao
+- haha
+- rofl
+- omg
+- bruh
+- dude
+- bro
+- wow
+- whoa
+- hmm
+- huh
+- meh
+- ugh
+- oops
+- sorry
+- my bad
+- 👍
+- 👎
+- ❤️
+- 🔥
+- ✅
+- ❌
+- 🎉
+- 💯
+- 🙏
+- 😂
+- 🤣
+- 😊
+- 😄
+- 😎
+- 🤔
+- 😅
+- 👀
+- 💪
+- 🚀
+- ⭐
+- what model are you using
+- what tools do you have
+- how many tokens
+- what version
+- who made you
+- are you an AI
+- who are you
+- hmm let me think
+- idk
+- dunno
+- no idea
+- not sure
+- wait
+- hold on
+- pause
+- stop
+- wait stop
+- sigh
+- facepalm
+- smh
+question_prefixes:
+- what is
+- who is
+- when was
+- why is
+- how does
+- what are
+- who are
+- when were
+- why are
+- how do
+- what was
+- who was
+- when is
+- why was
+- how can
+- what will
+- who will
+- when will
+- why will
+- how will
+- what has
+- who has
+- when has
+- why has
+- how has
+- what had
+- who had
+- when had
+- why had
+- how had
+- what would
+- who would
+- when would
+- why would
+- how would
+- what could
+- who could
+- when could
+- why could
+- how could
+- what should
+- who should
+- when should
+- why should
+- how should
+- who invented
+- who created
+- who discovered
+- who built
+- when did
+- where is
+- where are
+- where was
+- where were
+- how many
+- how much
+- how long
+- how far
+- how old
+- is it
+- is there
+- are there
+- can i
+- can you
+- do you
+- does it
+- did you
+- have you
+- will it
+- tell me about
+- tell me what
+- tell me how
+- tell me why
+- what does
+- what time
+- what day
+- calculate
+- convert
+short_message_default: true
+tool_group: no_tools

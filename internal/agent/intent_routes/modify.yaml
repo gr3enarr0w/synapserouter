@@ -1,0 +1,103 @@
+description: Edit existing code, refactor, rename, move, add to existing, optimize, clean up
+intent: modify
+keywords:
+- change the
+- change this
+- change it
+- update the
+- update this
+- update it
+- edit the
+- edit this
+- edit it
+- modify the
+- modify this
+- rename
+- rename the
+- rename this
+- move this
+- move the
+- move it
+- add error
+- add logging
+- add validation
+- add handling
+- add type
+- add a comment
+- add a test
+- add to
+- remove the
+- remove unused
+- remove dead
+- remove this
+- refactor
+- refactor the
+- refactor this
+- clean up
+- clean this
+- tidy up
+- prettify
+- optimize
+- optimize the
+- optimize for
+- optimize this
+- make it faster
+- make it more
+- make this more
+- speed it up
+- speed up
+- simplify
+- simplify the
+- simplify this
+- convert to
+- convert this
+- replace the
+- replace this
+- swap
+- swap the
+- extract this
+- extract the
+- extract into
+- split this
+- merge these
+- combine these
+- rewrite this
+- restructure
+- reorder
+- reorganize
+- increase the
+- decrease the
+- reduce the
+- reduce
+- flip the
+- invert
+- toggle
+- undo
+- revert
+- roll back
+- go back
+- rm dead
+- mv to
+- rm unused
+- also add
+- can you also
+- and also
+- actually change
+- actually use
+- actually make
+- should be renamed
+- needs to be updated
+- should be moved
+- needs changing
+- could be cleaner
+- too verbose
+- lot of duplication
+- naming is inconsistent
+- NIT
+- nit
+- polish
+- cleanup
+- touchup
+- WIP
+- wip
+tool_group: read_write

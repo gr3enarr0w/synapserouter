@@ -1,0 +1,58 @@
+description: Understand code, explain functionality, trace execution, comprehend architecture
+intent: explain
+keywords:
+- explain
+- explain this
+- explain the
+- explain how
+- how does the
+- how does this
+- how does it
+- what does this do
+- what does this function
+- what does it do
+- walk me through
+- walk through
+- help me understand
+- I don't understand
+- don't understand
+- break this down
+- break down
+- show me how
+- show me the
+- is there a test
+- is there documentation
+- where is the
+- where is this
+- where does
+- what files
+- what's the call chain
+- trace the
+- follow the
+- give me an overview
+- overview of
+- what's going on
+- what's happening
+- what happened
+- I'm lost
+- I'm confused
+- confused about
+- I don't get it
+- makes no sense
+- doesn't make sense
+- ELI5
+- dumb it down
+- explain like
+- read through
+- summarize
+- summary of
+- this codebase
+- the codebase
+- this project
+- clarify
+- elaborate
+- expand on
+- help me understand
+- don't fix just explain
+- don't change anything just
+tool_group: read_only

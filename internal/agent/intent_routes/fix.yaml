@@ -1,0 +1,89 @@
+description: Debug errors, fix bugs, handle crashes, resolve failures, troubleshoot issues
+intent: fix
+keywords:
+- fix
+- fix the
+- fix this
+- fix it
+- fix my
+- debug
+- debug the
+- debug this
+- debug why
+- broken
+- is broken
+- this is broken
+- it's broken
+- doesn't work
+- doesnt work
+- don't work
+- wont work
+- won't work
+- not working
+- stopped working
+- quit working
+- crashing
+- keeps crashing
+- crash
+- crashes
+- failing
+- is failing
+- keeps failing
+- test failing
+- error
+- error on line
+- compile error
+- syntax error
+- type error
+- bug
+- bug in
+- buggy
+- something is wrong
+- something broke
+- something is off
+- why does this fail
+- why is this failing
+- why is it
+- troubleshoot
+- diagnose
+- returns 500
+- returns 404
+- returns 403
+- returns 401
+- 'panic:'
+- Traceback
+- TypeError
+- IndexError
+- NullPointer
+- segmentation fault
+- out of memory
+- ENOENT
+- goroutine
+- stack trace
+- undefined
+- null pointer
+- nil pointer
+- still broken
+- still failing
+- still not working
+- didn't fix
+- broken again
+- same error
+- whats wrong
+- what went wrong
+- what's wrong
+- help me fix
+- help me debug
+- auth is slow
+- takes forever
+- memory usage
+- CPU at
+- HELP
+- STILL BROKEN
+- NOTHING WORKS
+- EVERYTHING IS BROKEN
+- fxi
+- bugg
+- brokn
+- errror
+tool_group: read_write

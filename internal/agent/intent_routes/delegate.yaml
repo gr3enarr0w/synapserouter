@@ -1,0 +1,66 @@
+description: Run commands, commit, push, deploy, install, execute scripts, manage processes
+intent: delegate
+keywords:
+- run the tests
+- run the build
+- run the linter
+- run go test
+- run npm
+- run make
+- run pytest
+- execute
+- execute the
+- execute this
+- commit
+- commit these
+- commit with message
+- push
+- push to
+- push to origin
+- push to github
+- push to main
+- deploy
+- deploy to
+- deploy to production
+- deploy to staging
+- install
+- install the
+- install dependencies
+- start the server
+- start the
+- stop the
+- restart
+- kill the process
+- kill
+- ship it
+- ship
+- merge it
+- merge
+- release it
+- release
+- tag the version
+- tag
+- clean the
+- clear the cache
+- reset the
+- format the code
+- lint
+- run prettier
+- open a PR
+- create a branch
+- cherry-pick
+- npm i
+- pip install
+- go mod tidy
+- make clean
+- docker build
+- docker run
+- docker compose
+- looks good ship it
+- merge and deploy
+- lgtm deploy
+- TODO
+- todo
+- TBD
+- tbd
+tool_group: full

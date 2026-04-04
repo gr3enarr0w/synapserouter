@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"log"
 	"math"
 	"strings"
 	"sync"
@@ -50,9 +51,15 @@ func NewIntentRouter() *IntentRouter {
 	}
 
 	router.initLayer1()
+
+	// Load YAML intent routes (embedded + user-defined) — adds to keyword maps
+	routes := loadIntentRoutes()
+	applyRoutesToRouter(router, routes)
+
 	router.initLayer2()
 	router.computeTFIDFVectors()
 
+	log.Printf("[IntentRouter] loaded %d phrases, %d greetings, %d prefixes", len(router.exactPhraseToIntent), len(router.greetingKeywords), len(router.questionPrefixes))
 	return router
 }
 
@@ -519,7 +526,8 @@ func (r *IntentRouter) Classify(message string) Intent {
 		}
 	}
 
-	// Check question prefixes (only if no @ file refs, and no exact phrase matched)
+	// Check question prefixes LAST — exact phrases and greetings take priority
+	// Only match question prefix if NO other keyword matched anywhere in the message
 	if !hasFileReferences(message) {
 		for _, prefix := range r.questionPrefixes {
 			if strings.HasPrefix(messageLower, prefix+" ") || strings.HasPrefix(messageLower, prefix+"?") {
