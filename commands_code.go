@@ -230,6 +230,7 @@ func cmdCode(args []string) {
 	codeRenderer.SetVerbosity(*verbose)
 	codeRenderer.SetProviderLabel(ac.Profile)
 	codeRenderer.SetScreenReaderMode(*screenReader || os.Getenv("SYNROUTE_SCREEN_READER") != "")
+	codeRenderer.SetColorblindMode(os.Getenv("COLORBLIND_MODE") != "")
 
 	// Subscribe renderer to event bus
 	events := bus.Subscribe()

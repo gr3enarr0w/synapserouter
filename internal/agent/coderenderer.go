@@ -59,6 +59,7 @@ type CodeRenderer struct {
 
 	// Accessibility
 	screenReaderMode bool
+	colorblindMode   bool
 
 	// Thinking indicator state
 	thinkingActive bool
@@ -100,6 +101,15 @@ func (cr *CodeRenderer) SetVersion(v string) {
 func (cr *CodeRenderer) color(code, text string) string {
 	if cr.noColor {
 		return text
+	}
+	// Colorblind mode: remap red->orange, green->blue
+	if cr.colorblindMode {
+		switch code {
+		case "\033[31m": // red
+			code = "\033[33m" // orange
+		case "\033[32m": // green
+			code = "\033[34m" // blue
+		}
 	}
 	return code + text + "\033[0m"
 }
@@ -212,6 +222,7 @@ func (cr *CodeRenderer) Init() {
 			projectLine += cr.color("\033[2m", " ("+cr.language+")")
 		}
 		fmt.Fprintln(cr.out, projectLine)
+		cr.setWindowTitle(cr.project + " - synroute")
 	}
 
 	// Working directory
@@ -273,6 +284,7 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		cr.writeContent("")
 		cr.writeContent(cr.color("\033[1;33m", fmt.Sprintf("  -- phase %d/%d: %s --", cr.phaseIdx+1, cr.phaseCount, cr.phase)))
 		cr.writeContent("")
+		cr.setWindowTitle(fmt.Sprintf("Phase %d/%d: %s - synroute", cr.phaseIdx+1, cr.phaseCount, cr.phase))
 
 
 	case EventPhaseComplete:
@@ -296,6 +308,7 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 			}
 			cr.writeContent(cr.color("\033[34m", fmt.Sprintf("  llm -> %s [%s]", provider, cr.model)))
 		}
+		cr.setWindowTitle("Working... - synroute")
 		cr.StartThinking()
 
 	case EventLLMComplete:
@@ -505,6 +518,22 @@ func (cr *CodeRenderer) SetScreenReaderMode(enabled bool) {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 	cr.screenReaderMode = enabled
+}
+
+// SetColorblindMode enables or disables colorblind-friendly color remapping.
+// When enabled, red->orange, green->blue.
+func (cr *CodeRenderer) SetColorblindMode(enabled bool) {
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+	cr.colorblindMode = enabled
+}
+
+// setWindowTitle sets the terminal window title using ANSI escape sequence.
+func (cr *CodeRenderer) setWindowTitle(title string) {
+	if cr.noColor {
+		return
+	}
+	fmt.Fprintf(cr.out, "\033]0;%s\007", title)
 }
 
 // StartThinking launches a goroutine with a braille spinner and elapsed timer.
