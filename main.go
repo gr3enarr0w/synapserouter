@@ -113,6 +113,10 @@ func main() {
 			cmdAuth(os.Args[2:])
 		case "setup":
 			setup.Wizard()
+		case "skills":
+			cmdSkills(os.Args[1:])
+		case "integrations":
+			cmdIntegrations(os.Args[1:])
 		case "version":
 			cmdVersion()
 		case "help", "--help", "-h":

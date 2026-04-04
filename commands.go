@@ -19,6 +19,7 @@ import (
 
 	"github.com/gr3enarr0w/synapserouter/internal/agent"
 	"github.com/gr3enarr0w/synapserouter/internal/app"
+	"github.com/gr3enarr0w/synapserouter/internal/marketplace"
 	"github.com/gr3enarr0w/synapserouter/internal/subscriptions"
 	"github.com/gr3enarr0w/synapserouter/internal/environment"
 	"github.com/gr3enarr0w/synapserouter/internal/mcp"
@@ -1386,5 +1387,143 @@ func runSearchStats() {
 
 	if !found {
 		fmt.Println("\nNo search stats yet — run some searches first.")
+	}
+}
+
+// cmdSkills handles the 'skills' command for skill discovery
+func cmdSkills(args []string) {
+	if len(args) < 2 {
+		fmt.Println("Usage: synroute skills <list|install> [name]")
+		fmt.Println()
+		fmt.Println("Commands:")
+		fmt.Println("  list            List available and installed skills")
+		fmt.Println("  install <name>  Install a skill from the catalog")
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  synroute skills list")
+		fmt.Println("  synroute skills install rust-patterns")
+		return
+	}
+
+	subcmd := args[1]
+
+	switch subcmd {
+	case "list":
+		skills, err := marketplace.ListSkills()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing skills: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("Available Skills")
+		fmt.Println("================")
+		fmt.Println()
+
+		// Group by category
+		categories := make(map[string][]marketplace.SkillInfo)
+		for _, skill := range skills {
+			categories[skill.Category] = append(categories[skill.Category], skill)
+		}
+
+		for _, cat := range []string{"backend", "frontend", "data", "general", "testing"} {
+			catSkills, ok := categories[cat]
+			if !ok || len(catSkills) == 0 {
+				continue
+			}
+
+			fmt.Printf("[%s]\n", strings.ToUpper(cat))
+			for _, skill := range catSkills {
+				status := "○"
+				if skill.Installed {
+					status = "●"
+				}
+				fmt.Printf("  %s %-25s %s\n", status, skill.Name, skill.Description)
+			}
+			fmt.Println()
+		}
+
+	case "install":
+		if len(args) < 3 {
+			fmt.Println("Usage: synroute skills install <name>")
+			fmt.Println()
+			fmt.Println("Run 'synroute skills list' to see available skills.")
+			return
+		}
+
+		name := args[2]
+		err := marketplace.InstallSkill(name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✓ Skill '%s' installed successfully\n", name)
+		fmt.Println()
+		fmt.Println("The skill is now available for intent routing.")
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s\n", subcmd)
+		fmt.Println("Run 'synroute skills' for usage.")
+		os.Exit(1)
+	}
+}
+
+// cmdIntegrations handles the 'integrations' command for MCP server bundles
+func cmdIntegrations(args []string) {
+	if len(args) < 2 {
+		fmt.Println("Usage: synroute integrations <list|add> [name]")
+		fmt.Println()
+		fmt.Println("Commands:")
+		fmt.Println("  list         List available integrations and their status")
+		fmt.Println("  add <name>   Show setup instructions for an integration")
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  synroute integrations list")
+		fmt.Println("  synroute integrations add github")
+		return
+	}
+
+	subcmd := args[1]
+
+	switch subcmd {
+	case "list":
+		integrations := marketplace.ListIntegrations()
+
+		fmt.Println("MCP Server Integrations")
+		fmt.Println("=======================")
+		fmt.Println()
+
+		for _, integ := range integrations {
+			status := "○"
+			if integ.Installed {
+				status = "●"
+			}
+			fmt.Printf("%s %-12s %s\n", status, integ.Name, integ.Description)
+			if len(integ.RequiredEnvVars) > 0 {
+				fmt.Printf("   Required: %s\n", strings.Join(integ.RequiredEnvVars, ", "))
+			}
+		}
+		fmt.Println()
+		fmt.Println("Legend: ● installed (env vars set)  ○ not installed")
+
+	case "add":
+		if len(args) < 3 {
+			fmt.Println("Usage: synroute integrations add <name>")
+			fmt.Println()
+			fmt.Println("Run 'synroute integrations list' to see available integrations.")
+			return
+		}
+
+		name := args[2]
+		instructions, err := marketplace.AddIntegration(name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(instructions)
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s\n", subcmd)
+		fmt.Println("Run 'synroute integrations' for usage.")
+		os.Exit(1)
 	}
 }
