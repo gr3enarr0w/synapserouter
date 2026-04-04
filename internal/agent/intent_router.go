@@ -100,6 +100,11 @@ func (r *IntentRouter) initLayer1() {
 		"let's talk": IntentChat,
 		"just chatting": IntentChat,
 		"casual conversation": IntentChat,
+		"thanks": IntentChat,
+		"thank you": IntentChat,
+		"nevermind": IntentChat,
+		"2+2": IntentChat,
+		"simple math": IntentChat,
 
 		// Code phrases
 		"write code": IntentCode,
@@ -112,6 +117,11 @@ func (r *IntentRouter) initLayer1() {
 		"create a class": IntentCode,
 		"implement a feature": IntentCode,
 		"code a module": IntentCode,
+		"list all files": IntentCode,
+		"show me the git log": IntentCode,
+		"run the tests": IntentCode,
+		"commit these changes": IntentCode,
+		"deploy to": IntentCode,
 
 		// Fix phrases
 		"fix this": IntentFix,
@@ -124,6 +134,20 @@ func (r *IntentRouter) initLayer1() {
 		"this doesn't work": IntentFix,
 		"fix the problem": IntentFix,
 		"debug the code": IntentFix,
+		"whats wrong with": IntentFix,
+		"why is this failing": IntentFix,
+		"why does this fail": IntentFix,
+		"failing": IntentFix,
+		"is broken": IntentFix,
+		"not working": IntentFix,
+		"broken": IntentFix,
+		"doesn't work": IntentFix,
+		"write me a": IntentCode,
+		"write me": IntentCode,
+		"can you write": IntentCode,
+		"can you create": IntentCode,
+		"can you build": IntentCode,
+		"can you make": IntentCode,
 
 		// Research phrases
 		"research this": IntentResearch,
@@ -148,6 +172,7 @@ func (r *IntentRouter) initLayer1() {
 		"explain the code": IntentExplain,
 		"what does this do": IntentExplain,
 		"help me understand": IntentExplain,
+		"I need help": IntentExplain,
 		"clarify this": IntentExplain,
 		"make this clear": IntentExplain,
 		"simplify this": IntentExplain,
@@ -418,17 +443,33 @@ func (r *IntentRouter) Classify(message string) Intent {
 
 	// LAYER 1: Keyword matching (deterministic, 0ms)
 
-	// Check greetings
+	// Strip greetings to check for code intent underneath
+	strippedMessage := messageLower
 	for greeting := range r.greetingKeywords {
-		if messageLower == greeting || strings.HasPrefix(messageLower, greeting+" ") || strings.HasSuffix(messageLower, " "+greeting) {
-			return IntentChat
+		if strings.HasPrefix(strippedMessage, greeting+" ") {
+			strippedMessage = strings.TrimPrefix(strippedMessage, greeting+" ")
 		}
+		if strings.HasSuffix(strippedMessage, " "+greeting) {
+			strippedMessage = strings.TrimSuffix(strippedMessage, " "+greeting)
+		}
+		strippedMessage = strings.TrimSpace(strippedMessage)
 	}
 
 	// Check exact phrases FIRST (more specific than question prefixes)
+	// Check stripped message first for code override, then original
 	for phrase, intent := range r.exactPhraseToIntent {
+		if strings.Contains(strippedMessage, phrase) {
+			return intent
+		}
 		if strings.Contains(messageLower, phrase) {
 			return intent
+		}
+	}
+
+	// Check greetings (only if no code/research/fix intent found)
+	for greeting := range r.greetingKeywords {
+		if messageLower == greeting || strings.HasPrefix(messageLower, greeting+" ") || strings.HasSuffix(messageLower, " "+greeting) {
+			return IntentChat
 		}
 	}
 

@@ -309,11 +309,8 @@ func (t *WebSearchTool) executeFusion(ctx context.Context, query string, maxResu
 		return &ToolResult{Error: "all search backends are temporarily unavailable (circuit breakers open)"}, nil
 	}
 
-	// Cap to max backends
-	cappedBackends := sortedBackends
-	if len(sortedBackends) > maxBackends {
-		cappedBackends = sortedBackends[:maxBackends]
-	}
+	// Select backends: 2 free + 1 cheap/mid (or 3 cheapest if no free backends)
+	cappedBackends := selectBackendsWithCostBalance(sortedBackends, maxBackends)
 
 	// Log which backends were selected
 	var selectedNames []string
@@ -375,6 +372,66 @@ func (t *WebSearchTool) executeFusion(ctx context.Context, query string, maxResu
 
 	log.Printf("[SearchFusion] merged %d results from %d backends", len(merged), successCount)
 	return &ToolResult{Output: formatSearchResults(merged)}, nil
+}
+
+// selectBackendsWithCostBalance selects backends with balanced cost tiers:
+// - Up to 2 free backends
+// - At least 1 cheap/mid backend (if available)
+// - Falls back to 3 cheapest if no free backends exist
+func selectBackendsWithCostBalance(backends []SearchBackend, maxBackends int) []SearchBackend {
+	if len(backends) <= maxBackends {
+		return backends
+	}
+
+	// Separate backends by cost tier
+	var freeBackends, cheapMidBackends, expensiveBackends []SearchBackend
+	for _, b := range backends {
+		tier := b.CostTier()
+		if tier == "free" {
+			freeBackends = append(freeBackends, b)
+		} else if tier == "cheap" || tier == "mid" {
+			cheapMidBackends = append(cheapMidBackends, b)
+		} else {
+			expensiveBackends = append(expensiveBackends, b)
+		}
+	}
+
+	// If no free backends, use cheapest available
+	if len(freeBackends) == 0 {
+		selected := make([]SearchBackend, 0, maxBackends)
+		selected = append(selected, cheapMidBackends...)
+		selected = append(selected, expensiveBackends...)
+		if len(selected) > maxBackends {
+			selected = selected[:maxBackends]
+		}
+		return selected
+	}
+
+	// Select up to 2 free backends
+	freeCount := 2
+	if len(freeBackends) < freeCount {
+		freeCount = len(freeBackends)
+	}
+	selected := freeBackends[:freeCount]
+
+	// Select remaining from cheap/mid, then expensive
+	remaining := maxBackends - freeCount
+	if remaining > 0 {
+		for _, b := range cheapMidBackends {
+			if len(selected) >= maxBackends {
+				break
+			}
+			selected = append(selected, b)
+		}
+		for _, b := range expensiveBackends {
+			if len(selected) >= maxBackends {
+				break
+			}
+			selected = append(selected, b)
+		}
+	}
+
+	return selected
 }
 
 // --- DuckDuckGo Backend ---
