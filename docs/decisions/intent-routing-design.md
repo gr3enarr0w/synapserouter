@@ -200,10 +200,11 @@ When the router's classification contradicts the user's actual behavior, the sys
 - **ATIS/SNIPS benchmarks: 99%+ with sufficient training data** — ACM survey (doi:10.1145/3547138)
 
 ### Accuracy Progression
-| Stage | Accuracy | Method |
-|-------|---------|--------|
-| Initial (7 intents, 350 utterances) | 85% | Hardcoded keywords |
-| YAML loading (9 intents, 601 keywords) | 79.6% | File-based routes |
+| Stage | Accuracy | Test Size | Method |
+|-------|---------|-----------|--------|
+| Initial (7 intents, 350 utterances) | 85% on 25 tests (misleading) | 25 hand-picked | Hardcoded keywords — untested on real queries |
+| First real test (631 cases) | 50.2% | 631 | Same router, real NL test battery exposed gaps |
+| YAML loading (9 intents, 601 keywords) | 79.6% | 631 | File-based routes |
 | Word-boundary matching | 89% | Prevented substring false positives |
 | TF-IDF training from test cases | 95.4% | 1,035 training examples |
 | Longest-phrase-wins conflict resolution | 97.5% | Disambiguation |
