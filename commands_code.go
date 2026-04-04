@@ -32,6 +32,7 @@ func cmdCode(args []string) {
 	sessionID := fs.String("session", "", "Resume specific session ID")
 	verbose := fs.Int("verbose", 1, "Verbosity level: 0=compact, 1=normal, 2=verbose")
 	usePipeline := fs.Bool("pipeline", false, "Force legacy 6-phase pipeline (default: frontier model with pipeline tools)")
+	screenReader := fs.Bool("screen-reader", os.Getenv("SYNROUTE_SCREEN_READER") != "", "Screen-reader-friendly output")
 	fs.Parse(args)
 
 	registry := tools.DefaultRegistry()
@@ -197,6 +198,7 @@ func cmdCode(args []string) {
 	codeRenderer.SetVersion(version)
 	codeRenderer.SetVerbosity(*verbose)
 	codeRenderer.SetProviderLabel(ac.Profile)
+	codeRenderer.SetScreenReaderMode(*screenReader)
 
 	// Subscribe renderer to event bus
 	events := bus.Subscribe()

@@ -8,19 +8,30 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+
+	"golang.org/x/term"
 )
 
 //go:embed logo.ansi
 var Logo string
 
 // PrintLogo prints the SynRoute brain-circuit logo to stdout.
-// Falls back to plain text when NO_COLOR is set.
+// Falls back to plain text when NO_COLOR is set or terminal is too narrow.
 func PrintLogo() {
 	if os.Getenv("NO_COLOR") != "" {
 		fmt.Println("\n  SynRoute - LLM Router & Code Agent")
 		fmt.Println()
 		return
 	}
+
+	// Check terminal width
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || width < 80 {
+		fmt.Println("\n  SynRoute - LLM Router & Code Agent")
+		fmt.Println()
+		return
+	}
+
 	fmt.Print(Logo)
 }
 

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +53,14 @@ type CodeRenderer struct {
 
 	// Styling
 	noColor bool
+
+	// Accessibility
+	screenReaderMode bool
+
+	// Thinking indicator state
+	thinkingActive bool
+	thinkingStop   chan struct{}
+	thinkingWg     sync.WaitGroup
 }
 
 // NewCodeRenderer creates a renderer for code mode.
@@ -283,9 +293,11 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 			}
 			cr.writeContent(cr.color("\033[34m", fmt.Sprintf("  llm -> %s [%s]", provider, cr.model)))
 		}
+		cr.StartThinking()
 
 	case EventLLMComplete:
 		cr.model = ""
+		cr.StopThinking()
 
 		if cr.verbosity >= VerbosityVerbose {
 			duration := str(e.Data, "duration")
@@ -477,6 +489,97 @@ func (cr *CodeRenderer) SetVerbosity(level int) {
 	names := []string{"compact", "normal", "verbose"}
 	name := names[level%3]
 	cr.writeContent(cr.color("\033[33m", fmt.Sprintf("  verbosity: %s", name)))
+}
+
+// SetScreenReaderMode enables or disables screen reader mode.
+// When enabled, spinners and box drawing chars are replaced with plain text.
+func (cr *CodeRenderer) SetScreenReaderMode(enabled bool) {
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+	cr.screenReaderMode = enabled
+}
+
+// StartThinking launches a goroutine with a braille spinner and elapsed timer.
+func (cr *CodeRenderer) StartThinking() {
+	cr.mu.Lock()
+	if cr.thinkingActive || cr.screenReaderMode {
+		cr.mu.Unlock()
+		return
+	}
+	cr.thinkingActive = true
+	cr.thinkingStop = make(chan struct{})
+	cr.thinkingWg.Add(1)
+	cr.mu.Unlock()
+
+	startTime := time.Now()
+	spinners := []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
+	i := 0
+
+	go func() {
+		defer cr.thinkingWg.Done()
+		ticker := time.NewTicker(80 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-cr.thinkingStop:
+				return
+			case <-ticker.C:
+				cr.mu.Lock()
+				if !cr.thinkingActive {
+					cr.mu.Unlock()
+					return
+				}
+				elapsed := time.Since(startTime).Seconds()
+				spinner := spinners[i%len(spinners)]
+				i++
+				fmt.Fprintf(cr.out, "\r\033[2K  \033[36m%c\033[0m Thinking... (%.1fs)", spinner, elapsed)
+				cr.mu.Unlock()
+			}
+		}
+	}()
+}
+
+// StopThinking stops the thinking indicator.
+func (cr *CodeRenderer) StopThinking() {
+	cr.mu.Lock()
+	if !cr.thinkingActive {
+		cr.mu.Unlock()
+		return
+	}
+	cr.thinkingActive = false
+	close(cr.thinkingStop)
+	cr.mu.Unlock()
+
+	cr.thinkingWg.Wait()
+	fmt.Fprintf(cr.out, "\r\033[2K") // Clear the spinner line
+}
+
+// RenderStatusBar prints a bottom status line with workspace, git branch, model, and tier.
+func (cr *CodeRenderer) RenderStatusBar() {
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+
+	// Get workspace basename
+	workspace := "unknown"
+	if wd, err := os.Getwd(); err == nil {
+		workspace = filepath.Base(wd)
+	}
+
+	// Get git branch
+	branch := "no-git"
+	if out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output(); err == nil {
+		branch = strings.TrimSpace(string(out))
+	}
+
+	// Build status line
+	status := fmt.Sprintf("  [%s] %s | %s | %s", workspace, branch, cr.model, cr.provider)
+	if cr.screenReaderMode {
+		status = fmt.Sprintf("  Workspace: %s | Branch: %s | Model: %s | Provider: %s", workspace, branch, cr.model, cr.provider)
+	}
+
+	cr.writeContent("")
+	cr.writeContent(cr.color("\033[2m", status))
 }
 
 // Cleanup is a no-op — no scroll regions to restore.
