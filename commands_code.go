@@ -34,6 +34,7 @@ func cmdCode(args []string) {
 	usePipeline := fs.Bool("pipeline", false, "Force legacy 6-phase pipeline (default: frontier model with pipeline tools)")
 	confidential := fs.Bool("confidential", false, "Confidential mode: blocks external API calls (web_search, web_fetch)")
 	screenReader := fs.Bool("screen-reader", os.Getenv("SYNROUTE_SCREEN_READER") != "", "Screen-reader-friendly output")
+	jsonEvents := fs.Bool("json-events", false, "Emit events as JSON lines to stderr")
 	fs.Parse(args)
 
 	registry := tools.DefaultRegistry()
@@ -209,6 +210,13 @@ func cmdCode(args []string) {
 	// Subscribe renderer to event bus
 	events := bus.Subscribe()
 	go codeRenderer.Run(events)
+
+	// Start event log renderer for JSON events (writes to stderr)
+	if *jsonEvents {
+		logEvents := bus.Subscribe()
+		lr := agent.NewLogRenderer(os.Stderr, *verbose, *jsonEvents)
+		go lr.Run(logEvents)
+	}
 
 	// Set up agent (shared between one-shot and interactive modes)
 	pool := agent.NewPool(config.MaxAgents)
