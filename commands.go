@@ -572,6 +572,33 @@ func cmdChat(args []string) {
 		}
 	}
 
+	// Set up timestamped log file BEFORE InitLight — each run gets its own file, no overwriting
+	cwd, _ := os.Getwd()
+	if *project != "" {
+		home, _ := os.UserHomeDir()
+		cwd = filepath.Join(home, "Development", *project)
+	}
+	logDir := filepath.Join(cwd, ".synroute", "logs")
+	os.MkdirAll(logDir, 0755)
+	logTimestamp := time.Now().Format("2006-01-02T15-04-05")
+	logPath := filepath.Join(logDir, fmt.Sprintf("run-%s.log", logTimestamp))
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating log file: %v\n", err)
+		os.Exit(1)
+	}
+	defer logFile.Close()
+
+	// Redirect logs based on mode BEFORE InitLight (so provider init logs are also suppressed)
+	if *message != "" {
+		// --message mode: logs to file only, user sees only response
+		log.SetOutput(logFile)
+	} else {
+		// Interactive mode: logs to stderr and file
+		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
+		fmt.Fprintf(os.Stderr, "Log: %s\n", logPath)
+	}
+
 	ac, err := app.InitLight(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing: %v\n", err)
@@ -587,7 +614,6 @@ func cmdChat(args []string) {
 	ac.InitFull()
 
 	registry := tools.DefaultRegistry()
-	cwd, _ := os.Getwd()
 
 	// Create project directory if --project specified
 	if *project != "" {
@@ -599,17 +625,6 @@ func cmdChat(args []string) {
 		}
 		cwd = projectDir
 		fmt.Fprintf(os.Stderr, "Working in project: %s\n", projectDir)
-	}
-
-	// Set up timestamped log file — each run gets its own file, no overwriting
-	logDir := filepath.Join(cwd, ".synroute", "logs")
-	os.MkdirAll(logDir, 0755)
-	logTimestamp := time.Now().Format("2006-01-02T15-04-05")
-	logPath := filepath.Join(logDir, fmt.Sprintf("run-%s.log", logTimestamp))
-	if logFile, err := os.Create(logPath); err == nil {
-		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
-		defer logFile.Close()
-		fmt.Fprintf(os.Stderr, "Log: %s\n", logPath)
 	}
 
 	config := agent.DefaultConfig()
