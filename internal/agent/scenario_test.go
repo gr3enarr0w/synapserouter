@@ -422,7 +422,7 @@ func TestScenarioToolDefsPassedToLLM(t *testing.T) {
 	config.WorkDir = t.TempDir()
 
 	agent := New(exec, registry, NewRenderer(&bytes.Buffer{}), config)
-	agent.Run(context.Background(), "hi")
+	agent.Run(context.Background(), "write a function that adds two numbers")
 
 	if len(exec.calls) == 0 {
 		t.Fatal("expected at least one call")
