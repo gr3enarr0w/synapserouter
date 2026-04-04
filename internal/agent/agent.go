@@ -152,6 +152,10 @@ type Agent struct {
 
 // New creates an agent with the given executor, tool registry, and config.
 func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRenderer, config Config) *Agent {
+	sessionID := config.SessionID
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("agent-%d", time.Now().UnixNano())
+	}
 	a := &Agent{
 		executor:              executor,
 		registry:              registry,
@@ -161,7 +165,7 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRende
 		conversation:      NewConversation(),
 		renderer:          renderer,
 		config:            config,
-		sessionID:         fmt.Sprintf("agent-%d", time.Now().UnixNano()),
+		sessionID:         sessionID,
 		bus:               config.EventBus,
 		cachedPromptLevel: -1, // force rebuild on first call
 		reviewTracker:     &ReviewCycleTracker{},
