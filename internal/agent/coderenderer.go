@@ -202,6 +202,7 @@ func (cr *CodeRenderer) Init() {
 	fmt.Fprintln(cr.out)
 
 	// Brain logo with text — adapts to terminal width
+	// Enhanced visual hierarchy with better spacing
 	fmt.Fprint(cr.out, BannerForWidth(cr.width, cr.noColor))
 
 	// Version + mode
@@ -610,10 +611,14 @@ func (cr *CodeRenderer) RenderStatusBar() {
 		branch = strings.TrimSpace(string(out))
 	}
 
-	// Build status line
-	status := fmt.Sprintf("  [%s] %s | %s | %s", workspace, branch, cr.model, cr.provider)
+	// Build status line with improved visual hierarchy
+	var status string
 	if cr.screenReaderMode {
+		// Plain language for screen readers and non-technical users
 		status = fmt.Sprintf("  Workspace: %s | Branch: %s | Model: %s | Provider: %s", workspace, branch, cr.model, cr.provider)
+	} else {
+		// Enhanced visual format with better spacing and icons
+		status = fmt.Sprintf("  📁 %s  •  🌿 %s  •  🤖 %s  •  ⚡ %s", workspace, branch, cr.model, cr.provider)
 	}
 
 	cr.writeContent("")
