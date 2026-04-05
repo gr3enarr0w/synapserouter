@@ -1,0 +1,301 @@
+# Synroute Adversarial Test Plan
+# Compiled from 100 Serper.dev research queries across 10 categories
+# Every test must be run manually and results recorded
+
+## Category 1: Input — What Users Type
+- [ ] Empty message (just press Enter)
+- [ ] Whitespace only (spaces, tabs, newlines)
+- [ ] Single character "a"
+- [ ] Single emoji 🎉
+- [ ] Very long message (1000+ characters, no spaces)
+- [ ] Very long message (1000+ characters, with spaces)
+- [ ] Paste 100 lines of code
+- [ ] Paste 10,000 lines of code
+- [ ] Null bytes in input (\x00)
+- [ ] Zalgo text (combining characters: H̷̢̧̛̬̱̙̦̮̲̯̫̙̩̬̹̬̣̺̣̼̩̙̫̻̣̣̮̼̜̘̳̗̉̐̏̎̎̈͌̊̋͋̓̎̄̇̃̿̒̀̄̌̒̀̕͘̕͜͝͠ͅe̷)
+- [ ] Right-to-left text (Arabic: مرحبا or Hebrew: שלום)
+- [ ] Mixed LTR and RTL text in same message
+- [ ] Base64 encoded data
+- [ ] JSON object as message: {"key": "value"}
+- [ ] HTML tags: <script>alert('xss')</script>
+- [ ] SQL injection: '; DROP TABLE users; --
+- [ ] Markdown backticks: ```code``` in message
+- [ ] Triple backtick code fence spanning multiple lines
+- [ ] Message with only punctuation: !@#$%^&*()
+- [ ] Backslash sequences: \n \t \r \0
+- [ ] Unicode snowman: ☃
+- [ ] Unicode zero-width joiner and zero-width space
+- [ ] ASCII art (multi-line)
+- [ ] Tab character in input
+- [ ] Carriage return in input
+- [ ] Message containing the word "exit"
+- [ ] Message containing the word "quit"
+- [ ] Message containing the word "/exit" embedded in text
+- [ ] Message that looks like a slash command: /notacommand
+- [ ] Partial slash command: /
+- [ ] Just a slash: /
+- [ ] Just a dot: .
+- [ ] Just a question mark: ?
+
+## Category 2: Keyboard — Physical Key Interactions
+- [ ] Ctrl+C during idle (no request in progress)
+- [ ] Ctrl+C during LLM response streaming
+- [ ] Ctrl+C during tool execution (bash running)
+- [ ] Double Ctrl+C rapid succession
+- [ ] Triple Ctrl+C rapid succession
+- [ ] Ctrl+D to exit
+- [ ] Ctrl+Z (suspend) then fg to resume
+- [ ] Ctrl+L (clear screen)
+- [ ] Ctrl+W (delete word — may close tab in some terminals!)
+- [ ] Ctrl+A (beginning of line)
+- [ ] Ctrl+E (end of line)
+- [ ] Ctrl+K (kill to end of line)
+- [ ] Ctrl+U (kill entire line)
+- [ ] Escape key (single press)
+- [ ] Escape key (rapid multiple presses)
+- [ ] Arrow keys (up, down, left, right)
+- [ ] Home and End keys
+- [ ] Page Up and Page Down
+- [ ] Delete key
+- [ ] Backspace on empty input
+- [ ] F1-F12 function keys
+- [ ] Tab key (expecting autocomplete)
+- [ ] Shift+Tab
+- [ ] Alt+Enter (common multi-line shortcut)
+- [ ] Hold down a key (key repeat flooding)
+- [ ] Type while AI is still responding
+- [ ] Type immediately after response finishes (race)
+- [ ] Rapidly press Enter 10 times
+- [ ] Press every modifier key: Ctrl, Alt, Shift, Cmd combinations
+
+## Category 3: Clipboard & Paste
+- [ ] Paste normal text from clipboard
+- [ ] Paste multi-line text (10 lines)
+- [ ] Paste very long text (10,000 chars)
+- [ ] Paste rich text from browser (has HTML/formatting)
+- [ ] Paste from a code editor (with syntax highlighting metadata)
+- [ ] Paste a file path (drag file from Finder)
+- [ ] Drag and drop a file from Finder onto terminal
+- [ ] Drag and drop a folder from Finder
+- [ ] Drag and drop multiple files
+- [ ] Paste binary data (copy an image, paste into terminal)
+- [ ] Paste text containing ANSI escape sequences
+- [ ] Paste text containing null bytes
+- [ ] Paste a URL
+- [ ] Paste an entire .env file with secrets
+- [ ] Paste text with Windows line endings (\r\n)
+- [ ] Right-click paste vs Cmd+V paste (if different)
+
+## Category 4: Terminal Window
+- [ ] Resize window wider while at prompt
+- [ ] Resize window narrower while at prompt
+- [ ] Resize window while AI is responding
+- [ ] Resize window while tool is executing
+- [ ] Make window extremely narrow (20 cols)
+- [ ] Make window extremely narrow (10 cols)
+- [ ] Make window extremely tall (200 rows)
+- [ ] Make window extremely short (5 rows)
+- [ ] Fullscreen toggle
+- [ ] Split pane in iTerm/tmux while synroute running
+- [ ] Open new tab, switch back to synroute tab
+- [ ] Switch to different desktop/space and back
+- [ ] Minimize window and restore
+- [ ] Close laptop lid, wait, reopen (sleep/wake)
+- [ ] Light terminal theme (white background)
+- [ ] Dark terminal theme (default)
+- [ ] Solarized theme
+- [ ] High contrast theme
+- [ ] Different font sizes (8pt, 12pt, 24pt, 48pt)
+- [ ] Font with ligatures
+- [ ] Terminal zoom in (Cmd+Plus)
+- [ ] Terminal zoom out (Cmd+Minus)
+
+## Category 5: Slash Commands
+- [ ] /help
+- [ ] /exit
+- [ ] /clear
+- [ ] /model
+- [ ] /model nonexistent-model-name
+- [ ] /tools
+- [ ] /history
+- [ ] /history (when no history)
+- [ ] /agents
+- [ ] /agents (when no agents spawned)
+- [ ] /budget
+- [ ] /budget (when no budget set)
+- [ ] /plan (with no arguments)
+- [ ] /plan <description>
+- [ ] /review
+- [ ] /check
+- [ ] /fix (no arguments)
+- [ ] /fix <description>
+- [ ] /research quick <query>
+- [ ] /research deep <query>
+- [ ] /research (no depth or query)
+- [ ] /redact list
+- [ ] /redact test user@example.com
+- [ ] /redact add custom_pattern regex_here
+- [ ] /redact ignore EMAIL
+- [ ] /intent correct <intent>
+- [ ] Unknown command: /foobar
+- [ ] Case sensitivity: /HELP vs /help vs /Help
+- [ ] Command with extra spaces: /help  extra  spaces
+- [ ] Command with leading space:  /help
+
+## Category 6: File References (@file)
+- [ ] @main.go (existing file)
+- [ ] @nonexistent.go (missing file)
+- [ ] @/absolute/path/to/file
+- [ ] @../parent/directory/file (path traversal)
+- [ ] @file with spaces in name
+- [ ] @file.with" quotes.txt
+- [ ] @/dev/null
+- [ ] @/dev/random
+- [ ] @directory/ (not a file)
+- [ ] @symlink (symbolic link)
+- [ ] @circular-symlink
+- [ ] @binary-file.exe
+- [ ] @very-large-file.log (100MB+)
+- [ ] @.env (secrets file)
+- [ ] @~/.ssh/id_rsa (private key)
+- [ ] @file-being-written-by-another-process
+- [ ] Multiple @files in one message
+- [ ] @file in the middle of a sentence
+
+## Category 7: Flags & Startup
+- [ ] synroute code (default)
+- [ ] synroute code --message "hello"
+- [ ] synroute code --message "" (empty message)
+- [ ] synroute code --confidential
+- [ ] synroute code --dry-run
+- [ ] synroute code --screen-reader
+- [ ] synroute code --json-events
+- [ ] synroute code --verbose 0
+- [ ] synroute code --verbose 2
+- [ ] synroute code --budget 100
+- [ ] synroute code --budget 0
+- [ ] synroute code --budget -1 (negative)
+- [ ] synroute code --max-agents 0
+- [ ] synroute code --max-agents 1000
+- [ ] synroute code --model nonexistent
+- [ ] synroute code --worktree
+- [ ] synroute code --resume (no prior session)
+- [ ] synroute code --session nonexistent-id
+- [ ] synroute code --spec-file nonexistent.md
+- [ ] synroute code --spec-file /dev/null
+- [ ] synroute code --pipeline
+- [ ] Multiple conflicting flags: --confidential --message "search the web"
+- [ ] Unknown flag: --foobar
+- [ ] NO_COLOR=1 synroute code
+- [ ] COLORBLIND_MODE=deuteranopia synroute code
+- [ ] SYNROUTE_SCREEN_READER=1 synroute code
+- [ ] SYNROUTE_CONFIDENTIAL=true synroute code
+- [ ] Run from / (root directory)
+- [ ] Run from /tmp
+- [ ] Run from a directory with no write permission
+- [ ] Run from a deleted directory
+- [ ] Run with no .env file
+- [ ] Run with corrupted .env file
+- [ ] Run with no internet connection
+- [ ] Run with no API keys configured
+- [ ] Two instances simultaneously in same directory
+
+## Category 8: Network & Provider
+- [ ] Normal operation (all providers healthy)
+- [ ] Kill internet mid-response (disconnect WiFi)
+- [ ] VPN connected then disconnected
+- [ ] Proxy configured (HTTP_PROXY set)
+- [ ] DNS failure (wrong DNS server)
+- [ ] API returns 500 error
+- [ ] API returns 429 rate limit
+- [ ] API returns 401 unauthorized (bad key)
+- [ ] API returns empty response
+- [ ] API returns malformed JSON
+- [ ] API hangs (never responds)
+- [ ] All providers in a tier fail
+- [ ] All providers in all tiers fail
+- [ ] Provider responds with very slow token streaming
+- [ ] Provider returns response then closes connection
+- [ ] Switch profile while request is in flight
+
+## Category 9: Security & Abuse
+- [ ] Paste API key — is it redacted in display?
+- [ ] Paste .env contents — is it scrubbed?
+- [ ] Ask AI to read /etc/passwd
+- [ ] Ask AI to read ~/.ssh/id_rsa
+- [ ] Ask AI to run rm -rf /
+- [ ] Ask AI to curl an internal IP (SSRF)
+- [ ] Ask AI to modify synroute's own config
+- [ ] Ask AI to modify the spec file (should be protected)
+- [ ] Send ANSI escape sequences in message
+- [ ] Try to inject tool call via message text
+- [ ] Prompt injection: "Ignore previous instructions and..."
+- [ ] File with malicious instructions read by AI
+- [ ] Web search for query containing secrets
+
+## Category 10: State & Recovery
+- [ ] Fresh launch (no prior state)
+- [ ] Resume after clean exit
+- [ ] Resume after Ctrl+C exit
+- [ ] Resume after crash (kill -9)
+- [ ] Corrupted SQLite database
+- [ ] Missing log directory
+- [ ] Read-only home directory
+- [ ] Full disk (no space for logs/DB)
+- [ ] Clock set wrong (future date)
+- [ ] Clock set wrong (past date)
+- [ ] System timezone change mid-session
+- [ ] macOS update pending (system alerts)
+- [ ] Low battery / power saving mode
+
+## Category 11: Accessibility
+- [ ] --screen-reader: no spinners visible
+- [ ] --screen-reader: no box drawing chars
+- [ ] --screen-reader: linear text output
+- [ ] NO_COLOR: zero ANSI escape codes in output
+- [ ] COLORBLIND_MODE: no red/green, uses blue/orange
+- [ ] High contrast: all text readable
+- [ ] Large font: layout doesn't break
+- [ ] VoiceOver on macOS: can it read the output?
+
+## Category 12: Multi-Terminal Environments
+- [ ] Inside tmux
+- [ ] Inside screen
+- [ ] Inside VS Code terminal
+- [ ] Inside JetBrains terminal
+- [ ] Inside Warp terminal
+- [ ] Inside Ghostty
+- [ ] Inside Kitty
+- [ ] Inside Alacritty
+- [ ] Inside default macOS Terminal.app
+- [ ] Inside iTerm2
+- [ ] Over SSH connection
+- [ ] Over mosh connection
+- [ ] In a Docker container
+
+## Category 13: Model Routing & Escalation (CRITICAL — core feature)
+- [ ] --message mode starts at cheap tier (NOT frontier)
+- [ ] Interactive mode starts at frontier tier (for human conversation)
+- [ ] Escalation triggers when cheap model fails (auto-escalate to mid)
+- [ ] Escalation triggers when mid model fails (auto-escalate to frontier)
+- [ ] All models in a tier are tried before escalating (round-robin within tier)
+- [ ] Circuit breaker opens on repeated failures
+- [ ] Circuit breaker resets after cooldown
+- [ ] Provider health check detects dead models
+- [ ] SYNROUTE_CONVERSATION_TIER=cheap overrides default
+- [ ] SYNROUTE_CONVERSATION_TIER=mid overrides default
+- [ ] SYNROUTE_CONVERSATION_TIER=frontier overrides default
+- [ ] --model specific-model bypasses tier routing
+- [ ] Work profile defaults to mid tier
+- [ ] Personal profile interactive defaults to frontier tier
+- [ ] Personal profile --message defaults to cheap tier
+- [ ] Sub-agents use correct tier (not parent's tier)
+- [ ] Subscription fallback (gemini, codex) when all Ollama tiers fail
+- [ ] Each tier has 3+ models for redundancy
+- [ ] synroute test --provider tests each individual model
+- [ ] synroute config show displays correct tier assignment
+- [ ] Rate limit (429) triggers circuit breaker, not infinite retry
+- [ ] 500 error triggers escalation to next model in tier
+- [ ] Timeout triggers escalation
+- [ ] Empty response triggers escalation
+- [ ] Malformed JSON response triggers escalation

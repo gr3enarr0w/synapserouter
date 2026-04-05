@@ -949,7 +949,11 @@ func cmdChat(args []string) {
 	ag.SetPool(pool)
 
 	// Conversation tier — configurable via SYNROUTE_CONVERSATION_TIER
+	// --message mode defaults to cheap (escalate on failure) instead of frontier
 	convTier := agent.TierFrontier
+	if *message != "" {
+		convTier = agent.TierCheap
+	}
 	if tierEnv := os.Getenv("SYNROUTE_CONVERSATION_TIER"); tierEnv != "" {
 		switch strings.ToLower(tierEnv) {
 		case "cheap":

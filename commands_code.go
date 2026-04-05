@@ -278,8 +278,14 @@ func cmdCode(args []string) {
 	ag.SetPool(pool)
 
 	// Set conversation tier — configurable via SYNROUTE_CONVERSATION_TIER env var.
-	// Default: frontier (personal), mid (work). Sub-agents use their own tiers.
+	// Default: frontier (personal interactive), cheap (--message mode), mid (work).
+	// --message mode uses cheap tier by default because the escalation chain
+	// will auto-escalate to frontier if cheap models fail. Starting at frontier
+	// skips the entire cost-optimized escalation — defeating the tool's purpose.
 	convTier := agent.TierFrontier
+	if *message != "" {
+		convTier = agent.TierCheap // --message: start cheap, escalate on failure
+	}
 	if tierEnv := os.Getenv("SYNROUTE_CONVERSATION_TIER"); tierEnv != "" {
 		switch strings.ToLower(tierEnv) {
 		case "cheap":
