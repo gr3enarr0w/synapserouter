@@ -422,6 +422,7 @@ func TestScenarioToolDefsPassedToLLM(t *testing.T) {
 	config.WorkDir = t.TempDir()
 
 	agent := New(exec, registry, NewRenderer(&bytes.Buffer{}), config)
+	agent.intentRouter = nil // bypass intent-based tool filtering for this test
 	agent.Run(context.Background(), "write a function that adds two numbers")
 
 	if len(exec.calls) == 0 {

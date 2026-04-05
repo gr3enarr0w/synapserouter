@@ -2,11 +2,15 @@ package agent
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
 
 func TestDetectGitContext(t *testing.T) {
+	if _, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err != nil {
+		t.Skip("not in a git repo, skipping")
+	}
 	// Test with the current repo (synapserouter is a git repo)
 	cwd, _ := os.Getwd()
 	gc := DetectGitContext(cwd)
