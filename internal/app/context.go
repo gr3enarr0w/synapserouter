@@ -33,6 +33,11 @@ type AppContext struct {
 	TaskManager     *tasks.Manager
 	Profile         string
 	Port            string
+
+	// Provider-agnostic planner config (v1.11+)
+	PlannerProviders []string // provider names for parallel planning
+	MergeProvider    string   // provider name for plan merging
+	TierConfig       *TierConfig // full config (nil if legacy env-var mode)
 }
 
 // InitLight loads .env, opens DB, runs migrations, and initializes providers.
@@ -94,7 +99,7 @@ func InitLight(ctx context.Context) (*AppContext, error) {
 		log.Printf("Warning: failed to initialize task manager: %v", err)
 	}
 
-	return &AppContext{
+	ac := &AppContext{
 		DB:              db,
 		UsageTracker:    tracker,
 		VectorMemory:    vm,
@@ -103,7 +108,19 @@ func InitLight(ctx context.Context) (*AppContext, error) {
 		TaskManager:     taskMgr,
 		Profile:         profile,
 		Port:            port,
-	}, nil
+	}
+
+	// Load planner config from YAML (v1.11+)
+	if tc, err := LoadTierConfig(); err == nil && tc != nil && tc.IsNewFormat() {
+		ac.PlannerProviders = tc.PlannerProviderNames()
+		ac.MergeProvider = tc.MergeProviderName()
+		ac.TierConfig = tc
+		if len(ac.PlannerProviders) > 0 {
+			log.Printf("[Config] planners: %v (merge: %s)", ac.PlannerProviders, ac.MergeProvider)
+		}
+	}
+
+	return ac, nil
 }
 
 // InitFull extends InitLight by creating the Router. Suitable for server mode.
@@ -430,6 +447,7 @@ func buildEscalationChain(profile string, providerList []providers.Provider) []a
 			}
 			// Map model names in YAML to registered provider names
 			resolveYAMLProviders(yamlChain, providerList)
+
 			log.Printf("[Config] using YAML tier config (%d levels)", len(yamlChain))
 			return yamlChain
 		}

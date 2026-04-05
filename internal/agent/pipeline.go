@@ -53,8 +53,8 @@ var DefaultPipeline = Pipeline{
 			StoreAs:           "criteria",
 			MinToolCalls:      1,
 			ParallelSubAgents: 2,
-			CoderProviders:    []string{"ollama-planner-1", "ollama-planner-2"},
-			MergeProvider:     "auto", // resolved at runtime from escalation chain top
+			CoderProviders:    nil,    // resolved at runtime from config (PlannerProviderNames)
+			MergeProvider:     "auto", // resolved at runtime from config (MergeProviderName)
 			Prompt: `PHASE: PLAN
 Your plan MUST begin with a SPEC CONSTRAINTS section that explicitly lists:
 - Required package/directory structure

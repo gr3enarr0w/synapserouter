@@ -72,6 +72,11 @@ type Config struct {
 
 	// Pipeline mode for slash commands in --message mode
 	PipelineMode string // "research", "plan", "review", "check", "fix", or "" for normal
+
+	// Provider-agnostic planner configuration (v1.11+)
+	// Set from YAML config or env vars. If nil, falls back to top-tier escalation chain.
+	PlannerProviders []string // provider names for parallel planning (e.g., ["gemini", "chatgpt"])
+	MergeProvider    string   // provider name that merges plans (default: last planner)
 }
 
 // ModelTier classifies escalation levels by capability cost.

@@ -482,6 +482,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 
 		if a.pipeline != nil {
 			a.pipelinePhase = 0
+			a.initializePlanPhase()
 			a.initializeImplementPhase()
 
 			// Intent-based phase routing: determine starting phase from project state.
@@ -1923,6 +1924,7 @@ func (a *Agent) advancePipeline(content string) bool {
 		matched := orchestration.MatchSkillsForLanguage(a.originalRequest, a.config.Skills, a.config.ProjectLanguage)
 		a.pipeline = DetectPipelineType(matched, a.config.ProjectLanguage)
 		a.pipelinePhase = 0
+		a.initializePlanPhase()
 		log.Printf("[Agent] pipeline: %s (%d phases) | language: %s", a.pipeline.Name, len(a.pipeline.Phases), a.config.ProjectLanguage)
 	}
 
@@ -3087,6 +3089,42 @@ func (a *Agent) ProviderLevelForTier(tier ModelTier) int {
 		return (2 * n) / 3 // start of top third
 	}
 	return 0
+}
+
+// initializePlanPhase populates CoderProviders for the plan phase from config.
+// Uses PlannerProviders from config if available, otherwise falls back to
+// the top tier of the escalation chain (the most capable providers).
+func (a *Agent) initializePlanPhase() {
+	if a.pipeline == nil {
+		return
+	}
+	for i := range a.pipeline.Phases {
+		phase := &a.pipeline.Phases[i]
+		if phase.Name != "plan" || len(phase.CoderProviders) > 0 {
+			continue
+		}
+		// Try config-based planner providers first
+		if a.config.PlannerProviders != nil && len(a.config.PlannerProviders) > 0 {
+			phase.CoderProviders = a.config.PlannerProviders
+			phase.ParallelSubAgents = len(a.config.PlannerProviders)
+			log.Printf("[Agent] plan phase: %d planners from config: %v", len(a.config.PlannerProviders), a.config.PlannerProviders)
+			if a.config.MergeProvider != "" {
+				phase.MergeProvider = a.config.MergeProvider
+			}
+			return
+		}
+		// Fallback: use the top tier of escalation chain (most capable)
+		if len(a.config.EscalationChain) > 0 {
+			top := a.config.EscalationChain[len(a.config.EscalationChain)-1]
+			if len(top.Providers) > 0 {
+				phase.CoderProviders = top.Providers
+				phase.ParallelSubAgents = len(top.Providers)
+				log.Printf("[Agent] plan phase: %d planners from top tier: %v", len(top.Providers), top.Providers)
+				return
+			}
+		}
+		log.Printf("[Agent] plan phase: no planner providers available")
+	}
 }
 
 // initializeImplementPhase sets the initial parallel agent count from Level 0.

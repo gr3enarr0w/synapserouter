@@ -112,6 +112,8 @@ func cmdCode(args []string) {
 	config.Resume = *resume
 	config.SessionID = *sessionID
 	config.EscalationChain = ac.EscalationChain
+	config.PlannerProviders = ac.PlannerProviders
+	config.MergeProvider = ac.MergeProvider
 	providerNames := make([]string, len(ac.Providers))
 	for i, p := range ac.Providers {
 		providerNames[i] = p.Name()
@@ -283,14 +285,10 @@ func cmdCode(args []string) {
 	ag.SetPool(pool)
 
 	// Set conversation tier — configurable via SYNROUTE_CONVERSATION_TIER env var.
-	// Default: frontier (personal interactive), cheap (--message mode), mid (work).
-	// --message mode uses cheap tier by default because the escalation chain
-	// will auto-escalate to frontier if cheap models fail. Starting at frontier
-	// skips the entire cost-optimized escalation — defeating the tool's purpose.
+	// Default: frontier for all modes. The planner (frontier) sees every message
+	// first and decides whether to respond directly or hand off to worker tiers.
+	// Users override with SYNROUTE_CONVERSATION_TIER env var.
 	convTier := agent.TierFrontier
-	if *message != "" {
-		convTier = agent.TierCheap // --message: start cheap, escalate on failure
-	}
 	if tierEnv := os.Getenv("SYNROUTE_CONVERSATION_TIER"); tierEnv != "" {
 		switch strings.ToLower(tierEnv) {
 		case "cheap":

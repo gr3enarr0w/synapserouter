@@ -29,6 +29,9 @@ type adaptiveLimiter struct {
 	consecutive429 int
 }
 
+// defaultRPM provides fallback rate limits when not configured via env vars or YAML.
+// Provider names are matched by prefix (e.g., "vertex-claude" matches "vertex-claude-mid").
+// Users should configure rate limits in YAML config or via <PROVIDER>_RPM env vars.
 var defaultRPM = map[string]float64{
 	"vertex-claude":  5,
 	"vertex-gemini":  60,
@@ -37,6 +40,15 @@ var defaultRPM = map[string]float64{
 	"gemini":         15,
 	"claude-code":    10,
 	"codex":          20,
+}
+
+// configRPM holds rate limits loaded from YAML config at startup.
+// Takes priority over defaultRPM but not env vars.
+var configRPM = map[string]float64{}
+
+// SetConfigRPM sets rate limits from YAML config (called at startup).
+func SetConfigRPM(rates map[string]float64) {
+	configRPM = rates
 }
 
 func NewProviderRateLimiter(db *sql.DB) *ProviderRateLimiter {
@@ -54,6 +66,12 @@ func rpmForProvider(name string) float64 {
 		}
 	}
 	lower := strings.ToLower(name)
+	// Config RPM takes priority over defaults
+	for prefix, rpm := range configRPM {
+		if strings.HasPrefix(lower, prefix) {
+			return rpm
+		}
+	}
 	for prefix, rpm := range defaultRPM {
 		if strings.HasPrefix(lower, prefix) {
 			return rpm

@@ -699,6 +699,8 @@ func cmdChat(args []string) {
 	config.Resume = *resume
 	config.SessionID = *sessionID
 	config.EscalationChain = ac.EscalationChain
+	config.PlannerProviders = ac.PlannerProviders
+	config.MergeProvider = ac.MergeProvider
 	// Pass full provider list so hasProviders() can find standalone providers
 	// (e.g., planner models) that aren't in the escalation chain.
 	providerNames := make([]string, len(ac.Providers))
