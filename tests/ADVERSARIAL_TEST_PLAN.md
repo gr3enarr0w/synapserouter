@@ -384,3 +384,18 @@
 - [ ] web_fetch: URL in confidential mode (should be blocked)
 - [ ] recall: with stored tool outputs
 - [ ] recall: with empty store
+
+## Category 18: Concurrency & API Limits (CRITICAL)
+- [ ] Single --message request completes (baseline)
+- [ ] 2 concurrent --message requests both complete
+- [ ] 3 concurrent --message requests all complete (at limit)
+- [ ] 4+ concurrent --message requests don't overload API (semaphore blocks 4th)
+- [ ] SYNROUTE_MAX_CONCURRENT=1 limits to 1 at a time
+- [ ] SYNROUTE_MAX_CONCURRENT=5 allows 5 concurrent
+- [ ] Multiple API keys (OLLAMA_API_KEYS=k1,k2) scales concurrent limit
+- [ ] Semaphore releases on error (doesn't leak slots)
+- [ ] Semaphore releases on timeout (doesn't leak slots)
+- [ ] Semaphore releases on Ctrl+C (doesn't leak slots)
+- [ ] Context cancellation unblocks waiting requests
+- [ ] Sub-agents share parent's concurrency limit
+- [ ] synroute serve handles multiple HTTP clients within limit
