@@ -159,16 +159,20 @@ func parseXMLTagFormat(content string, toolCalls *[]map[string]interface{}) stri
 var narratedJSONRe = regexp.MustCompile("(?s)tool_call\\s*\\n```(?:json)?\\s*\\n(\\{.+?\\})\\s*\\n```")
 
 // toolNameFromArgs infers the tool name from the argument keys.
-var argKeyToTool = map[string]string{
-	"command":     "bash",
-	"path":        "file_read",
-	"content":     "file_write",
-	"old_string":  "file_edit",
-	"pattern":     "grep",
-	"query":       "web_search",
-	"url":         "web_fetch",
-	"subcommand":  "git",
-	"cell":        "notebook_edit",
+// Priority-ordered slice to ensure correct tool routing (specific keys before generic).
+var argKeyPriority = []struct {
+	key  string
+	tool string
+}{
+	{"old_string", "file_edit"},
+	{"command", "bash"},
+	{"pattern", "grep"},
+	{"query", "web_search"},
+	{"subcommand", "git"},
+	{"cell", "notebook_edit"},
+	{"content", "file_write"},
+	{"url", "web_fetch"},
+	{"path", "file_read"},
 }
 
 func parseNarratedJSONFormat(content string, toolCalls *[]map[string]interface{}) string {
@@ -186,11 +190,11 @@ func parseNarratedJSONFormat(content string, toolCalls *[]map[string]interface{}
 			continue
 		}
 
-		// Infer tool name from argument keys
+		// Infer tool name from argument keys (priority-ordered)
 		toolName := ""
-		for key, name := range argKeyToTool {
-			if _, ok := args[key]; ok {
-				toolName = name
+		for _, pair := range argKeyPriority {
+			if _, ok := args[pair.key]; ok {
+				toolName = pair.tool
 				break
 			}
 		}
