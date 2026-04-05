@@ -25,11 +25,9 @@ type Router struct {
 	db              *sql.DB
 	circuitBreakers map[string]*CircuitBreaker
 	rateLimiter     *ProviderRateLimiter
-	healthMu        sync.RWMutex
-	healthCache     map[string]*cachedHealth
-	// TODO(v1.11): Per-provider concurrency semaphores with bounded queues.
-	// Global semaphore was reverted — causes deadlocks with multi-turn agent runs.
-	// See CONCURRENCY_ARCHITECTURE_SUMMARY.md for the v1.11 design.
+	healthMu    sync.RWMutex
+	healthCache map[string]*cachedHealth
+	concurrency *ConcurrencyManager // per-provider concurrency limits
 }
 
 type cachedHealth struct {
@@ -100,7 +98,23 @@ func NewRouter(
 		circuitBreakers: breakers,
 		rateLimiter:     NewProviderRateLimiter(db),
 		healthCache:     make(map[string]*cachedHealth),
+		concurrency:     NewConcurrencyManager(10),
 	}
+}
+
+// SetConcurrencyLimit sets the max concurrent requests for a provider.
+func (r *Router) SetConcurrencyLimit(provider string, maxConcurrent int) {
+	if r.concurrency != nil {
+		r.concurrency.SetLimit(provider, maxConcurrent)
+	}
+}
+
+// ConcurrencyStats returns per-provider concurrency stats.
+func (r *Router) ConcurrencyStats() map[string]ConcurrencyStats {
+	if r.concurrency != nil {
+		return r.concurrency.Stats()
+	}
+	return nil
 }
 
 // ProviderNames returns the ordered list of provider names in the chain.
@@ -788,6 +802,15 @@ func (r *Router) tryProvider(
 	// Rate limit: wait for token before calling provider
 	if err := r.rateLimiter.Wait(ctx, provider.Name()); err != nil {
 		return providers.ChatResponse{}, fmt.Errorf("rate limiter cancelled for %s: %w", provider.Name(), err)
+	}
+
+	// Concurrency: acquire slot (blocks if at limit, respects ctx cancellation)
+	if r.concurrency != nil {
+		release, err := r.concurrency.AcquireWithTimeout(ctx, provider.Name(), 30*time.Second)
+		if err != nil {
+			return providers.ChatResponse{}, fmt.Errorf("concurrency limit for %s: %w", provider.Name(), err)
+		}
+		defer release()
 	}
 
 	resp, err := provider.ChatCompletion(ctx, req, sessionID)
