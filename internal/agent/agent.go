@@ -889,8 +889,12 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			// Stall detection: if model hasn't made tool calls in 2 consecutive turns,
 			// escalate to a bigger model — BUT only for non-trivial tasks.
 			// Conversational turns (trivial complexity) are expected to be text-only.
+			// Also skip escalation when intent is text-only (explain, chat, generate, plan)
+			// since those intents don't require tool calls — text responses are correct.
 			complexity := AssessComplexity(a.originalRequest, a.config.SpecFilePath != "")
-			if a.noToolTurns >= 2 && complexity != ComplexityTrivial {
+			textOnlyIntent := classifiedIntent == IntentChat || classifiedIntent == IntentExplain ||
+				classifiedIntent == IntentGenerate || classifiedIntent == IntentPlan
+			if a.noToolTurns >= 2 && complexity != ComplexityTrivial && !textOnlyIntent {
 				phaseName := "direct"
 				if a.pipeline != nil && a.pipelinePhase < len(a.pipeline.Phases) {
 					phaseName = a.pipeline.Phases[a.pipelinePhase].Name
@@ -1890,6 +1894,10 @@ func (a *Agent) executeForCurrentProvider(ctx context.Context, req providers.Cha
 		if pae, ok := a.executor.(ProviderAwareExecutor); ok {
 			var lastErr error
 			for _, provider := range levelProvs {
+				// Context expired — return immediately, don't try more providers
+				if ctx != nil && ctx.Err() != nil {
+					return providers.ChatResponse{}, ctx.Err()
+				}
 				resp, err := pae.ChatCompletionForProvider(ctx, req, a.sessionID, provider, false)
 				if err == nil {
 					return resp, nil
@@ -3851,6 +3859,10 @@ func (a *Agent) callLLMWithStreaming(ctx context.Context, req providers.ChatRequ
 			if err == nil {
 				return resp, nil
 			}
+			// Context cancelled/timeout — return immediately, don't fall through to retry
+			if ctx != nil && ctx.Err() != nil {
+				return providers.ChatResponse{}, ctx.Err()
+			}
 			// Don't log circuit-open errors — they're expected during rate limiting
 			if !strings.Contains(err.Error(), "circuit open") && !strings.Contains(err.Error(), "unavailable") {
 				log.Printf("[Agent] streaming failed, falling back to non-streaming: %v", err)
@@ -3886,6 +3898,10 @@ func (a *Agent) callLLMWithRetry(ctx context.Context, req providers.ChatRequest)
 
 		// All providers at current level failed
 		if strings.Contains(err.Error(), "all providers at level") {
+			// Context expired — don't escalate, don't wait, return now
+			if ctx != nil && ctx.Err() != nil {
+				return providers.ChatResponse{}, ctx.Err()
+			}
 			// Rate limit (429) — wait and retry same level instead of escalating.
 			// Vertex AI Claude has 3-5 RPM default; waiting 30s usually clears it.
 			if isRateLimitErr(err) && attempt < 2 {

@@ -659,6 +659,10 @@ func (r *Router) ChatCompletionStreamForProvider(
 			_ = r.circuitBreakers[p.Name()].RecordSuccess()
 			return resp, nil
 		}
+		// Context expired — don't fall back, return immediately
+		if ctx.Err() != nil {
+			return providers.ChatResponse{}, ctx.Err()
+		}
 		log.Printf("[Router] streaming failed for %s, falling back: %v", p.Name(), err)
 	}
 

@@ -555,16 +555,16 @@ func (cr *CodeRenderer) setWindowTitle(title string) {
 }
 
 // StartThinking launches a goroutine with a braille spinner and elapsed timer.
+// StartThinking starts the thinking spinner indicator.
+// MUST be called with cr.mu already held (called from handleEvent which holds mu).
 func (cr *CodeRenderer) StartThinking() {
-	cr.mu.Lock()
+	// mu is already held by caller — do NOT lock again (sync.Mutex is not reentrant)
 	if cr.thinkingActive || cr.screenReaderMode {
-		cr.mu.Unlock()
 		return
 	}
 	cr.thinkingActive = true
 	cr.thinkingStop = make(chan struct{})
 	cr.thinkingWg.Add(1)
-	cr.mu.Unlock()
 
 	startTime := time.Now()
 	spinners := []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
@@ -595,18 +595,20 @@ func (cr *CodeRenderer) StartThinking() {
 	}()
 }
 
-// StopThinking stops the thinking indicator.
+// StopThinking stops the thinking spinner indicator.
+// MUST be called with cr.mu already held (called from handleEvent which holds mu).
 func (cr *CodeRenderer) StopThinking() {
-	cr.mu.Lock()
+	// mu is already held by caller — do NOT lock again (sync.Mutex is not reentrant)
 	if !cr.thinkingActive {
-		cr.mu.Unlock()
 		return
 	}
 	cr.thinkingActive = false
 	close(cr.thinkingStop)
-	cr.mu.Unlock()
 
+	// Must release mu before Wait() — the spinner goroutine needs mu to exit
+	cr.mu.Unlock()
 	cr.thinkingWg.Wait()
+	cr.mu.Lock()
 	fmt.Fprintf(cr.out, "\r\033[2K") // Clear the spinner line
 }
 

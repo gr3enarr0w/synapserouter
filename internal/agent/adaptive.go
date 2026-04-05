@@ -64,6 +64,12 @@ var fullKeywords = []string{
 // AssessComplexity evaluates the task message and context to determine
 // how complex the task is, which drives pipeline adaptation.
 func AssessComplexity(message string, hasSpecFile bool) TaskComplexity {
+	// Strip attached file content — it inflates message length but doesn't
+	// indicate task complexity. Without this, a simple "explain this file"
+	// with a 200+ byte error context gets classified as medium/full.
+	if idx := strings.Index(message, "\n\n--- Attached Files ---"); idx >= 0 {
+		message = message[:idx]
+	}
 	lower := strings.ToLower(message)
 	msgLen := len(message)
 
