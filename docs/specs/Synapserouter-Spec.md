@@ -1824,6 +1824,8 @@ synroute setup
 
 ## 9. Acceptance Criteria
 
+**Master Test Plan:** `tests/MASTER_TEST_PLAN.md` — 428 tests across 25 categories. Combines adversarial testing (does it crash?) with functional testing (does it work correctly?). Every test has two assertions: no crash AND correct output. Run with `bash tests/run_master_tests.sh`.
+
 ### 9.1 Provider Routing
 
 - [ ] **AC-R1:** Request with `model: "auto"` routes to lowest-usage healthy provider
