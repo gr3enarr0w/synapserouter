@@ -275,10 +275,10 @@ func cmdCode(args []string) {
 	} else if config.Resume && config.DB != nil {
 		state, err := agent.LoadLatestState(config.DB, userID)
 		if err != nil {
-			ag = agent.New(ac.ProxyRouter, registry, codeRenderer, config)
-		} else {
-			ag = agent.RestoreAgent(ac.ProxyRouter, registry, codeRenderer, state)
+			fmt.Fprintf(os.Stderr, "Error: --resume specified but no prior session found: %v\n", err)
+			os.Exit(1)
 		}
+		ag = agent.RestoreAgent(ac.ProxyRouter, registry, codeRenderer, state)
 	} else {
 		ag = agent.New(ac.ProxyRouter, registry, codeRenderer, config)
 	}
