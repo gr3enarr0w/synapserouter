@@ -160,8 +160,26 @@ func saveIntentCorrection(message, intent string) error {
 		}
 	}
 
-	// Append new correction
-	corrections = append(corrections, IntentCorrection{Message: message, Intent: intent})
+	// Deduplicate: if same message already has this intent, skip.
+	// If same message has a DIFFERENT intent, update it (latest wins).
+	msgLower := strings.ToLower(strings.TrimSpace(message))
+	found := false
+	for i := range corrections {
+		if strings.ToLower(strings.TrimSpace(corrections[i].Message)) == msgLower {
+			corrections[i].Intent = intent // update to latest
+			found = true
+			break
+		}
+	}
+	if !found {
+		corrections = append(corrections, IntentCorrection{Message: message, Intent: intent})
+	}
+
+	// Cap at 200 corrections to prevent unbounded growth.
+	// Keep the most recent ones (end of slice).
+	if len(corrections) > 200 {
+		corrections = corrections[len(corrections)-200:]
+	}
 
 	// Write back
 	outData, err := json.MarshalIndent(corrections, "", "  ")

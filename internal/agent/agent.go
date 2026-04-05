@@ -855,24 +855,14 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		}
 
 		// Implicit feedback: compare classified intent with actual tool usage
-		// and save corrections when there's a mismatch
+		// and save corrections when there's a mismatch.
+		// Only use ACTUAL tool calls (not text mentions) to avoid poisoning from
+		// models that mention tool names in conversational responses.
 		if classifiedIntent != IntentUnknown && a.originalRequest != "" {
 			hasToolCalls := len(msg.ToolCalls) > 0
-			hasToolPatternsInText := false
-			
-			// Check for tool call patterns in response text (for models that output tools as text)
-			if msg.Content != "" {
-				toolPatterns := []string{"file_read", "file_write", "bash", "grep", "glob", "git"}
-				for _, pattern := range toolPatterns {
-					if strings.Contains(msg.Content, pattern) {
-						hasToolPatternsInText = true
-						break
-					}
-				}
-			}
-			
-			// Case 1: Classified as chat but LLM used tools → should have been generate/fix
-			if classifiedIntent == IntentChat && (hasToolCalls || hasToolPatternsInText) {
+
+			// Case 1: Classified as chat but LLM actually used tools → should have been generate/fix
+			if classifiedIntent == IntentChat && hasToolCalls {
 				correctIntent := IntentGenerate
 				if strings.Contains(strings.ToLower(a.originalRequest), "fix") || 
 				   strings.Contains(strings.ToLower(a.originalRequest), "error") ||
@@ -887,8 +877,8 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			}
 			
 			// Case 2: Classified as generate/fix but LLM responded with only text → likely chat
-			if (classifiedIntent == IntentGenerate || classifiedIntent == IntentFix || 
-			    classifiedIntent == IntentModify) && !hasToolCalls && !hasToolPatternsInText {
+			if (classifiedIntent == IntentGenerate || classifiedIntent == IntentFix ||
+			    classifiedIntent == IntentModify) && !hasToolCalls {
 				log.Printf("[IntentFeedback] correction: %q was %s but no tools used → chat", 
 					a.originalRequest[:min(len(a.originalRequest), 50)], classifiedIntent)
 				if err := saveIntentCorrection(a.originalRequest, string(IntentChat)); err != nil {
