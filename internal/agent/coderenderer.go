@@ -54,6 +54,9 @@ type CodeRenderer struct {
 	// Tiers tracking
 	totalTiers int
 
+	// Token usage
+	tokensUsed int
+
 	// Styling
 	noColor bool
 
@@ -235,6 +238,18 @@ func (cr *CodeRenderer) Init() {
 	fmt.Fprintln(cr.out, cr.color("\033[2m", "  /plan  /review  /check  /fix  /help"))
 	fmt.Fprintln(cr.out, cr.color("\033[2m", "  Tip: Use @file to reference files"))
 
+	if cr.model == "" {
+		fmt.Fprintln(cr.out, cr.color("\033[2m", "  Try: \"Explain this codebase\" or \"Fix the failing tests\" or \"Add error handling\""))
+	}
+	configPath := filepath.Join(os.Getenv("HOME"), ".synroute", "config.yaml")
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		fmt.Fprintln(cr.out, cr.color("\033[2m", "  First time? Here are some tips:"))
+		fmt.Fprintln(cr.out, cr.color("\033[2m", "    1. Create CLAUDE.md files to customize your interactions"))
+		fmt.Fprintln(cr.out, cr.color("\033[2m", "    2. Use /help for available commands"))
+		fmt.Fprintln(cr.out, cr.color("\033[2m", "    3. Ask coding questions, edit code or run commands"))
+		fmt.Fprintln(cr.out, cr.color("\033[2m", "    4. Be specific for the best results"))
+	}
+
 	// synroute.md detection handled by CodeREPL.detectProjectFiles()
 	fmt.Fprintln(cr.out)
 }
@@ -407,6 +422,7 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		}
 
 	case EventBudgetUpdate:
+		cr.tokensUsed = intVal(e.Data, "tokens")
 		if cr.verbosity >= VerbosityVerbose {
 			cr.writeContent(cr.color("\033[2m", fmt.Sprintf("  budget turns=%d tokens=%d elapsed=%s",
 				intVal(e.Data, "turns"), intVal(e.Data, "tokens"), str(e.Data, "elapsed"))))
@@ -615,10 +631,10 @@ func (cr *CodeRenderer) RenderStatusBar() {
 	var status string
 	if cr.screenReaderMode {
 		// Plain language for screen readers and non-technical users
-		status = fmt.Sprintf("  Workspace: %s | Branch: %s | Model: %s | Provider: %s", workspace, branch, cr.model, cr.provider)
+		status = fmt.Sprintf("  Workspace: %s | Branch: %s | Model: %s | Provider: %s | Tokens: %d", workspace, branch, cr.model, cr.provider, cr.tokensUsed)
 	} else {
 		// Enhanced visual format with better spacing and icons
-		status = fmt.Sprintf("  📁 %s  •  🌿 %s  •  🤖 %s  •  ⚡ %s", workspace, branch, cr.model, cr.provider)
+		status = fmt.Sprintf("  📁 %s  •  🌿 %s  •  🤖 %s  •  ⚡ %s  •  🪙 %d", workspace, branch, cr.model, cr.provider, cr.tokensUsed)
 	}
 
 	cr.writeContent("")
