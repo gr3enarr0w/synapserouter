@@ -23,7 +23,10 @@ func setupToolStoreTestDB(t *testing.T) *sql.DB {
 
 func TestToolOutputStore_CreateAndStore(t *testing.T) {
 	db := setupToolStoreTestDB(t)
-	store := NewToolOutputStore(db)
+	store, err := NewToolOutputStore(db)
+	if err != nil {
+		t.Fatalf("NewToolOutputStore failed: %v", err)
+	}
 	if store == nil {
 		t.Fatal("store should not be nil")
 	}
@@ -40,7 +43,7 @@ func TestToolOutputStore_CreateAndStore(t *testing.T) {
 
 func TestToolOutputStore_Retrieve(t *testing.T) {
 	db := setupToolStoreTestDB(t)
-	store := NewToolOutputStore(db)
+	store, _ := NewToolOutputStore(db)
 
 	id, _ := store.Store("session-1", "bash", "go test",
 		"summary", "the full output content", 0, 25)
@@ -56,7 +59,7 @@ func TestToolOutputStore_Retrieve(t *testing.T) {
 
 func TestToolOutputStore_RetrieveWrongSession(t *testing.T) {
 	db := setupToolStoreTestDB(t)
-	store := NewToolOutputStore(db)
+	store, _ := NewToolOutputStore(db)
 
 	id, _ := store.Store("session-1", "bash", "cmd", "sum", "full", 0, 4)
 
@@ -68,7 +71,7 @@ func TestToolOutputStore_RetrieveWrongSession(t *testing.T) {
 
 func TestToolOutputStore_Search(t *testing.T) {
 	db := setupToolStoreTestDB(t)
-	store := NewToolOutputStore(db)
+	store, _ := NewToolOutputStore(db)
 
 	store.Store("s1", "bash", "go test", "test summary", "full1", 0, 5)
 	store.Store("s1", "grep", "pattern=TODO", "grep summary", "full2", 0, 5)
@@ -103,7 +106,10 @@ func TestToolOutputStore_Search(t *testing.T) {
 }
 
 func TestToolOutputStore_NilSafe(t *testing.T) {
-	store := NewToolOutputStore(nil)
+	store, err := NewToolOutputStore(nil)
+	if err == nil {
+		t.Error("nil db should return error")
+	}
 	if store != nil {
 		t.Error("nil db should return nil store")
 	}
@@ -131,7 +137,10 @@ func TestToolOutputStore_TableAutoCreated(t *testing.T) {
 	defer db.Close()
 
 	// No migrations run — just create the store
-	store := NewToolOutputStore(db)
+	store, err := NewToolOutputStore(db)
+	if err != nil {
+		t.Fatalf("NewToolOutputStore failed: %v", err)
+	}
 
 	// Should work without migration
 	id, err := store.Store("s1", "bash", "cmd", "sum", "full", 0, 4)

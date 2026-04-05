@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -247,7 +248,11 @@ func agentChatHandler(registry *tools.Registry) http.HandlerFunc {
 
 		// Wire memory systems for unlimited context + recall + hallucination detection
 		config.VectorMemory = vectorMemory
-		config.ToolStore = agent.NewToolOutputStore(db)
+		if ts, err := agent.NewToolOutputStore(db); err != nil {
+				log.Printf("[Agent] failed to initialize tool store: %v", err)
+			} else {
+				config.ToolStore = ts
+			}
 		config.PlanCache = agent.NewPlanCache(db)
 
 		// Create agent with tracing enabled

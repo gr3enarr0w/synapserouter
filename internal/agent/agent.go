@@ -3249,7 +3249,11 @@ func (a *Agent) compactConversation(completedPhase string) {
 	dropCount := len(msgs) - keepCount
 
 	// Store dropped messages to DB for later recall (all roles including tool).
-	a.storeMessagesToDB(msgs[:dropCount], "compaction")
+	// If all stores fail, abort compaction to avoid silent message loss.
+	if failures := a.storeMessagesToDB(msgs[:dropCount], "compaction"); failures == dropCount && dropCount > 0 {
+		log.Printf("[Agent] compactConversation: all %d message stores failed, aborting compaction to prevent data loss", dropCount)
+		return
+	}
 
 	// Extract structured summary from dropped messages (no LLM calls)
 	cc := ExtractStructuredSummary(msgs[:dropCount], completedPhase)
@@ -3958,10 +3962,12 @@ func (a *Agent) callLLMWithRetry(ctx context.Context, req providers.ChatRequest)
 
 // storeMessagesToDB persists messages to VectorMemory before they are dropped.
 // Used by emergency trim and compaction to ensure zero information loss.
-func (a *Agent) storeMessagesToDB(msgs []providers.Message, source string) {
+// Returns the number of messages that failed to store.
+func (a *Agent) storeMessagesToDB(msgs []providers.Message, source string) int {
 	if a.config.VectorMemory == nil {
-		return
+		return len(msgs)
 	}
+	failures := 0
 	for _, m := range msgs {
 		content := m.Content
 
@@ -3984,8 +3990,10 @@ func (a *Agent) storeMessagesToDB(msgs []providers.Message, source string) {
 
 		if err := a.config.VectorMemory.Store(content, m.Role, a.sessionID, metadata); err != nil {
 			log.Printf("[Agent] storeMessagesToDB: failed to store message: %v", err)
+			failures++
 		}
 	}
+	return failures
 }
 
 // isContextOverflowError returns true if the error indicates the request exceeds

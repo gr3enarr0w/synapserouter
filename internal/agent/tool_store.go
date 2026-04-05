@@ -18,9 +18,10 @@ type ToolOutputStore struct {
 
 // NewToolOutputStore creates a store backed by the given database.
 // Ensures the tool_outputs table exists (safe to call multiple times).
-func NewToolOutputStore(db *sql.DB) *ToolOutputStore {
+// Returns an error if the database is nil or the table cannot be created.
+func NewToolOutputStore(db *sql.DB) (*ToolOutputStore, error) {
 	if db == nil {
-		return nil
+		return nil, fmt.Errorf("nil database provided")
 	}
 	// Auto-create table if not exists (handles case where migration hasn't run)
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS tool_outputs (
@@ -34,12 +35,11 @@ func NewToolOutputStore(db *sql.DB) *ToolOutputStore {
 		output_size INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`); err != nil {
-		log.Printf("[ToolStore] failed to create table: %v", err)
-		return nil
+		return nil, fmt.Errorf("failed to create tool_outputs table: %w", err)
 	}
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_tool_outputs_session ON tool_outputs(session_id, created_at DESC)`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_tool_outputs_tool ON tool_outputs(session_id, tool_name)`)
-	return &ToolOutputStore{db: db}
+	return &ToolOutputStore{db: db}, nil
 }
 
 // Store saves a tool output and returns its ID.

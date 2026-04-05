@@ -45,7 +45,7 @@ func setupTestAgent(t *testing.T) (*Agent, *sql.DB) {
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_memory_timestamp ON memory(timestamp)`)
 
 	vm := memory.NewVectorMemory(db)
-	toolStore := NewToolOutputStore(db)
+	toolStore, _ := NewToolOutputStore(db)
 
 	exec := &mockExecutor{
 		responses: []providers.ChatResponse{{

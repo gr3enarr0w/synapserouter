@@ -78,6 +78,10 @@ func (cb *CircuitBreaker) SetState(state CircuitState) error {
 		openUntil = time.Now().Add(cb.cooldownDuration)
 	}
 
+	// Ensure row exists for new providers that haven't been seen yet
+	cb.db.Exec(`INSERT OR IGNORE INTO circuit_breaker_state (provider, state, failure_count)
+		VALUES (?, 'closed', 0)`, cb.provider)
+
 	_, err := cb.db.Exec(`
 		UPDATE circuit_breaker_state
 		SET state = ?, open_until = ?
@@ -166,6 +170,11 @@ func (cb *CircuitBreaker) RecordFailure() error {
 
 func (cb *CircuitBreaker) Open(duration time.Duration) error {
 	openUntil := time.Now().Add(duration)
+
+	// Ensure row exists for new providers that haven't been seen yet
+	cb.db.Exec(`INSERT OR IGNORE INTO circuit_breaker_state (provider, state, failure_count)
+		VALUES (?, 'closed', 0)`, cb.provider)
+
 	_, err := cb.db.Exec(`
 		UPDATE circuit_breaker_state
 		SET state = ?, open_until = ?
@@ -181,6 +190,10 @@ func (cb *CircuitBreaker) Open(duration time.Duration) error {
 
 // Reset closes the circuit, zeroing failure count and clearing open_until.
 func (cb *CircuitBreaker) Reset() error {
+	// Ensure row exists for new providers that haven't been seen yet
+	cb.db.Exec(`INSERT OR IGNORE INTO circuit_breaker_state (provider, state, failure_count)
+		VALUES (?, 'closed', 0)`, cb.provider)
+
 	_, err := cb.db.Exec(`
 		UPDATE circuit_breaker_state
 		SET state = ?, failure_count = 0, open_until = NULL

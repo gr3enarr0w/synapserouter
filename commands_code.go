@@ -96,7 +96,11 @@ func cmdCode(args []string) {
 	config.Streaming = true // Enable token streaming for code mode TUI
 	config.MaxAgents = *maxAgents
 	config.DB = ac.DB
-	config.ToolStore = agent.NewToolOutputStore(ac.DB)
+	if ts, err := agent.NewToolOutputStore(ac.DB); err != nil {
+		log.Printf("[Agent] failed to initialize tool store: %v", err)
+	} else {
+		config.ToolStore = ts
+	}
 	config.PlanCache = agent.NewPlanCache(ac.DB)
 	config.VectorMemory = ac.VectorMemory
 	if *system != "" {
