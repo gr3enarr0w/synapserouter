@@ -299,3 +299,88 @@
 - [ ] Timeout triggers escalation
 - [ ] Empty response triggers escalation
 - [ ] Malformed JSON response triggers escalation
+
+## Category 14: LLM Response Handling
+- [ ] LLM returns empty string response
+- [ ] LLM returns only whitespace
+- [ ] LLM returns extremely long response (10K+ tokens)
+- [ ] LLM response contains malformed tool call JSON
+- [ ] LLM response contains tool call for tool that doesn't exist
+- [ ] LLM response contains tool call with missing required args
+- [ ] LLM response is cut off mid-sentence (max tokens reached)
+- [ ] LLM response is cut off mid-tool-call (incomplete JSON)
+- [ ] LLM returns same response twice (loop detection)
+- [ ] LLM returns response with markdown code block containing triple backticks
+- [ ] LLM response streams then stops mid-stream (connection drop)
+- [ ] LLM response contains Unicode that terminal can't render
+- [ ] LLM keeps calling tools without ever responding to user (stall)
+- [ ] LLM calls same tool 10+ times in a row (loop)
+- [ ] LLM response contains ANSI escape sequences
+
+## Category 15: Conversation & Context
+- [ ] Single message conversation (one-shot)
+- [ ] 10-message conversation (short session)
+- [ ] 50-message conversation (medium session)
+- [ ] Conversation exceeds context window — compaction triggers
+- [ ] User references previous message ("like I said earlier")
+- [ ] User contradicts previous instruction ("actually, do the opposite")
+- [ ] User sends same message twice in a row
+- [ ] /clear then reference prior context (should be gone)
+- [ ] Session save on clean exit
+- [ ] Session save on Ctrl+C exit
+- [ ] Session resume loads correct history
+- [ ] Multiple sessions — correct one resumed by ID
+- [ ] Session with tool outputs — recall works after resume
+
+## Category 16: Worktree & Git State
+- [ ] --message creates worktree (v1.08.11 enforcement)
+- [ ] Worktree cleanup after --message completes
+- [ ] Worktree creation in repo with dirty index
+- [ ] Worktree creation in repo with untracked files
+- [ ] Worktree creation in repo with staged changes
+- [ ] Worktree creation in detached HEAD state
+- [ ] Worktree creation when max worktrees exceeded
+- [ ] Worktree creation in repo with submodules
+- [ ] Concurrent --message runs create separate worktrees
+- [ ] Worktree path doesn't conflict with existing branches
+
+## Category 17: Tool Execution
+- [ ] bash tool: simple command (ls)
+- [ ] bash tool: command that takes 30+ seconds
+- [ ] bash tool: command that produces 10MB output
+- [ ] bash tool: command that fails (exit code != 0)
+- [ ] bash tool: command with interactive prompt (y/n)
+- [ ] file_read: file that exists
+- [ ] file_read: file that doesn't exist
+- [ ] file_read: file with no read permission
+- [ ] file_read: very large file (100MB+)
+- [ ] file_read: binary file
+- [ ] file_read: file being written by another process
+- [ ] file_write: new file
+- [ ] file_write: overwrite existing file
+- [ ] file_write: file in directory that doesn't exist
+- [ ] file_write: file with no write permission
+- [ ] file_write: spec file (should be protected)
+- [ ] file_edit: valid search/replace
+- [ ] file_edit: old_string not found in file
+- [ ] file_edit: old_string matches multiple times (ambiguous)
+- [ ] file_edit: replace_all flag
+- [ ] grep: pattern found
+- [ ] grep: pattern not found
+- [ ] grep: invalid regex pattern
+- [ ] grep: search in nonexistent directory
+- [ ] glob: pattern matches files
+- [ ] glob: pattern matches nothing
+- [ ] git: status
+- [ ] git: diff
+- [ ] git: log
+- [ ] git: dangerous command blocked (push --force, reset --hard)
+- [ ] web_search: normal query
+- [ ] web_search: query in confidential mode (should be blocked)
+- [ ] web_search: query with PII (should be redacted)
+- [ ] web_fetch: valid URL
+- [ ] web_fetch: internal/private IP (SSRF blocked)
+- [ ] web_fetch: URL that returns 404
+- [ ] web_fetch: URL in confidential mode (should be blocked)
+- [ ] recall: with stored tool outputs
+- [ ] recall: with empty store
