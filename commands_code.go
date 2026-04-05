@@ -114,6 +114,7 @@ func cmdCode(args []string) {
 	config.EscalationChain = ac.EscalationChain
 	config.PlannerProviders = ac.PlannerProviders
 	config.MergeProvider = ac.MergeProvider
+	config.TierLearner = agent.NewTierLearner(ac.DB)
 	providerNames := make([]string, len(ac.Providers))
 	for i, p := range ac.Providers {
 		providerNames[i] = p.Name()

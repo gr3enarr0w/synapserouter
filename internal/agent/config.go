@@ -77,6 +77,9 @@ type Config struct {
 	// Set from YAML config or env vars. If nil, falls back to top-tier escalation chain.
 	PlannerProviders []string // provider names for parallel planning (e.g., ["gemini", "chatgpt"])
 	MergeProvider    string   // provider name that merges plans (default: last planner)
+
+	// Online tier learning — tracks (intent, tier, outcome) for routing optimization
+	TierLearner *TierLearner
 }
 
 // ModelTier classifies escalation levels by capability cost.

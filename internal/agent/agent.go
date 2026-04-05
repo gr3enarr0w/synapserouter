@@ -588,6 +588,19 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		a.metrics.RecordRequest(time.Since(start), 0, turns, err != nil)
 	}
 
+	// Record tier learning outcome — tracks which tier succeeded/failed for this intent
+	if a.config.TierLearner != nil && a.originalRequest != "" {
+		intent := string(IntentUnknown)
+		if a.intentRouter != nil {
+			intent = string(a.intentRouter.Classify(a.originalRequest))
+		}
+		currentTier := TierCheap
+		if a.providerIdx < len(a.config.EscalationChain) {
+			currentTier = a.config.EscalationChain[a.providerIdx].Tier
+		}
+		a.config.TierLearner.RecordOutcome(intent, currentTier, err == nil)
+	}
+
 	// Write project state file (synroute.md) — the agent's CLAUDE.md equivalent.
 	// Written regardless of success/failure so the next run knows what happened.
 	a.writeSynrouteMD()
