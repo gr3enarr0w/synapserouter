@@ -27,10 +27,9 @@ type Router struct {
 	rateLimiter     *ProviderRateLimiter
 	healthMu        sync.RWMutex
 	healthCache     map[string]*cachedHealth
-	// concurrencySem limits concurrent in-flight LLM requests across all providers
-	// sharing the same API key. Prevents overloading Ollama Cloud's per-key limit.
-	// Default 3, configurable via SYNROUTE_MAX_CONCURRENT, scales with API key count.
-	concurrencySem chan struct{}
+	// TODO(v1.11): Per-provider concurrency semaphores with bounded queues.
+	// Global semaphore was reverted — causes deadlocks with multi-turn agent runs.
+	// See CONCURRENCY_ARCHITECTURE_SUMMARY.md for the v1.11 design.
 }
 
 type cachedHealth struct {
@@ -93,21 +92,6 @@ func NewRouter(
 		db.Exec("UPDATE circuit_breaker_state SET state = 'closed', failure_count = 0 WHERE state = 'open' AND open_until < datetime('now')")
 	}
 
-	// Global concurrency limit — prevents overloading shared API keys.
-	maxConcurrent := 3
-	if v := os.Getenv("SYNROUTE_MAX_CONCURRENT"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			maxConcurrent = n
-		}
-	}
-	if keys := os.Getenv("OLLAMA_API_KEYS"); keys != "" {
-		keyCount := len(strings.Split(keys, ","))
-		if keyCount > 1 {
-			maxConcurrent = maxConcurrent * keyCount
-		}
-	}
-	log.Printf("[Router] concurrency limit: %d concurrent requests", maxConcurrent)
-
 	return &Router{
 		providers:       providerList,
 		usageTracker:    tracker,
@@ -116,7 +100,6 @@ func NewRouter(
 		circuitBreakers: breakers,
 		rateLimiter:     NewProviderRateLimiter(db),
 		healthCache:     make(map[string]*cachedHealth),
-		concurrencySem:  make(chan struct{}, maxConcurrent),
 	}
 }
 
@@ -801,15 +784,6 @@ func (r *Router) tryProvider(
 	// Rate limit: wait for token before calling provider
 	if err := r.rateLimiter.Wait(ctx, provider.Name()); err != nil {
 		return providers.ChatResponse{}, fmt.Errorf("rate limiter cancelled for %s: %w", provider.Name(), err)
-	}
-
-	// Global concurrency: acquire slot before calling any provider.
-	// Prevents overloading shared API keys (e.g., Ollama Cloud 3-concurrent limit).
-	select {
-	case r.concurrencySem <- struct{}{}:
-		defer func() { <-r.concurrencySem }()
-	case <-ctx.Done():
-		return providers.ChatResponse{}, fmt.Errorf("concurrency wait cancelled for %s: %w", provider.Name(), ctx.Err())
 	}
 
 	resp, err := provider.ChatCompletion(ctx, req, sessionID)
