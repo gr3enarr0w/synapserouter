@@ -73,3 +73,23 @@
 
 ## Interactive Tests (require manual/VHS)
 Categories 2 (Keyboard), 3 (Clipboard), 4 (Terminal), 5 (Slash Commands), 8 (Network), 10 (State), 12 (Multi-Terminal), 14 (LLM Response), 15 (Context) — ~180 tests require interactive testing with VHS tapes.
+
+## Additional Batch Results
+
+| Test | Exit | Result | Notes |
+|------|------|--------|-------|
+| CAT10-01 Missing log dir | 1 | TIMEOUT | Frontier model latency |
+| CAT14-01 Short response | 1 | TIMEOUT | Same |
+| CAT15-01 One-shot | 1 | TIMEOUT | Same |
+| CAT7-08 Run from /tmp | 1 | TIMEOUT | Same |
+| CAT7-09 Empty message | 0 | PASS | |
+| CAT7-10 --confidential | 1 | TIMEOUT | Same |
+| CAT7-11 --dry-run | 0 | PASS | |
+
+## v1.11.1 Bugs to Fix
+
+1. **Intent correction self-poisoning** — 298 corrections with 230 duplicates + contradictory entries. Greetings like "say hi" learned as "generate" instead of "chat", causing unnecessary tool calls and timeouts
+2. **NO_COLOR mode timeout** — May be intent routing (all tools enabled for greetings) or rendering issue
+3. **Screen reader mode exit 1** — SYNROUTE_SCREEN_READER=1 exits with error
+4. **Frontier model latency for --message** — Simple messages take 10-20s on frontier models. Need planner-to-worker handoff: planner detects "this is chat, respond directly" vs "this needs tools, dispatch to workers"
+5. **Intent correction deduplication** — No dedup in saveIntentCorrection(), grows unboundedly
