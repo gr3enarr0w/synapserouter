@@ -680,6 +680,11 @@ func (a *Agent) RunPhase(ctx context.Context, phaseName string, userMessage stri
 func (a *Agent) loop(ctx context.Context) (string, error) {
 	taskMaxTurns := 0 // computed on first check, cached for the session
 	for turn := 0; a.config.MaxTurns <= 0 || turn < a.config.MaxTurns; turn++ {
+		// Context check — exit immediately if timeout/cancellation fired
+		if ctx != nil && ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+
 		// Budget check
 		if a.budget != nil {
 			a.budget.RecordTurn()

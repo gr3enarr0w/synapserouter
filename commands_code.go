@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -324,8 +325,22 @@ func cmdCode(args []string) {
 				message = &composed
 			}
 		}
-		response, err := ag.Run(ctx, *message)
+		// Message mode timeout — prevents agent from hanging indefinitely on
+		// tool-calling loops. Default 120s, configurable via SYNROUTE_MESSAGE_TIMEOUT.
+		msgTimeout := 120 * time.Second
+		if v := os.Getenv("SYNROUTE_MESSAGE_TIMEOUT"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				msgTimeout = time.Duration(n) * time.Second
+			}
+		}
+		msgCtx, msgCancel := context.WithTimeout(ctx, msgTimeout)
+		defer msgCancel()
+
+		response, err := ag.Run(msgCtx, *message)
 		if err != nil {
+			if msgCtx.Err() == context.DeadlineExceeded {
+				fmt.Fprintf(os.Stderr, "Request timed out after %s\n", msgTimeout)
+			}
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

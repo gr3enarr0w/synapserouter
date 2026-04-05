@@ -399,3 +399,26 @@
 - [ ] Context cancellation unblocks waiting requests
 - [ ] Sub-agents share parent's concurrency limit
 - [ ] synroute serve handles multiple HTTP clients within limit
+
+## Category 18: Concurrency & API Limits (CRITICAL)
+- [ ] Single --message request completes (baseline)
+- [ ] 2 concurrent --message requests both complete
+- [ ] 3 concurrent --message requests all complete (at limit)
+- [ ] 4+ concurrent --message requests queue (semaphore blocks 4th)
+- [ ] SYNROUTE_MAX_CONCURRENT=1 limits to 1 at a time
+- [ ] Multiple API keys scales concurrent limit
+- [ ] Semaphore releases on error
+- [ ] Semaphore releases on timeout
+- [ ] Context cancellation unblocks waiting requests
+
+## Category 19: Timeouts & Hang Prevention
+- [ ] --message mode has default 120s timeout
+- [ ] SYNROUTE_MESSAGE_TIMEOUT=15 overrides default
+- [ ] Timeout prints clear error message
+- [ ] Timeout exits cleanly (exit 0, not crash)
+- [ ] Normal fast messages complete well within timeout
+- [ ] Agent loop checks context at top of each turn
+- [ ] Tool calls respect context cancellation
+- [ ] LLM calls respect context cancellation
+- [ ] @nonexistent file doesn't hang (times out)
+- [ ] Slow model response eventually times out
