@@ -243,10 +243,16 @@ func cmdCode(args []string) {
 	// Detect language
 	detectedLang := config.ProjectLanguage
 
-	// Create code renderer
-	output := os.Stdout
+	// Create code renderer:
+	// - Interactive: stdout (user sees spinner, tool output)
+	// - --message: stderr (stdout clean for response)
+	// - --json-events: discard (JSON events on stderr, no visual noise)
+	output := io.Writer(os.Stdout)
 	if *message != "" {
 		output = os.Stderr
+	}
+	if *jsonEvents {
+		output = io.Discard
 	}
 	codeRenderer := agent.NewCodeRenderer(output, width, height, projectName, *model, detectedLang)
 	codeRenderer.SetVersion(version)
