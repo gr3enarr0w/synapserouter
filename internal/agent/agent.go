@@ -1417,7 +1417,7 @@ func (a *Agent) buildMessages() []providers.Message {
 	if a.cachedSystemPrompt == "" || a.cachedPromptLevel != a.providerIdx {
 		sysPrompt := a.config.SystemPrompt
 		if sysPrompt == "" {
-			sysPrompt = defaultSystemPrompt(a.config.WorkDir, a.providerIdx, a.config.ProjectLanguage)
+			sysPrompt = defaultSystemPrompt(a.config.WorkDir, a.providerIdx, a.config.ProjectLanguage, a.registry)
 		}
 
 		// Inject project-level instructions FIRST (CLAUDE.md / AGENTS.md from working directory)
@@ -1708,19 +1708,51 @@ func (a *Agent) maxPhaseTurns() int {
 // and let later pipeline phases still run.
 const maxPipelineCycles = 3
 
-// toolBlock is the canonical tool reference shared across all prompt levels.
-const toolBlock = `AVAILABLE TOOLS (use exact names):
-- bash: Run shell commands. Args: command (string).
-- file_read: Read file. Args: path (string), offset (int, optional), limit (int, optional).
-- file_write: Create/overwrite file. Args: path (string), content (string).
-- file_edit: Edit text in file. Args: path (string), old_text (string), new_text (string).
-- grep: Search files in the project. Args: pattern (string), path (string, optional), include (string, optional).
-- glob: Find files by pattern. Args: pattern (string), path (string, optional).
-- git: Git ops (commit and push require user approval). Args: subcommand (string), args (string).
-- web_search: Search the web for current information. Args: query (string), max_results (int, optional).
-- web_fetch: Fetch and extract content from a URL. Args: url (string).
-- notebook_edit: Edit a Jupyter notebook cell by index. Args: path (string), cell_index (integer), source (string), cell_type (string, optional).
-
+// generateToolBlock builds the tool documentation from the registry dynamically.
+// This ensures all registered tools (including pipeline tools) are documented.
+func generateToolBlock(reg *tools.Registry) string {
+	var sb strings.Builder
+	sb.WriteString("AVAILABLE TOOLS (use exact names):\n")
+	
+	defs := reg.OpenAIToolDefinitions()
+	for _, def := range defs {
+		fn, ok := def["function"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _ := fn["name"].(string)
+		desc, _ := fn["description"].(string)
+		
+		// Extract parameter names from schema
+		params, _ := fn["parameters"].(map[string]interface{})
+		props, _ := params["properties"].(map[string]interface{})
+		required, _ := params["required"].([]interface{})
+		
+		var args []string
+		for paramName, paramDef := range props {
+			_, ok := paramDef.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			argStr := paramName
+			// Check if required
+			isRequired := false
+			for _, req := range required {
+				if req == paramName {
+					isRequired = true
+					break
+				}
+			}
+			if !isRequired {
+				argStr += " (optional)"
+			}
+			args = append(args, argStr)
+		}
+		
+		sb.WriteString(fmt.Sprintf("- %s: %s. Args: %s.\n", name, desc, strings.Join(args, ", ")))
+	}
+	
+	sb.WriteString(`
 TOOL ROUTING:
 - When the user says "search", "look up", "find online", or asks about current events: use web_search.
 - When the user gives a URL or says "fetch", "read this page": use web_fetch.
@@ -1735,9 +1767,13 @@ EXECUTION RULES:
 - Do NOT run full training, data processing, or long computations via bash.
 - Do NOT use "python -c" or "node -e" for inline code — write it to a file with file_write first.
 - Build the PROGRAM. Run it once briefly to verify it starts. Then deliver.
-- If a command takes more than 10 seconds, it is too long — the user will run it themselves.`
+- If a command takes more than 10 seconds, it is too long — the user will run it themselves.
 
-func defaultSystemPrompt(workDir string, providerLevel int, projectLanguage string) string {
+Do NOT output plans, descriptions, or JSON without tool calls when the user asks for an action.`)
+	return sb.String()
+}
+
+func defaultSystemPrompt(workDir string, providerLevel int, projectLanguage string, reg *tools.Registry) string {
 	// Language directive — prevents wrong-language file creation
 	langDirective := ""
 	if projectLanguage != "" {
@@ -1791,7 +1827,7 @@ CONVERSATIONAL MESSAGES:
 - Only use tools when the user asks you to perform an action (create files, run commands, search code, etc.).
 - Do NOT write code files as demonstrations for knowledge questions — explain in text instead.
 
-Do NOT output plans, descriptions, or JSON without tool calls when the user asks for an action.`, workDir, langDirective, toolBlock)
+Do NOT output plans, descriptions, or JSON without tool calls when the user asks for an action.`, workDir, langDirective, generateToolBlock(tools.DefaultRegistry()))
 	}
 
 	// Level 1+ (larger models ~120B+): full prompt with methodology
@@ -1875,7 +1911,7 @@ PRODUCTION QUALITY:
 - Show math for calculated values. Never approximate when exact values are available.
 - Document assumptions. Flag ambiguous decisions for review.
 
-%s`, workDir, langDirective, workDir, toolBlock)
+%s`, workDir, langDirective, workDir, generateToolBlock(reg))
 }
 
 // forceToolsMessage returns a phase-appropriate message demanding tool calls.
