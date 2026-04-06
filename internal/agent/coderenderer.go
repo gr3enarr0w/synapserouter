@@ -365,14 +365,45 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		if len(cr.recentTools) > cr.maxTools {
 			cr.recentTools = cr.recentTools[1:]
 		}
-		if cr.verbosity >= VerbosityNormal {
-			summary := str(e.Data, "args_summary")
-			statusIcon := "✓"
-			statusColor := "\033[32m"
-			if isErr {
-				statusIcon = "✗"
-				statusColor = "\033[31m"
+
+		statusIcon := "✓"
+		statusColor := "\033[32m"
+		if isErr {
+			statusIcon = "✗"
+			statusColor = "\033[31m"
+		}
+
+		// Compact mode (level 0): single-line summary based on tool type
+		if cr.verbosity == VerbosityCompact {
+			var summary string
+			switch name {
+			case "file_read":
+				lines := intVal(e.Data, "lines_read")
+				path := str(e.Data, "path")
+				summary = fmt.Sprintf("%s (%d lines)", path, lines)
+			case "bash":
+				cmd := str(e.Data, "command")
+				summary = fmt.Sprintf("%s", cmd)
+			case "grep":
+				pattern := str(e.Data, "pattern")
+				matches := intVal(e.Data, "matches")
+				summary = fmt.Sprintf("%s (%d matches)", pattern, matches)
+			case "glob":
+				pattern := str(e.Data, "pattern")
+				files := intVal(e.Data, "files_found")
+				summary = fmt.Sprintf("%s (%d files)", pattern, files)
+			default:
+				summary = str(e.Data, "args_summary")
 			}
+			formatted := fmt.Sprintf("  %s %s %s %s",
+				cr.color("\033[36m", "["+name+"]"),
+				summary,
+				cr.color("\033[2m", "("+duration+")"),
+				cr.color(statusColor, statusIcon))
+			cr.writeContent(formatted)
+		} else if cr.verbosity >= VerbosityNormal {
+			// Normal/Verbose mode: show full summary as before
+			summary := str(e.Data, "args_summary")
 			formatted := fmt.Sprintf("  %s %s %s %s",
 				cr.color("\033[36m", "["+name+"]"),
 				summary,

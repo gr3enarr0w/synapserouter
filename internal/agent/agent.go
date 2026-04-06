@@ -1244,6 +1244,45 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			"duration":  toolDuration.String(),
 			"is_error":  isError,
 		}
+
+		// Add tool-specific data for compact verbosity display
+		switch name {
+		case "file_read":
+			if path, ok := args["path"].(string); ok {
+				toolEventData["path"] = path
+			}
+			if limit, ok := args["limit"].(float64); ok && limit > 0 {
+				toolEventData["lines_read"] = int(limit)
+			} else {
+				// Count actual lines in result
+				toolEventData["lines_read"] = strings.Count(resultContent, "\n") + 1
+			}
+		case "bash":
+			if cmd, ok := args["command"].(string); ok {
+				toolEventData["command"] = cmd
+			}
+		case "grep":
+			if pattern, ok := args["pattern"].(string); ok {
+				toolEventData["pattern"] = pattern
+			}
+			// Count matches from output (each line is a match)
+			if resultContent != "" && !isError {
+				toolEventData["matches"] = strings.Count(strings.TrimSpace(resultContent), "\n") + 1
+			} else {
+				toolEventData["matches"] = 0
+			}
+		case "glob":
+			if pattern, ok := args["pattern"].(string); ok {
+				toolEventData["pattern"] = pattern
+			}
+			// Count files found from output
+			if resultContent != "" && !isError {
+				toolEventData["files_found"] = strings.Count(strings.TrimSpace(resultContent), "\n") + 1
+			} else {
+				toolEventData["files_found"] = 0
+			}
+		}
+
 		if isError || a.bus != nil {
 			lines := strings.Count(resultContent, "\n") + 1
 			toolEventData["output_lines"] = lines
