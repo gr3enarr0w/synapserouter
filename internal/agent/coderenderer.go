@@ -468,6 +468,23 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 			cr.writeContent(cr.color("\033[2m", fmt.Sprintf("  budget turns=%d tokens=%d elapsed=%s",
 				intVal(e.Data, "turns"), intVal(e.Data, "tokens"), str(e.Data, "elapsed"))))
 		}
+
+	case EventTaskComplete:
+		filesCreated, _ := e.Data["files_created"].([]string)
+		filesModified, _ := e.Data["files_modified"].([]string)
+		cmdsTotal := intVal(e.Data, "commands_total")
+		cmdsPassed := intVal(e.Data, "commands_passed")
+		cmdsFailed := intVal(e.Data, "commands_failed")
+
+		cr.writeContent(cr.color("\033[36m", "── Done ──────────────────────────"))
+		for _, f := range filesCreated {
+			cr.writeContent(cr.color("\033[32m", fmt.Sprintf("  Created: %s", f)))
+		}
+		for _, f := range filesModified {
+			cr.writeContent(cr.color("\033[33m", fmt.Sprintf("  Modified: %s", f)))
+		}
+		cr.writeContent(cr.color("\033[36m", fmt.Sprintf("  Commands: %d (%d passed, %d failed)", cmdsTotal, cmdsPassed, cmdsFailed)))
+		cr.writeContent(cr.color("\033[36m", "──────────────────────────────────"))
 	}
 }
 

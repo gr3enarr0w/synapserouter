@@ -639,6 +639,46 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		a.config.TierLearner.RecordOutcome(intent, currentTier, err == nil)
 	}
 
+	// Collect task completion summary
+	filesCreated := []string{}
+	filesModified := []string{}
+	bashCount := 0
+	bashPassed := 0
+	bashFailed := 0
+
+	for _, tc := range a.toolHistory {
+		switch tc.Name {
+		case "file_write":
+			if path, ok := tc.Args["path"].(string); ok {
+				filesCreated = append(filesCreated, path)
+			}
+		case "file_edit":
+			if path, ok := tc.Args["path"].(string); ok {
+				filesModified = append(filesModified, path)
+			}
+		case "notebook_edit":
+			if path, ok := tc.Args["path"].(string); ok {
+				filesModified = append(filesModified, path)
+			}
+		case "bash":
+			bashCount++
+			if tc.Output != "" && !strings.Contains(tc.Output, "exit code") {
+				bashPassed++
+			} else if tc.Output != "" && strings.Contains(tc.Output, "exit code") {
+				bashFailed++
+			}
+		}
+	}
+
+	// Emit task completion event
+	a.emit(EventTaskComplete, "", map[string]any{
+		"files_created":  filesCreated,
+		"files_modified": filesModified,
+		"commands_total": bashCount,
+		"commands_passed": bashPassed,
+		"commands_failed": bashFailed,
+	})
+
 	// Write project state file (synroute.md) — the agent's CLAUDE.md equivalent.
 	// Written regardless of success/failure so the next run knows what happened.
 	a.writeSynrouteMD()
