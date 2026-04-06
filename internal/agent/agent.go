@@ -1719,6 +1719,7 @@ const toolBlock = `AVAILABLE TOOLS (use exact names):
 - git: Git ops (commit and push require user approval). Args: subcommand (string), args (string).
 - web_search: Search the web for current information. Args: query (string), max_results (int, optional).
 - web_fetch: Fetch and extract content from a URL. Args: url (string).
+- notebook_edit: Edit a Jupyter notebook cell by index. Args: path (string), cell_index (integer), source (string), cell_type (string, optional).
 
 TOOL ROUTING:
 - When the user says "search", "look up", "find online", or asks about current events: use web_search.
