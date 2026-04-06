@@ -1754,6 +1754,14 @@ SPEC COMPLIANCE:
 BASH: Each call is a FRESH shell. Env vars do NOT persist. Use: source .env && command
 Or inline: VAR=x command. Do NOT export in one call and use in the next.
 
+TOOL PREFERENCE:
+- To search file contents: use the grep tool, NOT bash grep/rg.
+- To list/find files: use the glob tool, NOT bash ls/find.
+- To run git operations: use the git tool, NOT bash git.
+- To read files: use file_read, NOT bash cat/head/tail.
+- To edit files: use file_edit, NOT bash sed/awk.
+- Use bash ONLY for commands that have no dedicated tool (build, install, run scripts).
+
 RULES:
 - To fix existing files: file_read THEN file_edit. NEVER create duplicate files.
 - After writing tests: ALWAYS run them. If they fail, fix and re-run until all pass.
@@ -1794,6 +1802,14 @@ TOOL BUILDER (DEFAULT MODE):
 - Without explicit instruction to run: build it, verify it starts briefly, deliver it.
 - Use bash/curl for research (testing APIs, inspecting responses) and
   quick verification (running the built tool once to check it works).
+
+TOOL PREFERENCE:
+- To search file contents: use the grep tool, NOT bash grep/rg.
+- To list/find files: use the glob tool, NOT bash ls/find.
+- To run git operations: use the git tool, NOT bash git.
+- To read files: use file_read, NOT bash cat/head/tail.
+- To edit files: use file_edit, NOT bash sed/awk.
+- Use bash ONLY for commands that have no dedicated tool (build, install, run scripts).
 
 RESEARCH BEFORE CODING:
 - When working with an unfamiliar API, library, or format: read docs, test with curl,
