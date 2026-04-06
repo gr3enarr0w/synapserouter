@@ -754,27 +754,34 @@ func cmdChat(args []string) {
 	alreadyInWorktree := os.Getenv("SYNROUTE_IN_WORKTREE") == "1"
 	useWorktreeForMessage := (*message != "" || *useWorktree) && !alreadyInWorktree
 	if useWorktreeForMessage {
-		wtMgr, err = worktree.NewManager(worktree.DefaultConfig())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating worktree manager: %v\n", err)
-			os.Exit(1)
-		}
-
-		wt, err = wtMgr.Create(cwd, "chat")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating worktree: %v\n", err)
-			if *message != "" {
-				fmt.Fprintf(os.Stderr, "ABORTING: Cannot run --message mode without worktree isolation\n")
+		// Check if this is a git repository before attempting worktree creation
+		if err := exec.Command("git", "rev-parse", "--git-dir").Run(); err != nil {
+			// Not a git repository - skip worktree creation silently
+			// Worktree isolation only applies to git repositories
+			useWorktreeForMessage = false
+		} else {
+			wtMgr, err = worktree.NewManager(worktree.DefaultConfig())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating worktree manager: %v\n", err)
+				os.Exit(1)
 			}
-			os.Exit(1)
+
+			wt, err = wtMgr.Create(cwd, "chat")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating worktree: %v\n", err)
+				if *message != "" {
+					fmt.Fprintf(os.Stderr, "ABORTING: Cannot run --message mode without worktree isolation\n")
+				}
+				os.Exit(1)
+			}
+
+			config.WorkDir = wt.Path
+			fmt.Fprintf(os.Stderr, "Working in isolated worktree: %s\n", wt.Path)
+
+			// Start cleanup goroutine
+			stopCleaner := worktree.StartCleaner(ctx, wtMgr, worktree.DefaultConfig().CleanupInterval)
+			defer stopCleaner()
 		}
-
-		config.WorkDir = wt.Path
-		fmt.Fprintf(os.Stderr, "Working in isolated worktree: %s\n", wt.Path)
-
-		// Start cleanup goroutine
-		stopCleaner := worktree.StartCleaner(ctx, wtMgr, worktree.DefaultConfig().CleanupInterval)
-		defer stopCleaner()
 	}
 
 	// If --spec-file provided, read file and compose message.
