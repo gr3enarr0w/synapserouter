@@ -1232,7 +1232,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			_, alreadyApproved := a.approvedCategories[category]
 			if !alreadyApproved {
 				// Check if in --message mode (non-interactive, auto-approve with notice)
-				isMessageMode := a.config.SystemPrompt != ""
+				isMessageMode := a.config.NonInteractive
 				if isMessageMode {
 					log.Printf("[Agent] permission: auto-approved %s (category: %s) in --message mode", name, category)
 					a.approvedCategories[category] = true
