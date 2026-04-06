@@ -223,40 +223,10 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		// Create fresh context for the request
 		reqCtx := newReqCtx()
 
-		// Start goroutine to read from /dev/tty during agent execution
-		// This allows users to type a message that will be queued for the next prompt
-		ttyDone := make(chan struct{})
-		go func() {
-			defer close(ttyDone)
-			tty, err := os.Open("/dev/tty")
-			if err != nil {
-				return
-			}
-			defer tty.Close()
-
-			buf := make([]byte, 1024)
-			var msgBuf []byte
-			for {
-				n, err := tty.Read(buf)
-				if err != nil {
-					return
-				}
-				for i := 0; i < n; i++ {
-					b := buf[i]
-					if b == '\n' || b == '\r' {
-						if len(msgBuf) > 0 {
-							cr.pendingMessage = string(msgBuf)
-							cr.renderer.mu.Lock()
-							cr.renderer.writeContent(cr.renderer.color("\033[2m", "  [message queued]"))
-							cr.renderer.writeContent("")
-							cr.renderer.mu.Unlock()
-						}
-						return
-					}
-					msgBuf = append(msgBuf, b)
-				}
-			}
-		}()
+		// Message queue disabled — conflicts with permission prompts which also
+		// read from /dev/tty. Both race for input, causing "y" to go to queue
+		// instead of permission handler. Will be re-enabled in v1.13 with proper
+		// input multiplexing. See #493.
 
 		// Run the agent
 		cr.renderer.mu.Lock()
@@ -264,9 +234,6 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		cr.renderer.mu.Unlock()
 
 		response, err := cr.agent.Run(reqCtx, input)
-
-		// Wait for tty reader to finish (user pressed Enter or EOF)
-		<-ttyDone
 		markDone()
 		if err != nil {
 			if reqCtx.Err() != nil {
