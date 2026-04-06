@@ -258,6 +258,41 @@ func initializeProviders(profile string) []providers.Provider {
 				log.Printf("✓ %s provider initialized (model=%s, url=%s)", cfg.Name, cfg.DefaultModel, cfg.BaseURL)
 			}
 		}
+
+		// YAML is source of truth: auto-create Ollama Cloud providers for YAML models
+		// not already covered by OLLAMA_CHAIN. This ensures the YAML config works
+		// without requiring models to also be in the legacy OLLAMA_CHAIN env var.
+		if tc, err := LoadTierConfig(); err == nil && tc != nil {
+			apiKeys := ParseOllamaAPIKeys()
+			ollamaBaseURL := os.Getenv("OLLAMA_BASE_URL")
+			if len(apiKeys) == 0 && ollamaBaseURL != "" {
+				apiKeys = []string{""} // local Ollama, no key needed
+			}
+			if len(apiKeys) > 0 && ollamaBaseURL != "" {
+				allYAMLModels := tc.AllModelNames()
+				for _, modelName := range allYAMLModels {
+					if !strings.HasSuffix(strings.ToLower(modelName), "-cloud") && !strings.HasSuffix(strings.ToLower(modelName), ":cloud") {
+						continue // only auto-create for Ollama Cloud models
+					}
+					// Check if any existing provider already handles this model
+					found := false
+					for _, p := range providerList {
+						if mn, ok := p.(ModelNamer); ok {
+							if strings.EqualFold(mn.DefaultModel(), modelName) {
+								found = true
+								break
+							}
+						}
+					}
+					if !found {
+						name := "yaml-" + strings.ReplaceAll(strings.ReplaceAll(modelName, ":", "-"), "/", "-")
+						p := providers.NewOllamaCloudProvider(ollamaBaseURL, apiKeys[0], modelName, name)
+						providerList = append(providerList, p)
+						log.Printf("✓ %s provider auto-created from YAML config (model=%s)", name, modelName)
+					}
+				}
+			}
+		}
 	}
 
 	return providerList

@@ -148,6 +148,34 @@ func (tc *TierConfig) IsNewFormat() bool {
 	return tc != nil && len(tc.Providers) > 0
 }
 
+// AllModelNames returns all unique model names from the YAML config (both legacy and new format).
+func (tc *TierConfig) AllModelNames() []string {
+	if tc == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var models []string
+	// Legacy format
+	for _, tierModels := range tc.Tiers {
+		for _, m := range tierModels {
+			if !seen[m] {
+				seen[m] = true
+				models = append(models, m)
+			}
+		}
+	}
+	// New format
+	for _, wt := range tc.WorkerTiers {
+		for _, m := range wt.Providers {
+			if !seen[m] {
+				seen[m] = true
+				models = append(models, m)
+			}
+		}
+	}
+	return models
+}
+
 // GetProvider returns a provider config by name, or nil if not found.
 func (tc *TierConfig) GetProvider(name string) *ProviderConfig {
 	if tc == nil {
