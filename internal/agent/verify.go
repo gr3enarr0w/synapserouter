@@ -43,6 +43,16 @@ func (a *Agent) RunVerificationGate(phaseName string) (bool, []VerifyResult) {
 		}
 	}
 
+	// Layer 0: Auto-format Go files (goimports) before build check.
+	// Fixes missing imports that would cause compilation failures.
+	if env != nil && env.Language == "go" && a.wroteCodeFiles {
+		formatCmd := "goimports -w $(find . -name '*.go' -newer .synroute/synroute.db 2>/dev/null | head -20) 2>/dev/null; true"
+		r := a.runVerifyCommand("format/goimports", formatCmd)
+		if r.ExitCode == 0 {
+			log.Printf("[Verify] goimports: formatted recent .go files")
+		}
+	}
+
 	// Layer 1: Build check
 	if shouldRunBuild(phaseName) && env != nil {
 		if buildCmd := environment.BuildCommand(env); buildCmd != "" {
