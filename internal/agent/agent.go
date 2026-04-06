@@ -2109,6 +2109,7 @@ PRODUCTION QUALITY:
 - Show math for calculated values. Never approximate when exact values are available.
 - Document assumptions. Flag ambiguous decisions for review.
 
+%s
 %s`, workDir, langDirective, formatContext, workDir, generateToolBlock(reg))
 }
 
