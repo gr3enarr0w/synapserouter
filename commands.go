@@ -754,27 +754,34 @@ func cmdChat(args []string) {
 	alreadyInWorktree := os.Getenv("SYNROUTE_IN_WORKTREE") == "1"
 	useWorktreeForMessage := (*message != "" || *useWorktree) && !alreadyInWorktree
 	if useWorktreeForMessage {
-		wtMgr, err = worktree.NewManager(worktree.DefaultConfig())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating worktree manager: %v\n", err)
-			os.Exit(1)
-		}
-
-		wt, err = wtMgr.Create(cwd, "chat")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating worktree: %v\n", err)
-			if *message != "" {
-				fmt.Fprintf(os.Stderr, "ABORTING: Cannot run --message mode without worktree isolation\n")
+		// Check if this is a git repository before attempting worktree creation
+		if err := exec.Command("git", "rev-parse", "--git-dir").Run(); err != nil {
+			// Not a git repository - skip worktree creation silently
+			// Worktree isolation only applies to git repositories
+			useWorktreeForMessage = false
+		} else {
+			wtMgr, err = worktree.NewManager(worktree.DefaultConfig())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating worktree manager: %v\n", err)
+				os.Exit(1)
 			}
-			os.Exit(1)
+
+			wt, err = wtMgr.Create(cwd, "chat")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating worktree: %v\n", err)
+				if *message != "" {
+					fmt.Fprintf(os.Stderr, "ABORTING: Cannot run --message mode without worktree isolation\n")
+				}
+				os.Exit(1)
+			}
+
+			config.WorkDir = wt.Path
+			fmt.Fprintf(os.Stderr, "Working in isolated worktree: %s\n", wt.Path)
+
+			// Start cleanup goroutine
+			stopCleaner := worktree.StartCleaner(ctx, wtMgr, worktree.DefaultConfig().CleanupInterval)
+			defer stopCleaner()
 		}
-
-		config.WorkDir = wt.Path
-		fmt.Fprintf(os.Stderr, "Working in isolated worktree: %s\n", wt.Path)
-
-		// Start cleanup goroutine
-		stopCleaner := worktree.StartCleaner(ctx, wtMgr, worktree.DefaultConfig().CleanupInterval)
-		defer stopCleaner()
 	}
 
 	// If --spec-file provided, read file and compose message.
@@ -953,12 +960,9 @@ func cmdChat(args []string) {
 	var ag *agent.Agent
 
 	// Session resume: restore from database if requested
-	userID := config.UserID
-	if userID == "" {
-		userID = "local"
-	}
+	// Use work_dir as session scope to support non-git directories
 	if config.SessionID != "" && config.DB != nil {
-		state, err := agent.LoadState(config.DB, config.SessionID, userID)
+		state, err := agent.LoadState(config.DB, config.SessionID, config.UserID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading session: %v\n", err)
 			os.Exit(1)
@@ -966,7 +970,7 @@ func cmdChat(args []string) {
 		ag = agent.RestoreAgent(ac.ProxyRouter, registry, renderer, state)
 		fmt.Fprintf(os.Stderr, "Resumed session: %s (%d messages)\n", state.SessionID, len(state.Messages))
 	} else if config.Resume && config.DB != nil {
-		state, err := agent.LoadLatestState(config.DB, userID)
+		state, err := agent.LoadLatestState(config.DB, config.WorkDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "No session to resume: %v\n", err)
 			ag = agent.New(ac.ProxyRouter, registry, renderer, config)

@@ -38,10 +38,44 @@ func main() {
 		}
 
 		response := "Hello! I'm a mock provider for testing."
-		if strings.Contains(lastMsg, "tool") || strings.Contains(lastMsg, "bash") ||
-			strings.Contains(lastMsg, "grep") || strings.Contains(lastMsg, "glob") ||
-			strings.Contains(lastMsg, "file") || strings.Contains(lastMsg, "git") {
-			response = "I've completed the requested operation. The task is done."
+		toolCall := ""
+		toolName := ""
+		toolArgs := ""
+
+		// Return actual tool calls for tool-related prompts
+		if strings.Contains(lastMsg, "bash") || strings.Contains(lastMsg, "ls") || strings.Contains(lastMsg, "run ") {
+			toolName = "bash"
+			toolArgs = `{"command": "echo mock"}`
+		} else if strings.Contains(lastMsg, "grep") || strings.Contains(lastMsg, "search for") {
+			toolName = "grep"
+			toolArgs = `{"pattern": "func main", "path": "."}`
+		} else if strings.Contains(lastMsg, "glob") || strings.Contains(lastMsg, "find all") {
+			toolName = "glob"
+			toolArgs = `{"pattern": "**/*.go"}`
+		} else if strings.Contains(lastMsg, "file_read") || strings.Contains(lastMsg, "read ") {
+			toolName = "file_read"
+			toolArgs = `{"path": "go.mod"}`
+		} else if strings.Contains(lastMsg, "git") {
+			toolName = "git"
+			toolArgs = `{"subcommand": "status"}`
+		}
+
+		if toolName != "" {
+			toolCall = fmt.Sprintf(`[{"id":"call-mock-1","type":"function","function":{"name":"%s","arguments":"%s"}}]`,
+				toolName, strings.ReplaceAll(toolArgs, `"`, `\"`))
+			response = ""
+		}
+
+		// Check if this is a follow-up after tool execution (tool role in messages)
+		hasToolResult := false
+		for _, m := range req.Messages {
+			if m.Role == "tool" {
+				hasToolResult = true
+			}
+		}
+		if hasToolResult {
+			toolCall = ""
+			response = "Done. The operation completed successfully."
 		}
 
 		if req.Stream {
@@ -67,6 +101,11 @@ func main() {
 			fmt.Fprintf(w, "data: [DONE]\n\n")
 			w.(http.Flusher).Flush()
 		} else {
+			msg := map[string]interface{}{"role": "assistant", "content": response}
+			if toolCall != "" {
+				msg["tool_calls"] = json.RawMessage(toolCall)
+				msg["content"] = nil
+			}
 			resp := map[string]interface{}{
 				"id":      "mock-1",
 				"object":  "chat.completion",
@@ -74,8 +113,8 @@ func main() {
 				"model":   "mock-model",
 				"choices": []map[string]interface{}{
 					{
-						"index":   0,
-						"message": map[string]string{"role": "assistant", "content": response},
+						"index":         0,
+						"message":       msg,
 						"finish_reason": "stop",
 					},
 				},

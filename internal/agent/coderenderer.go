@@ -329,7 +329,10 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		cr.StartThinking()
 
 	case EventLLMComplete:
-		// Keep cr.model set — status bar shows last used model
+		// Update model name from LLM response for accurate status bar display
+		if model := str(e.Data, "model"); model != "" {
+			cr.model = model
+		}
 		cr.StopThinking()
 
 		if cr.verbosity >= VerbosityVerbose {
@@ -343,6 +346,13 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 			name := str(e.Data, "tool_name")
 			summary := str(e.Data, "args_summary")
 			cr.writeContent(fmt.Sprintf("  %s %s", cr.color("\033[36m", "["+name+"]"), summary))
+		}
+
+	case EventPermissionRequest:
+		if cr.verbosity >= VerbosityNormal {
+			name := str(e.Data, "tool_name")
+			category := str(e.Data, "category")
+			cr.writeContent(cr.color("\033[33m", fmt.Sprintf("  [permission request] %s (category: %s)", name, category)))
 		}
 
 	case EventToolComplete:
@@ -362,14 +372,45 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		if len(cr.recentTools) > cr.maxTools {
 			cr.recentTools = cr.recentTools[1:]
 		}
-		if cr.verbosity >= VerbosityNormal {
-			summary := str(e.Data, "args_summary")
-			statusIcon := "✓"
-			statusColor := "\033[32m"
-			if isErr {
-				statusIcon = "✗"
-				statusColor = "\033[31m"
+
+		statusIcon := "✓"
+		statusColor := "\033[32m"
+		if isErr {
+			statusIcon = "✗"
+			statusColor = "\033[31m"
+		}
+
+		// Compact mode (level 0): single-line summary based on tool type
+		if cr.verbosity == VerbosityCompact {
+			var summary string
+			switch name {
+			case "file_read":
+				lines := intVal(e.Data, "lines_read")
+				path := str(e.Data, "path")
+				summary = fmt.Sprintf("%s (%d lines)", path, lines)
+			case "bash":
+				cmd := str(e.Data, "command")
+				summary = fmt.Sprintf("%s", cmd)
+			case "grep":
+				pattern := str(e.Data, "pattern")
+				matches := intVal(e.Data, "matches")
+				summary = fmt.Sprintf("%s (%d matches)", pattern, matches)
+			case "glob":
+				pattern := str(e.Data, "pattern")
+				files := intVal(e.Data, "files_found")
+				summary = fmt.Sprintf("%s (%d files)", pattern, files)
+			default:
+				summary = str(e.Data, "args_summary")
 			}
+			formatted := fmt.Sprintf("  %s %s %s %s",
+				cr.color("\033[36m", "["+name+"]"),
+				summary,
+				cr.color("\033[2m", "("+duration+")"),
+				cr.color(statusColor, statusIcon))
+			cr.writeContent(formatted)
+		} else if cr.verbosity >= VerbosityNormal {
+			// Normal/Verbose mode: show full summary as before
+			summary := str(e.Data, "args_summary")
 			formatted := fmt.Sprintf("  %s %s %s %s",
 				cr.color("\033[36m", "["+name+"]"),
 				summary,
@@ -427,6 +468,23 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 			cr.writeContent(cr.color("\033[2m", fmt.Sprintf("  budget turns=%d tokens=%d elapsed=%s",
 				intVal(e.Data, "turns"), intVal(e.Data, "tokens"), str(e.Data, "elapsed"))))
 		}
+
+	case EventTaskComplete:
+		filesCreated, _ := e.Data["files_created"].([]string)
+		filesModified, _ := e.Data["files_modified"].([]string)
+		cmdsTotal := intVal(e.Data, "commands_total")
+		cmdsPassed := intVal(e.Data, "commands_passed")
+		cmdsFailed := intVal(e.Data, "commands_failed")
+
+		cr.writeContent(cr.color("\033[36m", "── Done ──────────────────────────"))
+		for _, f := range filesCreated {
+			cr.writeContent(cr.color("\033[32m", fmt.Sprintf("  Created: %s", f)))
+		}
+		for _, f := range filesModified {
+			cr.writeContent(cr.color("\033[33m", fmt.Sprintf("  Modified: %s", f)))
+		}
+		cr.writeContent(cr.color("\033[36m", fmt.Sprintf("  Commands: %d (%d passed, %d failed)", cmdsTotal, cmdsPassed, cmdsFailed)))
+		cr.writeContent(cr.color("\033[36m", "──────────────────────────────────"))
 	}
 }
 

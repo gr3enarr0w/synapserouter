@@ -43,6 +43,7 @@ type Agent struct {
 	registry     *tools.Registry
 	permissions       *tools.PermissionChecker
 	permissionPrompt tools.PermissionPromptFunc
+	rejectionHistory map[string]int // tracks 'toolname:error' -> count
 	intentRouter *IntentRouter
 	conversation *Conversation
 	renderer     TerminalRenderer
@@ -57,6 +58,10 @@ type Agent struct {
 	// methods are called from deep within the agent loop where threading ctx
 	// through all callers would require significant refactoring.
 	runCtx context.Context
+
+	// approvedCategories tracks which tool categories have been approved by the user
+	// for the current session. Used for interactive permission prompts.
+	approvedCategories map[string]bool
 
 	// Sub-agent hierarchy
 	mu       sync.Mutex
@@ -159,6 +164,7 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRende
 	if sessionID == "" {
 		sessionID = fmt.Sprintf("agent-%d", time.Now().UnixNano())
 	}
+	
 	a := &Agent{
 		executor:              executor,
 		registry:              registry,
@@ -174,6 +180,8 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRende
 		reviewTracker:     &ReviewCycleTracker{},
 		intentRouter:      NewIntentRouter(),
 		confidentialMode:  config.Confidential,
+		rejectionHistory:  make(map[string]int),
+		approvedCategories: make(map[string]bool),
 	}
 	if isSpeculationEnabled() {
 		a.speculator = NewSpeculativeCache()
@@ -189,6 +197,36 @@ func (a *Agent) SetPermissions(pc *tools.PermissionChecker) {
 // SetPermissionPrompt sets the callback for interactive permission prompting.
 func (a *Agent) SetPermissionPrompt(fn tools.PermissionPromptFunc) {
 	a.permissionPrompt = fn
+}
+
+// getToolCategory returns the category for a tool name
+func getToolCategory(toolName string) string {
+	switch toolName {
+	case "file_write", "file_edit", "notebook_edit":
+		return "file_write"
+	case "bash":
+		return "shell"
+	case "git":
+		return "git"
+	case "file_read", "grep", "glob":
+		return "read_only"
+	default:
+		return "other"
+	}
+}
+
+// isReadOnlyTool returns true if the tool is read-only and doesn't need permission
+func isReadOnlyTool(toolName string, args map[string]interface{}) bool {
+	if toolName == "git" {
+		// Check git subcommand
+		if subcommand, ok := args["subcommand"].(string); ok {
+			return subcommand == "status" || subcommand == "diff" || subcommand == "log" ||
+				subcommand == "show" || subcommand == "rev-parse" || subcommand == "remote" ||
+				subcommand == "blame"
+		}
+		return false
+	}
+	return toolName == "file_read" || toolName == "grep" || toolName == "glob"
 }
 
 // SetPool sets the agent pool for concurrency management.
@@ -600,6 +638,46 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 		}
 		a.config.TierLearner.RecordOutcome(intent, currentTier, err == nil)
 	}
+
+	// Collect task completion summary
+	filesCreated := []string{}
+	filesModified := []string{}
+	bashCount := 0
+	bashPassed := 0
+	bashFailed := 0
+
+	for _, tc := range a.toolHistory {
+		switch tc.Name {
+		case "file_write":
+			if path, ok := tc.Args["path"].(string); ok {
+				filesCreated = append(filesCreated, path)
+			}
+		case "file_edit":
+			if path, ok := tc.Args["path"].(string); ok {
+				filesModified = append(filesModified, path)
+			}
+		case "notebook_edit":
+			if path, ok := tc.Args["path"].(string); ok {
+				filesModified = append(filesModified, path)
+			}
+		case "bash":
+			bashCount++
+			if tc.Output != "" && !strings.Contains(tc.Output, "exit code") {
+				bashPassed++
+			} else if tc.Output != "" && strings.Contains(tc.Output, "exit code") {
+				bashFailed++
+			}
+		}
+	}
+
+	// Emit task completion event
+	a.emit(EventTaskComplete, "", map[string]any{
+		"files_created":  filesCreated,
+		"files_modified": filesModified,
+		"commands_total": bashCount,
+		"commands_passed": bashPassed,
+		"commands_failed": bashFailed,
+	})
 
 	// Write project state file (synroute.md) — the agent's CLAUDE.md equivalent.
 	// Written regardless of success/failure so the next run knows what happened.
@@ -1129,6 +1207,9 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		callID := extractToolCallID(toolCall)
 		name, args := extractToolCallNameArgs(toolCall)
 
+		var resultContent string
+		isError := false
+
 		// Track code file writes for compile verification
 		if (name == "file_write" || name == "file_edit") && isCodeFilePath(args) {
 			a.wroteCodeFiles = true
@@ -1143,6 +1224,50 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			"tool_name":    name,
 			"args_summary": argsSummary,
 		})
+
+		// Permission check: require approval for non-read-only tools
+		category := getToolCategory(name)
+		needsPermission := !isReadOnlyTool(name, args)
+		if needsPermission {
+			_, alreadyApproved := a.approvedCategories[category]
+			if !alreadyApproved {
+				// Check if in --message mode (non-interactive, auto-approve with notice)
+				isMessageMode := a.config.NonInteractive
+				if isMessageMode {
+					log.Printf("[Agent] permission: auto-approved %s (category: %s) in --message mode", name, category)
+					a.approvedCategories[category] = true
+				} else {
+					// Interactive mode: emit permission request event
+					// Full interactive prompt wiring in follow-up
+					log.Printf("[Agent] permission: request for %s (category: %s) - interactive mode", name, category)
+					a.emit(EventPermissionRequest, "", map[string]any{
+						"tool_name": name,
+						"category":  category,
+						"args":      args,
+					})
+					tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+					if err != nil {
+						log.Printf("[Agent] cannot open /dev/tty for permission prompt — auto-approving")
+						a.approvedCategories[category] = true
+					} else {
+						fmt.Fprintf(tty, "\r\n  \033[33m[permission]\033[0m %s wants to %s — allow? (y/n/a) ", name, category)
+						buf := make([]byte, 1)
+						tty.Read(buf)
+						tty.Close()
+						switch buf[0] {
+						case 'y', 'Y':
+							// approve this call only
+						case 'a', 'A':
+							a.approvedCategories[category] = true
+						default:
+							resultContent = "user denied permission for " + name
+							isError = true
+							continue
+						}
+					}
+				}
+			}
+		}
 
 		// File read dedup: return short notice if the EXACT same read was done before.
 		// Cache key includes path + offset + limit so reading different sections of
@@ -1201,11 +1326,22 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			a.metrics.RecordToolCall(name, toolDuration)
 		}
 
-		var resultContent string
-		isError := false
 		if execErr != nil {
 			resultContent = fmt.Sprintf("error: %v\n%s", execErr, toolErrorHint(name))
 			isError = true
+			
+			// Track repeated rejections
+			rejectionKey := fmt.Sprintf("%s:%v", name, execErr.Error())
+			a.rejectionHistory[rejectionKey]++
+			if a.rejectionHistory[rejectionKey] >= 2 {
+				escalationMsg := "The tool rejected this command twice. You MUST use a different approach. For inline code, use file_write to create a file first, then run it with bash."
+				a.conversation.Add(providers.Message{
+					Role:    "system",
+					Content: escalationMsg,
+				})
+				delete(a.rejectionHistory, rejectionKey) // reset after escalation
+			}
+			
 			if a.renderer != nil {
 				a.renderer.ToolResult(name, resultContent, true)
 			}
@@ -1214,6 +1350,17 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			if result.Error != "" {
 				resultContent = result.Error + "\n" + resultContent
 				isError = true
+
+				// Track repeated rejections (tool returned error in result, not execErr)
+				rejectionKey := fmt.Sprintf("%s:%s", name, result.Error)
+				a.rejectionHistory[rejectionKey]++
+				if a.rejectionHistory[rejectionKey] >= 2 {
+					a.conversation.Add(providers.Message{
+						Role:    "system",
+						Content: "The tool rejected this command twice. You MUST use a different approach. For inline code, use file_write to create a file first, then run it with bash.",
+					})
+					delete(a.rejectionHistory, rejectionKey)
+				}
 			}
 			// Scrub secrets from tool output before displaying/storing
 			scrubbed := security.NewRedactor()
@@ -1244,6 +1391,45 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			"duration":  toolDuration.String(),
 			"is_error":  isError,
 		}
+
+		// Add tool-specific data for compact verbosity display
+		switch name {
+		case "file_read":
+			if path, ok := args["path"].(string); ok {
+				toolEventData["path"] = path
+			}
+			if limit, ok := args["limit"].(float64); ok && limit > 0 {
+				toolEventData["lines_read"] = int(limit)
+			} else {
+				// Count actual lines in result
+				toolEventData["lines_read"] = strings.Count(resultContent, "\n") + 1
+			}
+		case "bash":
+			if cmd, ok := args["command"].(string); ok {
+				toolEventData["command"] = cmd
+			}
+		case "grep":
+			if pattern, ok := args["pattern"].(string); ok {
+				toolEventData["pattern"] = pattern
+			}
+			// Count matches from output (each line is a match)
+			if resultContent != "" && !isError {
+				toolEventData["matches"] = strings.Count(strings.TrimSpace(resultContent), "\n") + 1
+			} else {
+				toolEventData["matches"] = 0
+			}
+		case "glob":
+			if pattern, ok := args["pattern"].(string); ok {
+				toolEventData["pattern"] = pattern
+			}
+			// Count files found from output
+			if resultContent != "" && !isError {
+				toolEventData["files_found"] = strings.Count(strings.TrimSpace(resultContent), "\n") + 1
+			} else {
+				toolEventData["files_found"] = 0
+			}
+		}
+
 		if isError || a.bus != nil {
 			lines := strings.Count(resultContent, "\n") + 1
 			toolEventData["output_lines"] = lines
@@ -1417,7 +1603,7 @@ func (a *Agent) buildMessages() []providers.Message {
 	if a.cachedSystemPrompt == "" || a.cachedPromptLevel != a.providerIdx {
 		sysPrompt := a.config.SystemPrompt
 		if sysPrompt == "" {
-			sysPrompt = defaultSystemPrompt(a.config.WorkDir, a.providerIdx, a.config.ProjectLanguage)
+			sysPrompt = defaultSystemPrompt(a.config.WorkDir, a.providerIdx, a.config.ProjectLanguage, a.registry)
 		}
 
 		// Inject project-level instructions FIRST (CLAUDE.md / AGENTS.md from working directory)
@@ -1708,18 +1894,51 @@ func (a *Agent) maxPhaseTurns() int {
 // and let later pipeline phases still run.
 const maxPipelineCycles = 3
 
-// toolBlock is the canonical tool reference shared across all prompt levels.
-const toolBlock = `AVAILABLE TOOLS (use exact names):
-- bash: Run shell commands. Args: command (string).
-- file_read: Read file. Args: path (string), offset (int, optional), limit (int, optional).
-- file_write: Create/overwrite file. Args: path (string), content (string).
-- file_edit: Edit text in file. Args: path (string), old_text (string), new_text (string).
-- grep: Search files in the project. Args: pattern (string), path (string, optional), include (string, optional).
-- glob: Find files by pattern. Args: pattern (string), path (string, optional).
-- git: Git ops (commit and push require user approval). Args: subcommand (string), args (string).
-- web_search: Search the web for current information. Args: query (string), max_results (int, optional).
-- web_fetch: Fetch and extract content from a URL. Args: url (string).
-
+// generateToolBlock builds the tool documentation from the registry dynamically.
+// This ensures all registered tools (including pipeline tools) are documented.
+func generateToolBlock(reg *tools.Registry) string {
+	var sb strings.Builder
+	sb.WriteString("AVAILABLE TOOLS (use exact names):\n")
+	
+	defs := reg.OpenAIToolDefinitions()
+	for _, def := range defs {
+		fn, ok := def["function"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _ := fn["name"].(string)
+		desc, _ := fn["description"].(string)
+		
+		// Extract parameter names from schema
+		params, _ := fn["parameters"].(map[string]interface{})
+		props, _ := params["properties"].(map[string]interface{})
+		required, _ := params["required"].([]interface{})
+		
+		var args []string
+		for paramName, paramDef := range props {
+			_, ok := paramDef.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			argStr := paramName
+			// Check if required
+			isRequired := false
+			for _, req := range required {
+				if req == paramName {
+					isRequired = true
+					break
+				}
+			}
+			if !isRequired {
+				argStr += " (optional)"
+			}
+			args = append(args, argStr)
+		}
+		
+		sb.WriteString(fmt.Sprintf("- %s: %s. Args: %s.\n", name, desc, strings.Join(args, ", ")))
+	}
+	
+	sb.WriteString(`
 TOOL ROUTING:
 - When the user says "search", "look up", "find online", or asks about current events: use web_search.
 - When the user gives a URL or says "fetch", "read this page": use web_fetch.
@@ -1734,9 +1953,13 @@ EXECUTION RULES:
 - Do NOT run full training, data processing, or long computations via bash.
 - Do NOT use "python -c" or "node -e" for inline code — write it to a file with file_write first.
 - Build the PROGRAM. Run it once briefly to verify it starts. Then deliver.
-- If a command takes more than 10 seconds, it is too long — the user will run it themselves.`
+- If a command takes more than 10 seconds, it is too long — the user will run it themselves.
 
-func defaultSystemPrompt(workDir string, providerLevel int, projectLanguage string) string {
+Do NOT output plans, descriptions, or JSON without tool calls when the user asks for an action.`)
+	return sb.String()
+}
+
+func defaultSystemPrompt(workDir string, providerLevel int, projectLanguage string, reg *tools.Registry) string {
 	// Language directive — prevents wrong-language file creation
 	langDirective := ""
 	if projectLanguage != "" {
@@ -1745,11 +1968,34 @@ func defaultSystemPrompt(workDir string, providerLevel int, projectLanguage stri
 			"(no go.mod for JS projects, no setup.py for Go projects, no package.json for Python projects).\n", projectLanguage)
 	}
 
+	// File format context — detects notebook projects and adds guidance
+	formatContext := ""
+	entries, err := os.ReadDir(workDir)
+	if err == nil {
+		hasNotebook := false
+		hasPython := false
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				name := entry.Name()
+				if strings.HasSuffix(name, ".ipynb") {
+					hasNotebook = true
+				}
+				if strings.HasSuffix(name, ".py") {
+					hasPython = true
+				}
+			}
+		}
+		if hasNotebook && !hasPython {
+			formatContext = "\nThis is a Jupyter notebook project. Use notebook_edit for .ipynb files. Do not create standalone .py helper files.\n"
+		} else if hasNotebook && hasPython {
+			formatContext = "\nThis project contains Jupyter notebooks. Prefer notebook_edit for .ipynb files.\n"
+		}
+	}
+
 	// Level 0 (small models ~20-30B): shorter, more forceful prompt focused on tool calling
 	if providerLevel == 0 {
 		return fmt.Sprintf(`You are a coding assistant working in: %s
-%s
-YOU MUST USE TOOLS TO COMPLETE TASKS. Do not describe what you would do — actually do it by calling tools.
+%s%sYOU MUST USE TOOLS TO COMPLETE TASKS. Do not describe what you would do — actually do it by calling tools.
 
 %s
 
@@ -1790,7 +2036,7 @@ CONVERSATIONAL MESSAGES:
 - Only use tools when the user asks you to perform an action (create files, run commands, search code, etc.).
 - Do NOT write code files as demonstrations for knowledge questions — explain in text instead.
 
-Do NOT output plans, descriptions, or JSON without tool calls when the user asks for an action.`, workDir, langDirective, toolBlock)
+Do NOT output plans, descriptions, or JSON without tool calls when the user asks for an action.`, workDir, langDirective, formatContext, generateToolBlock(tools.DefaultRegistry()))
 	}
 
 	// Level 1+ (larger models ~120B+): full prompt with methodology
@@ -1874,7 +2120,8 @@ PRODUCTION QUALITY:
 - Show math for calculated values. Never approximate when exact values are available.
 - Document assumptions. Flag ambiguous decisions for review.
 
-%s`, workDir, langDirective, workDir, toolBlock)
+%s
+%s`, workDir, langDirective, formatContext, workDir, generateToolBlock(reg))
 }
 
 // forceToolsMessage returns a phase-appropriate message demanding tool calls.

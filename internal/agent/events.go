@@ -28,6 +28,8 @@ const (
 	EventTokenStream                     // Streamed token chunk from LLM
 	EventKReviewStart                    // K-LLM parallel review phase begins
 	EventKReviewMerge                    // K-LLM findings merged
+	EventPermissionRequest               // Permission request for tool execution
+	EventTaskComplete                    // Task completed with summary
 )
 
 var eventTypeNames = map[EventType]string{
@@ -50,6 +52,8 @@ var eventTypeNames = map[EventType]string{
 	EventTokenStream:      "token_stream",
 	EventKReviewStart:     "k_review_start",
 	EventKReviewMerge:     "k_review_merge",
+	EventPermissionRequest: "permission_request",
+	EventTaskComplete:      "task_complete",
 }
 
 // String returns the event type name.
