@@ -14,9 +14,10 @@ import (
 
 // Manager handles creation, tracking, and cleanup of git worktrees.
 type Manager struct {
-	config Config
-	mu     sync.Mutex
-	trees  map[string]*Worktree
+	config     Config
+	mu         sync.Mutex
+	trees      map[string]*Worktree
+	sourceRepo string // set on first Create call, used for orphan branch cleanup
 }
 
 // NewManager creates a worktree manager with the given config.
@@ -49,6 +50,11 @@ func (m *Manager) Create(sourceRepo, sessionID string) (*Worktree, error) {
 	checkCmd.Dir = sourceRepo
 	if err := checkCmd.Run(); err != nil {
 		return nil, fmt.Errorf("source %q is not a git repository", sourceRepo)
+	}
+
+	// Track source repo for orphan branch cleanup
+	if m.sourceRepo == "" {
+		m.sourceRepo = sourceRepo
 	}
 
 	// Enforce worktree count limit
@@ -210,7 +216,48 @@ func (m *Manager) Cleanup() (removed int) {
 		}
 	}
 
+	// Phase 3: Prune orphaned worktree branches (from previous runs)
+	if m.sourceRepo != "" {
+		removed += m.pruneOrphanBranches()
+	}
+
 	return removed
+}
+
+// pruneOrphanBranches deletes git branches named worktree/* or worktree-agent-*
+// whose worktree directories no longer exist.
+func (m *Manager) pruneOrphanBranches() int {
+	// First, prune git's worktree tracking
+	cmd := exec.Command("git", "worktree", "prune")
+	cmd.Dir = m.sourceRepo
+	_ = cmd.Run()
+
+	// List all branches matching worktree patterns
+	cmd = exec.Command("git", "branch", "--list", "worktree/*", "worktree-agent-*")
+	cmd.Dir = m.sourceRepo
+	out, err := cmd.Output()
+	if err != nil || len(out) == 0 {
+		return 0
+	}
+
+	pruned := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		branch := strings.TrimSpace(strings.TrimPrefix(line, "+"))
+		branch = strings.TrimPrefix(branch, "* ")
+		if branch == "" {
+			continue
+		}
+		// Delete the orphaned branch
+		delCmd := exec.Command("git", "branch", "-D", branch)
+		delCmd.Dir = m.sourceRepo
+		if err := delCmd.Run(); err == nil {
+			pruned++
+		}
+	}
+	if pruned > 0 {
+		fmt.Printf("worktree cleanup: pruned %d orphaned branches\n", pruned)
+	}
+	return pruned
 }
 
 // TotalSize returns the total disk usage of all active worktrees.
@@ -250,8 +297,8 @@ func (m *Manager) removeLocked(wt *Worktree) error {
 	// Force remove the directory
 	os.RemoveAll(wt.Path)
 
-	// Try to delete the branch
-	cmd = exec.Command("git", "branch", "-d", wt.Branch)
+	// Force-delete the branch (worktree branches are rarely merged)
+	cmd = exec.Command("git", "branch", "-D", wt.Branch)
 	cmd.Dir = wt.SourceRepo
 	_ = cmd.Run() // best effort
 

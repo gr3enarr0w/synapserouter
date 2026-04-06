@@ -3,6 +3,7 @@ package tasks
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -50,15 +51,22 @@ func (m *Manager) Init() error {
 			message TEXT NOT NULL,
 			pr_url TEXT,
 			error TEXT,
+			pid INTEGER DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	// Add pid column if missing (migration for existing databases)
+	_, _ = m.db.Exec(`ALTER TABLE background_tasks ADD COLUMN pid INTEGER DEFAULT 0`)
+	return nil
 }
 
-// CreateTask creates a new background task
+// CreateTask creates a new background task with PID tracking
 func (m *Manager) CreateTask(id, worktreePath, message string) (*BackgroundTask, error) {
 	now := time.Now()
+	pid := os.Getpid()
 	task := &BackgroundTask{
 		ID:           id,
 		Status:       StatusPending,
@@ -68,9 +76,9 @@ func (m *Manager) CreateTask(id, worktreePath, message string) (*BackgroundTask,
 	}
 
 	_, err := m.db.Exec(`
-		INSERT INTO background_tasks (id, status, worktree_path, start_time, message)
-		VALUES (?, ?, ?, ?, ?)
-	`, task.ID, task.Status, task.WorktreePath, task.StartTime, task.Message)
+		INSERT INTO background_tasks (id, status, worktree_path, start_time, message, pid)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, task.ID, task.Status, task.WorktreePath, task.StartTime, task.Message, pid)
 
 	if err != nil {
 		return nil, err
@@ -106,6 +114,12 @@ func (m *Manager) UpdateTask(id string, status TaskStatus, prURL, errMsg string)
 	return err
 }
 
+// SetPID updates the PID for a running task
+func (m *Manager) SetPID(id string, pid int) error {
+	_, err := m.db.Exec(`UPDATE background_tasks SET pid = ? WHERE id = ?`, pid, id)
+	return err
+}
+
 // GetTask retrieves a single task by ID
 func (m *Manager) GetTask(id string) (*BackgroundTask, error) {
 	row := m.db.QueryRow(`
@@ -125,20 +139,21 @@ func (m *Manager) GetTask(id string) (*BackgroundTask, error) {
 	return task, nil
 }
 
-// GetTasks retrieves all tasks, optionally filtered by status
+// GetTasks retrieves all tasks, optionally filtered by status.
+// Automatically marks "running" tasks as "failed" if their PID is dead.
 func (m *Manager) GetTasks(status TaskStatus) ([]*BackgroundTask, error) {
 	var rows *sql.Rows
 	var err error
 
 	if status == "" {
 		rows, err = m.db.Query(`
-			SELECT id, status, worktree_path, start_time, end_time, message, pr_url, error
+			SELECT id, status, worktree_path, start_time, end_time, message, pr_url, error, COALESCE(pid, 0)
 			FROM background_tasks
 			ORDER BY start_time DESC
 		`)
 	} else {
 		rows, err = m.db.Query(`
-			SELECT id, status, worktree_path, start_time, end_time, message, pr_url, error
+			SELECT id, status, worktree_path, start_time, end_time, message, pr_url, error, COALESCE(pid, 0)
 			FROM background_tasks
 			WHERE status = ?
 			ORDER BY start_time DESC
@@ -150,18 +165,39 @@ func (m *Manager) GetTasks(status TaskStatus) ([]*BackgroundTask, error) {
 	}
 	defer rows.Close()
 
-	var tasks []*BackgroundTask
+	var taskList []*BackgroundTask
 	for rows.Next() {
 		task := &BackgroundTask{}
+		var pid int
 		err := rows.Scan(&task.ID, &task.Status, &task.WorktreePath, &task.StartTime,
-			&task.EndTime, &task.Message, &task.PRURL, &task.Error)
+			&task.EndTime, &task.Message, &task.PRURL, &task.Error, &pid)
 		if err != nil {
 			return nil, err
 		}
-		tasks = append(tasks, task)
+
+		// Liveness check: if task says "running", check if it completed or died
+		if task.Status == StatusRunning {
+			// Check for completion marker first
+			doneMarker := task.WorktreePath + "/.synroute-task-done"
+			if _, err := os.Stat(doneMarker); err == nil {
+				_ = m.UpdateTask(task.ID, StatusCompleted, "", "")
+				task.Status = StatusCompleted
+			} else if pid > 0 {
+				proc, err := os.FindProcess(pid)
+				if err != nil || proc.Signal(nil) != nil {
+					_ = m.UpdateTask(task.ID, StatusFailed, "", fmt.Sprintf("process died (PID %d not found)", pid))
+					task.Status = StatusFailed
+				}
+			} else if time.Since(task.StartTime) > 24*time.Hour {
+				_ = m.UpdateTask(task.ID, StatusFailed, "", "stale task (no PID, older than 24h)")
+				task.Status = StatusFailed
+			}
+		}
+
+		taskList = append(taskList, task)
 	}
 
-	return tasks, rows.Err()
+	return taskList, rows.Err()
 }
 
 // FormatTask returns a formatted string representation of a task

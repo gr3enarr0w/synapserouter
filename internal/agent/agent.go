@@ -1016,6 +1016,13 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 
 		a.executeToolCalls(ctx, msg.ToolCalls)
 
+		// Durable execution: checkpoint after tool calls so --resume can recover
+		if a.config.DB != nil && a.sessionID != "" {
+			if err := a.SaveState(a.config.DB); err != nil {
+				log.Printf("[Agent] checkpoint save failed: %v", err)
+			}
+		}
+
 		// PASTE: launch speculative execution for predicted next tools while LLM thinks.
 		// Predictions based on patterns in recent tool history (grep→file_read, etc.)
 		if a.speculator != nil && len(a.toolHistory) > 0 {

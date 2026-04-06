@@ -581,6 +581,7 @@ func cmdChat(args []string) {
 	model := fs.String("model", "auto", "Model to use")
 	background := fs.Bool("background", false, "Run agent in background and return task ID")
 	message := fs.String("message", "", "One-shot message (non-interactive)")
+	messageFile := fs.String("message-file", "", "Read one-shot message from file (used by background tasks)")
 	specFile := fs.String("spec-file", "", "Read spec from file and use as message (prepends 'Implement the following specification:')")
 	system := fs.String("system", "", "Custom system prompt")
 	project := fs.String("project", "", "Project name — creates ~/Development/<name>/ and works there")
@@ -605,6 +606,17 @@ func cmdChat(args []string) {
 	if messageFlagSet && *message == "" {
 		fmt.Fprintln(os.Stderr, "Error: --message flag requires a non-empty value")
 		os.Exit(1)
+	}
+
+	// Read message from file if --message-file is provided
+	if *messageFile != "" && *message == "" {
+		data, err := os.ReadFile(*messageFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading message file: %v\n", err)
+			os.Exit(1)
+		}
+		msg := string(data)
+		message = &msg
 	}
 
 	// Support -v / -vv shorthand via remaining args
@@ -739,7 +751,8 @@ func cmdChat(args []string) {
 	// Worktree isolation - mandatory for --message mode to prevent writes to main repo
 	var wtMgr *worktree.Manager
 	var wt *worktree.Worktree
-	useWorktreeForMessage := *message != "" || *useWorktree
+	alreadyInWorktree := os.Getenv("SYNROUTE_IN_WORKTREE") == "1"
+	useWorktreeForMessage := (*message != "" || *useWorktree) && !alreadyInWorktree
 	if useWorktreeForMessage {
 		wtMgr, err = worktree.NewManager(worktree.DefaultConfig())
 		if err != nil {
@@ -837,38 +850,50 @@ func cmdChat(args []string) {
 				log.Printf("Warning: failed to update task status: %v", err)
 			}
 
-			// Run agent in background goroutine
-			go func() {
-				msg := *message
-				response, err := agent.RunOneShot(ctx, ac.ProxyRouter, registry, config, msg)
-				if err != nil {
-					ac.TaskManager.UpdateTask(taskID, tasks.StatusFailed, "", err.Error())
-					log.Printf("Background task %s failed: %v", taskID, err)
-					return
-				}
+			// Spawn a detached child process (goroutines die with parent)
+			exe, _ := os.Executable()
+			logPath := filepath.Join(worktreePath, ".synroute-task.log")
+			doneMarker := filepath.Join(worktreePath, ".synroute-task-done")
 
-				// Create PR if worktree exists
-				prURL := ""
-				if wt != nil {
-					cmd := exec.Command("gh", "pr", "create",
-						"--title", fmt.Sprintf("Agent task: %s", taskID),
-						"--body", response,
-						"--base", "main")
-					cmd.Dir = wt.Path
-					output, err := cmd.CombinedOutput()
-					if err != nil {
-						log.Printf("Warning: gh pr create failed: %v - %s", err, output)
-					} else {
-						prURL = strings.TrimSpace(string(output))
-					}
-				}
+			// Write message to temp file to avoid shell quoting issues
+			msgFile := filepath.Join(worktreePath, ".synroute-task-message")
+			if err := os.WriteFile(msgFile, []byte(*message), 0644); err != nil {
+				ac.TaskManager.UpdateTask(taskID, tasks.StatusFailed, "", err.Error())
+				fmt.Fprintf(os.Stderr, "Error writing message file: %v\n", err)
+				os.Exit(1)
+			}
 
-				ac.TaskManager.UpdateTask(taskID, tasks.StatusCompleted, prURL, "")
-				log.Printf("Background task %s completed", taskID)
-			}()
+			// Build child command args
+			childCmdArgs := []string{"chat", "--message-file", msgFile}
+			if *model != "auto" {
+				childCmdArgs = append(childCmdArgs, "--model", *model)
+			}
 
+			// Use nohup to fully detach from parent
+			// SYNROUTE_IN_WORKTREE=1 prevents child from creating another worktree
+			wrapperScript := fmt.Sprintf(
+				"cd %q && SYNROUTE_IN_WORKTREE=1 %s %s >> %q 2>&1; touch %q",
+				worktreePath, exe, strings.Join(childCmdArgs, " "), logPath, doneMarker)
+			cmd := exec.Command("nohup", "sh", "-c", wrapperScript)
+			cmd.Dir = worktreePath
+			cmd.Env = os.Environ()
+			cmd.Stdout = nil
+			cmd.Stderr = nil
+
+			if err := cmd.Start(); err != nil {
+				ac.TaskManager.UpdateTask(taskID, tasks.StatusFailed, "", err.Error())
+				fmt.Fprintf(os.Stderr, "Error starting background task: %v\n", err)
+				os.Exit(1)
+			}
+
+			// Store child PID for liveness checking
+			ac.TaskManager.SetPID(taskID, cmd.Process.Pid)
+			_ = cmd.Process.Release() // detach
+
+			fmt.Printf("Working in isolated worktree: %s\n", worktreePath)
 			fmt.Printf("Task started: %s\n", taskID)
 			fmt.Printf("Worktree: %s\n", worktreePath)
+			fmt.Printf("Log: %s\n", logPath)
 			fmt.Println("Run 'synroute tasks' to check status")
 			return
 		}
