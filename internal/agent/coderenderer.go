@@ -329,7 +329,10 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		cr.StartThinking()
 
 	case EventLLMComplete:
-		// Keep cr.model set — status bar shows last used model
+		// Update model name from LLM response for accurate status bar display
+		if model := str(e.Data, "model"); model != "" {
+			cr.model = model
+		}
 		cr.StopThinking()
 
 		if cr.verbosity >= VerbosityVerbose {
