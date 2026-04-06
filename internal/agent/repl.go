@@ -422,6 +422,26 @@ func RunOneShot(ctx context.Context, executor ChatExecutor, registry *tools.Regi
 	registry.Register(NewHandoffTool(ag))
 	ag.SetInputGuardrails(NewGuardrailChain(&SecretPatternGuardrail{}))
 
+	// Wire PipelineMode — prepend directive so the model knows the operating mode
+	if config.PipelineMode != "" {
+		var directive string
+		switch config.PipelineMode {
+		case "research":
+			directive = "MODE: RESEARCH — Use web_search and web_fetch to research this topic. Synthesize findings with citations.\n\n"
+		case "plan":
+			directive = "MODE: PLAN — Create a detailed implementation plan with acceptance criteria. Do NOT write code yet.\n\n"
+		case "review":
+			directive = "MODE: REVIEW — Review the current codebase. Read files, identify issues, provide actionable feedback.\n\n"
+		case "check":
+			directive = "MODE: CHECK — Verify the implementation against acceptance criteria. Run tests, check output.\n\n"
+		case "fix":
+			directive = "MODE: FIX — Read the code, diagnose the issue, and fix it. Use file_edit, then verify with build/tests.\n\n"
+		}
+		if directive != "" {
+			message = directive + message
+		}
+	}
+
 	response, err := ag.Run(ctx, message)
 
 	// Save session so one-shot runs are resumable via --resume
