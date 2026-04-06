@@ -248,7 +248,7 @@ pass "11.1 empty message (exit $?)"
 
 # NO_COLOR version
 OUT=$(NO_COLOR=1 ./synroute version 2>&1)
-if echo "$OUT" | grep -qP '\033\['; then
+if echo "$OUT" | grep -qE '\033\['; then
     fail "11.4 NO_COLOR version" "ANSI codes present"
 else
     pass "11.4 NO_COLOR version clean"
@@ -277,12 +277,12 @@ echo "=== 13. Accessibility ==="
 # Screen reader — no spinners, no ANSI, no box drawing
 cleanup
 OUT=$(env $MENV timeout 10 ./synroute code --message "hi" --screen-reader 2>/dev/null)
-if echo "$OUT" | grep -qP '\033\['; then
+if echo "$OUT" | grep -qE '\033\['; then
     fail "13.1 screen-reader ANSI" "ANSI codes found"
 else
     pass "13.1 screen-reader no ANSI"
 fi
-if echo "$OUT" | grep -qP '[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]'; then
+if echo "$OUT" | grep -qE '[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]'; then
     fail "13.2 screen-reader spinners" "spinner chars found"
 else
     pass "13.2 screen-reader no spinners"
