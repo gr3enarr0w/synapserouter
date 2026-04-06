@@ -140,6 +140,12 @@ func (lr *LogRenderer) renderText(e AgentEvent) {
 				prefix, str(e.Data, "tool_name"), str(e.Data, "args_summary"), agent)
 		}
 
+	case EventPermissionRequest:
+		if lr.verbosity >= VerbosityNormal {
+			fmt.Fprintf(lr.out, "%s\033[33mpermission\033[0m → %s (category: %s)%s\n",
+				prefix, str(e.Data, "tool_name"), str(e.Data, "category"), agent)
+		}
+
 	case EventToolComplete:
 		if lr.verbosity >= VerbosityNormal {
 			isErr, _ := e.Data["is_error"].(bool)

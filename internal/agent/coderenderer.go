@@ -348,6 +348,13 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 			cr.writeContent(fmt.Sprintf("  %s %s", cr.color("\033[36m", "["+name+"]"), summary))
 		}
 
+	case EventPermissionRequest:
+		if cr.verbosity >= VerbosityNormal {
+			name := str(e.Data, "tool_name")
+			category := str(e.Data, "category")
+			cr.writeContent(cr.color("\033[33m", fmt.Sprintf("  [permission request] %s (category: %s)", name, category)))
+		}
+
 	case EventToolComplete:
 		name := str(e.Data, "tool_name")
 		duration := str(e.Data, "duration")

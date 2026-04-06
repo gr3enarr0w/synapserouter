@@ -59,6 +59,10 @@ type Agent struct {
 	// through all callers would require significant refactoring.
 	runCtx context.Context
 
+	// approvedCategories tracks which tool categories have been approved by the user
+	// for the current session. Used for interactive permission prompts.
+	approvedCategories map[string]bool
+
 	// Sub-agent hierarchy
 	mu       sync.Mutex
 	parentID string
@@ -177,6 +181,7 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRende
 		intentRouter:      NewIntentRouter(),
 		confidentialMode:  config.Confidential,
 		rejectionHistory:  make(map[string]int),
+		approvedCategories: make(map[string]bool),
 	}
 	if isSpeculationEnabled() {
 		a.speculator = NewSpeculativeCache()
@@ -192,6 +197,36 @@ func (a *Agent) SetPermissions(pc *tools.PermissionChecker) {
 // SetPermissionPrompt sets the callback for interactive permission prompting.
 func (a *Agent) SetPermissionPrompt(fn tools.PermissionPromptFunc) {
 	a.permissionPrompt = fn
+}
+
+// getToolCategory returns the category for a tool name
+func getToolCategory(toolName string) string {
+	switch toolName {
+	case "file_write", "file_edit", "notebook_edit":
+		return "file_write"
+	case "bash":
+		return "shell"
+	case "git":
+		return "git"
+	case "file_read", "grep", "glob":
+		return "read_only"
+	default:
+		return "other"
+	}
+}
+
+// isReadOnlyTool returns true if the tool is read-only and doesn't need permission
+func isReadOnlyTool(toolName string, args map[string]interface{}) bool {
+	if toolName == "git" {
+		// Check git subcommand
+		if subcommand, ok := args["subcommand"].(string); ok {
+			return subcommand == "status" || subcommand == "diff" || subcommand == "log" ||
+				subcommand == "show" || subcommand == "rev-parse" || subcommand == "remote" ||
+				subcommand == "blame"
+		}
+		return false
+	}
+	return toolName == "file_read" || toolName == "grep" || toolName == "glob"
 }
 
 // SetPool sets the agent pool for concurrency management.
@@ -1146,6 +1181,32 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			"tool_name":    name,
 			"args_summary": argsSummary,
 		})
+
+		// Permission check: require approval for non-read-only tools
+		category := getToolCategory(name)
+		needsPermission := !isReadOnlyTool(name, args)
+		if needsPermission {
+			_, alreadyApproved := a.approvedCategories[category]
+			if !alreadyApproved {
+				// Check if in --message mode (non-interactive, auto-approve with notice)
+				isMessageMode := a.config.SystemPrompt != ""
+				if isMessageMode {
+					log.Printf("[Agent] permission: auto-approved %s (category: %s) in --message mode", name, category)
+					a.approvedCategories[category] = true
+				} else {
+					// Interactive mode: emit permission request event
+					// Full interactive prompt wiring in follow-up
+					log.Printf("[Agent] permission: request for %s (category: %s) - interactive mode", name, category)
+					a.emit(EventPermissionRequest, "", map[string]any{
+						"tool_name": name,
+						"category":  category,
+						"args":      args,
+					})
+					// For now, auto-approve in interactive mode too (follow-up will add blocking prompt)
+					a.approvedCategories[category] = true
+				}
+			}
+		}
 
 		// File read dedup: return short notice if the EXACT same read was done before.
 		// Cache key includes path + offset + limit so reading different sections of
