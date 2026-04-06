@@ -1938,11 +1938,34 @@ func defaultSystemPrompt(workDir string, providerLevel int, projectLanguage stri
 			"(no go.mod for JS projects, no setup.py for Go projects, no package.json for Python projects).\n", projectLanguage)
 	}
 
+	// File format context — detects notebook projects and adds guidance
+	formatContext := ""
+	entries, err := os.ReadDir(workDir)
+	if err == nil {
+		hasNotebook := false
+		hasPython := false
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				name := entry.Name()
+				if strings.HasSuffix(name, ".ipynb") {
+					hasNotebook = true
+				}
+				if strings.HasSuffix(name, ".py") {
+					hasPython = true
+				}
+			}
+		}
+		if hasNotebook && !hasPython {
+			formatContext = "\nThis is a Jupyter notebook project. Use notebook_edit for .ipynb files. Do not create standalone .py helper files.\n"
+		} else if hasNotebook && hasPython {
+			formatContext = "\nThis project contains Jupyter notebooks. Prefer notebook_edit for .ipynb files.\n"
+		}
+	}
+
 	// Level 0 (small models ~20-30B): shorter, more forceful prompt focused on tool calling
 	if providerLevel == 0 {
 		return fmt.Sprintf(`You are a coding assistant working in: %s
-%s
-YOU MUST USE TOOLS TO COMPLETE TASKS. Do not describe what you would do — actually do it by calling tools.
+%s%sYOU MUST USE TOOLS TO COMPLETE TASKS. Do not describe what you would do — actually do it by calling tools.
 
 %s
 
@@ -1983,7 +2006,7 @@ CONVERSATIONAL MESSAGES:
 - Only use tools when the user asks you to perform an action (create files, run commands, search code, etc.).
 - Do NOT write code files as demonstrations for knowledge questions — explain in text instead.
 
-Do NOT output plans, descriptions, or JSON without tool calls when the user asks for an action.`, workDir, langDirective, generateToolBlock(tools.DefaultRegistry()))
+Do NOT output plans, descriptions, or JSON without tool calls when the user asks for an action.`, workDir, langDirective, formatContext, generateToolBlock(tools.DefaultRegistry()))
 	}
 
 	// Level 1+ (larger models ~120B+): full prompt with methodology
@@ -2067,7 +2090,7 @@ PRODUCTION QUALITY:
 - Show math for calculated values. Never approximate when exact values are available.
 - Document assumptions. Flag ambiguous decisions for review.
 
-%s`, workDir, langDirective, workDir, generateToolBlock(reg))
+%s`, workDir, langDirective, formatContext, workDir, generateToolBlock(reg))
 }
 
 // forceToolsMessage returns a phase-appropriate message demanding tool calls.
