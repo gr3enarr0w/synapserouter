@@ -43,6 +43,7 @@ type Agent struct {
 	registry     *tools.Registry
 	permissions       *tools.PermissionChecker
 	permissionPrompt tools.PermissionPromptFunc
+	rejectionHistory map[string]int // tracks 'toolname:error' -> count
 	intentRouter *IntentRouter
 	conversation *Conversation
 	renderer     TerminalRenderer
@@ -159,6 +160,7 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRende
 	if sessionID == "" {
 		sessionID = fmt.Sprintf("agent-%d", time.Now().UnixNano())
 	}
+	
 	a := &Agent{
 		executor:              executor,
 		registry:              registry,
@@ -174,6 +176,7 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRende
 		reviewTracker:     &ReviewCycleTracker{},
 		intentRouter:      NewIntentRouter(),
 		confidentialMode:  config.Confidential,
+		rejectionHistory:  make(map[string]int),
 	}
 	if isSpeculationEnabled() {
 		a.speculator = NewSpeculativeCache()
@@ -1206,6 +1209,19 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		if execErr != nil {
 			resultContent = fmt.Sprintf("error: %v\n%s", execErr, toolErrorHint(name))
 			isError = true
+			
+			// Track repeated rejections
+			rejectionKey := fmt.Sprintf("%s:%v", name, execErr.Error())
+			a.rejectionHistory[rejectionKey]++
+			if a.rejectionHistory[rejectionKey] >= 2 {
+				escalationMsg := "The tool rejected this command twice. You MUST use a different approach. For inline code, use file_write to create a file first, then run it with bash."
+				a.conversation.Add(providers.Message{
+					Role:    "system",
+					Content: escalationMsg,
+				})
+				delete(a.rejectionHistory, rejectionKey) // reset after escalation
+			}
+			
 			if a.renderer != nil {
 				a.renderer.ToolResult(name, resultContent, true)
 			}
