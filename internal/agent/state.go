@@ -93,9 +93,9 @@ func LoadState(db *sql.DB, sessionID, userID string) (*SessionState, error) {
 	return &state, nil
 }
 
-// LoadLatestState returns the most recently updated session for a user.
-// Filters by user_id for tenant isolation.
-func LoadLatestState(db *sql.DB, userID string) (*SessionState, error) {
+// LoadLatestState returns the most recently updated session for a working directory.
+// Queries by work_dir to support session recovery in non-git directories.
+func LoadLatestState(db *sql.DB, workDir string) (*SessionState, error) {
 	if db == nil {
 		return nil, fmt.Errorf("no database configured")
 	}
@@ -103,7 +103,7 @@ func LoadLatestState(db *sql.DB, userID string) (*SessionState, error) {
 	var sessionID string
 	err := db.QueryRow(`
 		SELECT session_id FROM agent_sessions
-		WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1`, userID).Scan(&sessionID)
+		WHERE work_dir = ? ORDER BY updated_at DESC LIMIT 1`, workDir).Scan(&sessionID)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("no sessions found")
 	}
@@ -111,7 +111,8 @@ func LoadLatestState(db *sql.DB, userID string) (*SessionState, error) {
 		return nil, fmt.Errorf("query latest session: %w", err)
 	}
 
-	return LoadState(db, sessionID, userID)
+	// Use empty userID for backward compatibility - work_dir is the primary key
+	return LoadState(db, sessionID, "")
 }
 
 // RestoreAgent creates an agent from a persisted session state.

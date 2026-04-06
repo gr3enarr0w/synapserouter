@@ -104,7 +104,7 @@ func TestLoadLatestState(t *testing.T) {
 	db.Exec(`UPDATE agent_sessions SET updated_at = datetime('now', '+1 second') WHERE session_id = ?`, ag2.SessionID())
 
 	// Latest should be ag2
-	state, err := LoadLatestState(db, "local")
+	state, err := LoadLatestState(db, ".")
 	if err != nil {
 		t.Fatal(err)
 	}

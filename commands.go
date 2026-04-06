@@ -960,12 +960,9 @@ func cmdChat(args []string) {
 	var ag *agent.Agent
 
 	// Session resume: restore from database if requested
-	userID := config.UserID
-	if userID == "" {
-		userID = "local"
-	}
+	// Use work_dir as session scope to support non-git directories
 	if config.SessionID != "" && config.DB != nil {
-		state, err := agent.LoadState(config.DB, config.SessionID, userID)
+		state, err := agent.LoadState(config.DB, config.SessionID, config.UserID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading session: %v\n", err)
 			os.Exit(1)
@@ -973,7 +970,7 @@ func cmdChat(args []string) {
 		ag = agent.RestoreAgent(ac.ProxyRouter, registry, renderer, state)
 		fmt.Fprintf(os.Stderr, "Resumed session: %s (%d messages)\n", state.SessionID, len(state.Messages))
 	} else if config.Resume && config.DB != nil {
-		state, err := agent.LoadLatestState(config.DB, userID)
+		state, err := agent.LoadLatestState(config.DB, config.WorkDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "No session to resume: %v\n", err)
 			ag = agent.New(ac.ProxyRouter, registry, renderer, config)
