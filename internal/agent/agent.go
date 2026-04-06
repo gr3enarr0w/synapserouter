@@ -1207,6 +1207,9 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		callID := extractToolCallID(toolCall)
 		name, args := extractToolCallNameArgs(toolCall)
 
+		var resultContent string
+		isError := false
+
 		// Track code file writes for compile verification
 		if (name == "file_write" || name == "file_edit") && isCodeFilePath(args) {
 			a.wroteCodeFiles = true
@@ -1242,8 +1245,26 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 						"category":  category,
 						"args":      args,
 					})
-					// For now, auto-approve in interactive mode too (follow-up will add blocking prompt)
-					a.approvedCategories[category] = true
+					tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+					if err != nil {
+						log.Printf("[Agent] cannot open /dev/tty for permission prompt — auto-approving")
+						a.approvedCategories[category] = true
+					} else {
+						fmt.Fprintf(tty, "\r\n  \033[33m[permission]\033[0m %s wants to %s — allow? (y/n/a) ", name, category)
+						buf := make([]byte, 1)
+						tty.Read(buf)
+						tty.Close()
+						switch buf[0] {
+						case 'y', 'Y':
+							// approve this call only
+						case 'a', 'A':
+							a.approvedCategories[category] = true
+						default:
+							resultContent = "user denied permission for " + name
+							isError = true
+							continue
+						}
+					}
 				}
 			}
 		}
@@ -1305,8 +1326,6 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			a.metrics.RecordToolCall(name, toolDuration)
 		}
 
-		var resultContent string
-		isError := false
 		if execErr != nil {
 			resultContent = fmt.Sprintf("error: %v\n%s", execErr, toolErrorHint(name))
 			isError = true
