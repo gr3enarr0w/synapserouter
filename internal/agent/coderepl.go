@@ -21,9 +21,10 @@ import (
 // CodeREPL implements the code mode interactive loop with readline-based input
 // for history, tab completion, and proper terminal handling.
 type CodeREPL struct {
-	agent    *Agent
-	renderer *CodeRenderer
-	out      io.Writer
+	agent         *Agent
+	renderer      *CodeRenderer
+	out           io.Writer
+	pendingMessage string // queued message typed during agent execution
 }
 
 // NewCodeREPL creates a code mode REPL. The Terminal parameter is accepted
@@ -173,11 +174,18 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 			fmt.Fprint(cr.out, "\033[32msynroute>\033[0m ")
 		}
 
-		// Read a line of input (character-at-a-time in raw mode)
-		input, eof := cr.readLine(ctx, stdinFd, isTerminal, exitCh, &reqMu, &agentRunning, cancelFn, &ctrlCCount, &lastCtrlC)
-		if eof {
-			cr.rawWrite("\r\nbye\r\n")
-			return nil
+		// Check for pending message typed during agent execution
+		var input string
+		var eof bool
+		if cr.pendingMessage != "" {
+			input = cr.pendingMessage
+			cr.pendingMessage = ""
+		} else {
+			input, eof = cr.readLine(ctx, stdinFd, isTerminal, exitCh, &reqMu, &agentRunning, cancelFn, &ctrlCCount, &lastCtrlC)
+			if eof {
+				cr.rawWrite("\r\nbye\r\n")
+				return nil
+			}
 		}
 
 		log.Printf("[REPL] got input: %q", input)
@@ -215,12 +223,50 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		// Create fresh context for the request
 		reqCtx := newReqCtx()
 
+		// Start goroutine to read from /dev/tty during agent execution
+		// This allows users to type a message that will be queued for the next prompt
+		ttyDone := make(chan struct{})
+		go func() {
+			defer close(ttyDone)
+			tty, err := os.Open("/dev/tty")
+			if err != nil {
+				return
+			}
+			defer tty.Close()
+
+			buf := make([]byte, 1024)
+			var msgBuf []byte
+			for {
+				n, err := tty.Read(buf)
+				if err != nil {
+					return
+				}
+				for i := 0; i < n; i++ {
+					b := buf[i]
+					if b == '\n' || b == '\r' {
+						if len(msgBuf) > 0 {
+							cr.pendingMessage = string(msgBuf)
+							cr.renderer.mu.Lock()
+							cr.renderer.writeContent(cr.renderer.color("\033[2m", "  [message queued]"))
+							cr.renderer.writeContent("")
+							cr.renderer.mu.Unlock()
+						}
+						return
+					}
+					msgBuf = append(msgBuf, b)
+				}
+			}
+		}()
+
 		// Run the agent
 		cr.renderer.mu.Lock()
 		cr.renderer.writeContent("")
 		cr.renderer.mu.Unlock()
 
 		response, err := cr.agent.Run(reqCtx, input)
+
+		// Wait for tty reader to finish (user pressed Enter or EOF)
+		<-ttyDone
 		markDone()
 		if err != nil {
 			if reqCtx.Err() != nil {
