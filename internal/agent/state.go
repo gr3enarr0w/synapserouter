@@ -68,9 +68,14 @@ func LoadState(db *sql.DB, sessionID, userID string) (*SessionState, error) {
 
 	var state SessionState
 	var messagesJSON, toolCallLogJSON sql.NullString
-	err := db.QueryRow(`
-		SELECT session_id, model, system_prompt, work_dir, messages, tool_call_log, created_at, updated_at
-		FROM agent_sessions WHERE session_id = ? AND user_id = ?`, sessionID, userID).
+	query := `SELECT session_id, model, system_prompt, work_dir, messages, tool_call_log, created_at, updated_at FROM agent_sessions WHERE session_id = ?`
+	var queryArgs []interface{}
+	queryArgs = append(queryArgs, sessionID)
+	if userID != "" {
+		query += ` AND user_id = ?`
+		queryArgs = append(queryArgs, userID)
+	}
+	err := db.QueryRow(query, queryArgs...).
 		Scan(&state.SessionID, &state.Model, &state.SystemPrompt, &state.WorkDir,
 			&messagesJSON, &toolCallLogJSON, &state.CreatedAt, &state.UpdatedAt)
 	if err == sql.ErrNoRows {
