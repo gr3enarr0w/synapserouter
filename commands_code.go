@@ -239,7 +239,11 @@ func cmdCode(args []string) {
 	detectedLang := config.ProjectLanguage
 
 	// Create code renderer
-	codeRenderer := agent.NewCodeRenderer(os.Stdout, width, height, projectName, *model, detectedLang)
+	output := os.Stdout
+	if *message != "" {
+		output = os.Stderr
+	}
+	codeRenderer := agent.NewCodeRenderer(output, width, height, projectName, *model, detectedLang)
 	codeRenderer.SetVersion(version)
 	codeRenderer.SetVerbosity(*verbose)
 	codeRenderer.SetProviderLabel(ac.Profile)
