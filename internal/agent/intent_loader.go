@@ -141,6 +141,12 @@ func loadCorrections() []IntentCorrection {
 
 // saveIntentCorrection appends a correction to ~/.synroute/intent_corrections.json
 func saveIntentCorrection(message, intent string) error {
+	// Don't save long messages as intent training — they're build errors, spec text, etc.
+	// Intent classification only needs the first sentence/line.
+	if len(message) > 100 {
+		return nil
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
