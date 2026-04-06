@@ -163,8 +163,13 @@ func cmdCode(args []string) {
 
 		wt, err = wtMgr.Create(cwd, "code")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating worktree: %v\n", err)
-			fmt.Fprintf(os.Stderr, "ABORTING: Cannot run --message mode without worktree isolation\n")
+			if strings.Contains(err.Error(), "not a git repository") || strings.Contains(err.Error(), "git rev-parse") {
+				fmt.Fprintf(os.Stderr, "Error: %s is not a git repository\n", cwd)
+				fmt.Fprintf(os.Stderr, "  --message mode requires a git repository for worktree isolation.\n")
+				fmt.Fprintf(os.Stderr, "  Run from inside a git repo, or initialize one with: git init\n")
+			} else {
+				fmt.Fprintf(os.Stderr, "Error creating worktree: %v\n", err)
+			}
 			os.Exit(1)
 		}
 

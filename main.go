@@ -258,6 +258,17 @@ func startServer() {
 		r.HandleFunc("POST /mcp/tools/list", mcpHandler.HandleToolsList)
 		r.HandleFunc("POST /mcp/tools/call", mcpHandler.HandleToolsCall)
 		log.Println("MCP server enabled on /mcp/* routes")
+	} else {
+		// Return helpful error when MCP is not enabled (security: opt-in only)
+		mcpDisabled := func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, `{"error":"MCP server is disabled. Set SYNROUTE_MCP_SERVER=true to enable, or use synroute mcp-serve for standalone mode."}`)
+		}
+		r.HandleFunc("POST /mcp/initialize", mcpDisabled)
+		r.HandleFunc("GET /mcp/tools/list", mcpDisabled)
+		r.HandleFunc("POST /mcp/tools/list", mcpDisabled)
+		r.HandleFunc("POST /mcp/tools/call", mcpDisabled)
 	}
 
 	r.Handle("GET /v1/orchestration/roles", withAdminAuth(http.HandlerFunc(orchestrationRolesHandler)))
