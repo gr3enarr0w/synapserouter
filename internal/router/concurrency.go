@@ -3,7 +3,6 @@ package router
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 )
@@ -133,6 +132,3 @@ type ConcurrencyStats struct {
 	Limit    int `json:"limit"`
 }
 
-func init() {
-	log.SetFlags(log.LstdFlags) // ensure log is usable
-}

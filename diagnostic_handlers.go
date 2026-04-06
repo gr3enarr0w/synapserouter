@@ -67,14 +67,14 @@ func circuitBreakerResetHandler(w http.ResponseWriter, r *http.Request) {
 			err = proxyRouter.ResetCircuitBreaker(req.Provider)
 			if err == nil {
 				resetProviders = []string{req.Provider}
-			}
+		}
 		} else {
 			// Fallback: reset directly in DB
 			cb := router.NewCircuitBreaker(db, req.Provider)
 			err = cb.Reset()
 			if err == nil {
 				resetProviders = []string{req.Provider}
-			}
+		}
 		}
 	} else {
 		if proxyRouter != nil {
@@ -240,19 +240,19 @@ func agentChatHandler(registry *tools.Registry) http.HandlerFunc {
 			if tmpErr == nil {
 				config.WorkDir = tmpDir
 				// Don't delete — files must persist after agent exits
-			} else {
+		} else {
 				cwd, _ := os.Getwd()
 				config.WorkDir = cwd
-			}
+		}
 		}
 
 		// Wire memory systems for unlimited context + recall + hallucination detection
 		config.VectorMemory = vectorMemory
 		if ts, err := agent.NewToolOutputStore(db); err != nil {
-				log.Printf("[Agent] failed to initialize tool store: %v", err)
-			} else {
-				config.ToolStore = ts
-			}
+			log.Printf("[Agent] failed to initialize tool store: %v", err)
+		} else {
+			config.ToolStore = ts
+		}
 		config.PlanCache = agent.NewPlanCache(db)
 
 		// Create agent with tracing enabled
@@ -288,7 +288,7 @@ func agentChatHandler(registry *tools.Registry) http.HandlerFunc {
 			response["trace"] = map[string]interface{}{
 				"spans":    trace.SpanCount(),
 				"duration": trace.TotalDuration().String(),
-			}
+		}
 		}
 
 		// Include pool metrics
