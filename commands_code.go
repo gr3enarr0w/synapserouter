@@ -359,6 +359,12 @@ func cmdCode(args []string) {
 		codeRenderer.Cleanup()
 		bus.Close()
 		fmt.Println(response)
+		// Save session so --message runs are resumable
+		if config.DB != nil {
+			if err := ag.SaveState(config.DB); err != nil {
+				log.Printf("Warning: failed to save session: %v", err)
+			}
+		}
 		if wt != nil {
 			fmt.Fprintf(os.Stderr, "Worktree still active at: %s\n", wt.Path)
 		}
