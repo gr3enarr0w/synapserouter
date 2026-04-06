@@ -174,7 +174,7 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		}
 
 		// Read a line of input (character-at-a-time in raw mode)
-		input, eof := cr.readLine(stdinFd, isTerminal, exitCh, &reqMu, &agentRunning, cancelFn, &ctrlCCount, &lastCtrlC)
+		input, eof := cr.readLine(ctx, stdinFd, isTerminal, exitCh, &reqMu, &agentRunning, cancelFn, &ctrlCCount, &lastCtrlC)
 		if eof {
 			cr.rawWrite("\r\nbye\r\n")
 			return nil
@@ -276,16 +276,33 @@ func (cr *CodeREPL) rawWrite(s string) {
 // readLine reads a line of input character-by-character in raw terminal mode.
 // Handles keyboard shortcuts (Ctrl-L/P/T/E) inline, returns the completed line on Enter.
 // Returns (line, eof). If eof is true, the user pressed Ctrl-D or the terminal closed.
-func (cr *CodeREPL) readLine(fd int, isRaw bool, exitCh chan struct{}, reqMu *sync.Mutex, agentRunning *bool, cancelFn context.CancelFunc, ctrlCCount *int, lastCtrlC *time.Time) (string, bool) {
+func (cr *CodeREPL) readLine(ctx context.Context, fd int, isRaw bool, exitCh chan struct{}, reqMu *sync.Mutex, agentRunning *bool, cancelFn context.CancelFunc, ctrlCCount *int, lastCtrlC *time.Time) (string, bool) {
 	if !isRaw {
 		// Fallback: cooked mode (piped input) — read a line from stdin
-		buf := make([]byte, 64*1024)
-		n, err := os.Stdin.Read(buf)
-		if err != nil || n == 0 {
-			return "", true
+		// Use goroutine to allow context cancellation
+		type result struct {
+			line string
+			eof  bool
 		}
-		line := strings.TrimRight(string(buf[:n]), "\r\n")
-		return strings.TrimSpace(line), false
+		resultCh := make(chan result, 1)
+		go func() {
+			buf := make([]byte, 64*1024)
+			n, err := os.Stdin.Read(buf)
+			if err != nil || n == 0 {
+				resultCh <- result{eof: true}
+				return
+			}
+			resultCh <- result{line: strings.TrimSpace(string(buf[:n]))}
+		}()
+		select {
+		case <-ctx.Done():
+			return "", false
+		case r := <-resultCh:
+			if r.eof {
+				return "", true
+			}
+			return r.line, false
+		}
 	}
 
 	// Raw mode: read byte by byte
@@ -293,10 +310,12 @@ func (cr *CodeREPL) readLine(fd int, isRaw bool, exitCh chan struct{}, reqMu *sy
 	buf := make([]byte, 1)
 
 	for {
-		// Check exit channel
+		// Check exit channel and context cancellation
 		select {
 		case <-exitCh:
 			return "", true
+		case <-ctx.Done():
+			return "", false
 		default:
 		}
 
