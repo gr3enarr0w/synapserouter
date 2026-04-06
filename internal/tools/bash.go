@@ -64,6 +64,18 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]interface{}, wor
 		return &ToolResult{Error: "command is required"}, nil
 	}
 
+	// Dry-run mode: block commands that write to files
+	if DryRunMode {
+		writeCmds := []string{">", ">>", "tee ", "cat >", "echo >", "printf >", "dd ", "cp ", "mv ", "rm ", "mkdir "}
+		for _, wc := range writeCmds {
+			if strings.Contains(command, wc) {
+				return &ToolResult{
+					Output: fmt.Sprintf("DRY RUN: Would execute: %s\n(blocked — dry-run mode prevents file-writing commands)", command),
+				}, nil
+			}
+		}
+	}
+
 	// Reject inline code patterns — agent should write files, not run inline code.
 	// Same pattern as git tool blocking dangerous flags.
 	for _, pattern := range forbiddenInlinePatterns {
