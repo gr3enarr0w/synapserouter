@@ -14,31 +14,73 @@ import (
 func newMockMCPServer(t *testing.T, tools []string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/health":
-			w.WriteHeader(http.StatusOK)
-		case "/tools/list":
-			result := struct {
-				Tools []*Tool `json:"tools"`
-			}{}
-			for _, name := range tools {
-				result.Tools = append(result.Tools, &Tool{
-					Name:        name,
-					Description: "Mock " + name,
-					InputSchema: map[string]interface{}{"type": "object"},
-				})
-			}
-			json.NewEncoder(w).Encode(result)
-		case "/tools/call":
-			var req struct {
-				Tool      string                 `json:"tool"`
-				Arguments map[string]interface{} `json:"arguments"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			json.NewEncoder(w).Encode(ToolResult{
-				Success: true,
-				Output:  "result from " + req.Tool,
+		// All MCP servers expect JSON-RPC protocol
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("mcp-session-id", "test-session-123")
+
+		var req jsonrpcRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		switch req.Method {
+		case "initialize":
+			eventData, _ := json.Marshal(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      req.ID,
+				"result": map[string]interface{}{
+					"protocolVersion": "2024-11-05",
+					"capabilities":    map[string]interface{}{},
+					"serverInfo": map[string]interface{}{
+						"name":    "mock-mcp",
+						"version": "1.0.0",
+					},
+				},
 			})
+			w.Write([]byte("event: message\ndata: " + string(eventData) + "\n\n"))
+
+		case "tools/list":
+			toolList := make([]map[string]interface{}, len(tools))
+			for i, name := range tools {
+				toolList[i] = map[string]interface{}{
+					"name":        name,
+					"description": "Mock " + name,
+					"inputSchema": map[string]interface{}{"type": "object"},
+				}
+			}
+			eventData, _ := json.Marshal(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      req.ID,
+				"result": map[string]interface{}{
+					"tools": toolList,
+				},
+			})
+			w.Write([]byte("event: message\ndata: " + string(eventData) + "\n\n"))
+
+		case "tools/call":
+			// Parse params
+			params, ok := req.Params.(map[string]interface{})
+			if !ok {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			toolName, _ := params["name"].(string)
+			eventData, _ := json.Marshal(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      req.ID,
+				"result": map[string]interface{}{
+					"content": []map[string]interface{}{
+						{
+							"type": "text",
+							"text": "result from " + toolName,
+						},
+					},
+					"isError": false,
+				},
+			})
+			w.Write([]byte("event: message\ndata: " + string(eventData) + "\n\n"))
+
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

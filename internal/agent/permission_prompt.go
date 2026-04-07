@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -91,6 +93,65 @@ func DefaultPermissionPrompt(out io.Writer, in io.Reader) tools.PermissionPrompt
 	}
 }
 
+// CodeModePermissionPrompt renders permission requests through the code-mode
+// renderer instead of using a separate /dev/tty prompt.
+func CodeModePermissionPrompt(renderer *CodeRenderer, in io.Reader) tools.PermissionPromptFunc {
+	var mu sync.Mutex
+	approveAll := false
+	reader := bufio.NewReader(in)
+
+	return func(toolName string, category tools.ToolCategory, args map[string]interface{}) bool {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if approveAll {
+			return true
+		}
+
+		label := "write"
+		if category == tools.CategoryDangerous {
+			label = "dangerous"
+		}
+		summary := formatPermissionSummary(toolName, args)
+
+		renderer.mu.Lock()
+		renderer.writeContent("")
+		renderer.writeContent(renderer.color("\033[1;33m", fmt.Sprintf("  [permission] %s tool: %s", label, toolName)))
+		if summary != "" {
+			for _, line := range strings.Split(summary, "\n") {
+				renderer.writeContent(renderer.color("\033[2m", "  "+line))
+			}
+		}
+		renderer.footerNote = renderer.color("\033[33m", "  Allow? [y/n/a]")
+		renderer.inputLine = ""
+		renderer.inputActive = true
+		renderer.renderFooterLocked(true)
+		renderer.mu.Unlock()
+
+		for {
+			resp, err := reader.ReadString('\n')
+			if err != nil && err != io.EOF {
+				log.Printf("[Permission] stdin read failed: %v — auto-approving", err)
+				renderer.SetFooterNote("")
+				return true
+			}
+			resp = strings.TrimSpace(resp)
+			if resp == "" {
+				renderer.SetFooterNote("")
+				return parsePermissionByte('\n', &approveAll)
+			}
+			if approved, ok := parsePermissionString(resp, &approveAll); ok {
+				renderer.SetFooterNote("")
+				return approved
+			}
+			renderer.SetFooterNote(renderer.color("\033[33m", "  Allow? [y/n/a]"))
+			if err == io.EOF {
+				return false
+			}
+		}
+	}
+}
+
 func parsePermissionByte(b byte, approveAll *bool) bool {
 	switch b {
 	case 'y', 'Y', '\r', '\n':
@@ -105,33 +166,92 @@ func parsePermissionByte(b byte, approveAll *bool) bool {
 	}
 }
 
+func parsePermissionString(input string, approveAll *bool) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(input)) {
+	case "y", "yes":
+		return true, true
+	case "a", "all":
+		*approveAll = true
+		return true, true
+	case "n", "no":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
 // formatPermissionSummary returns a human-readable summary of what the tool will do.
 func formatPermissionSummary(toolName string, args map[string]interface{}) string {
 	switch toolName {
 	case "bash":
 		if cmd, ok := args["command"].(string); ok {
-			if len(cmd) > 80 {
-				cmd = cmd[:77] + "..."
-			}
+			cmd = strings.TrimSpace(cmd)
 			return cmd
 		}
 	case "file_write":
 		if path, ok := args["path"].(string); ok {
-			return fmt.Sprintf("create/overwrite %s", path)
+			content, _ := args["content"].(string)
+			preview := previewText(content, 8, 120)
+			if preview == "" {
+				return fmt.Sprintf("create/overwrite %s", path)
+			}
+			return fmt.Sprintf("create/overwrite %s\n  --- preview ---\n%s", path, indentLines(preview, "  "))
 		}
 	case "file_edit":
 		if path, ok := args["path"].(string); ok {
-			return fmt.Sprintf("edit %s", path)
+			oldStr, _ := args["old_string"].(string)
+			newStr, _ := args["new_string"].(string)
+			return fmt.Sprintf("edit %s\n  --- replace ---\n%s\n  --- with ---\n%s", path, indentLines(previewText(oldStr, 6, 120), "  "), indentLines(previewText(newStr, 6, 120), "  "))
 		}
 	case "notebook_edit":
 		if path, ok := args["path"].(string); ok {
 			cell, _ := args["cell"].(float64)
-			return fmt.Sprintf("edit cell %d in %s", int(cell), path)
+			source, _ := args["source"].(string)
+			preview := previewText(source, 8, 120)
+			if preview == "" {
+				return fmt.Sprintf("edit cell %d in %s", int(cell), path)
+			}
+			return fmt.Sprintf("edit cell %d in %s\n  --- cell source ---\n%s", int(cell), path, indentLines(preview, "  "))
 		}
 	case "git":
 		if sub, ok := args["subcommand"].(string); ok {
-			return fmt.Sprintf("git %s", sub)
+			extra, _ := args["args"].(string)
+			extra = strings.TrimSpace(extra)
+			if extra == "" {
+				return fmt.Sprintf("git %s", sub)
+			}
+			return fmt.Sprintf("git %s %s", sub, extra)
 		}
 	}
 	return ""
+}
+
+func previewText(text string, maxLines int, maxLineLen int) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) > maxLines {
+		lines = append(lines[:maxLines], fmt.Sprintf("... (%d more lines)", len(lines)-maxLines))
+	}
+	for i, line := range lines {
+		line = strings.TrimRight(line, "\r")
+		if len(line) > maxLineLen {
+			line = line[:maxLineLen-3] + "..."
+		}
+		lines[i] = line
+	}
+	return strings.Join(lines, "\n")
+}
+
+func indentLines(text string, prefix string) string {
+	if text == "" {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n")
 }

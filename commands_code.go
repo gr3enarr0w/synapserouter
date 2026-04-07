@@ -326,15 +326,20 @@ func cmdCode(args []string) {
 	}
 	ag.SetInputGuardrails(agent.NewGuardrailChain(&agent.SecretPatternGuardrail{}))
 
-	// Permission prompting disabled for v1 — the /dev/tty read in
-	// DefaultPermissionPrompt conflicts with the terminal input layer,
-	// causing the REPL to hang. Will be restored in v1.01 with Bubble Tea.
-	// TODO(v1.01): integrate permission prompt with terminal input system
+	// Code mode currently keeps write operations auto-approved for trusted projects,
+	// but it must still enforce read-only mode for untrusted directories.
+	if config.ReadOnlyMode {
+		ag.SetPermissions(tools.NewPermissionChecker(tools.ModeReadOnly))
+	} else {
+		ag.SetPermissions(tools.NewPermissionChecker(tools.ModeAutoApprove))
+	}
 
 	// One-shot mode — use the same agent (no RunOneShot to avoid duplicate LogRenderer)
 	if *message != "" {
-		// One-shot: switch to auto-approve since there's no user to prompt
-		ag.SetPermissions(tools.NewPermissionChecker(tools.ModeAutoApprove))
+		// One-shot: keep read-only enforcement if enabled, otherwise auto-approve.
+		if !config.ReadOnlyMode {
+			ag.SetPermissions(tools.NewPermissionChecker(tools.ModeAutoApprove))
+		}
 		ag.SetNonInteractive(true)
 		if *specFile != "" {
 			specContent, err := os.ReadFile(*specFile)
@@ -379,6 +384,9 @@ func cmdCode(args []string) {
 
 	// Run the code mode REPL (uses cooked mode input with TUI chrome)
 	codeRepl := agent.NewCodeREPL(ag, codeRenderer, term)
+	if !config.ReadOnlyMode {
+		ag.SetPermissionPrompt(codeRepl.PermissionPrompt())
+	}
 	if err := codeRepl.Run(ctx); err != nil {
 		log.Printf("REPL error: %v", err)
 	}
@@ -395,6 +403,15 @@ func cmdCode(args []string) {
 		continuity := agent.BuildContinuityFromAgent(ag)
 		if err := agent.SaveContinuity(config.DB, continuity); err != nil {
 			log.Printf("Warning: failed to save continuity: %v", err)
+		}
+		userMessages := make([]string, 0)
+		for _, msg := range ag.Messages() {
+			if msg.Role == "user" {
+				userMessages = append(userMessages, msg.Content)
+			}
+		}
+		if err := agent.SaveDurableMemory(config.WorkDir, continuity, userMessages); err != nil {
+			log.Printf("Warning: failed to save durable memory: %v", err)
 		}
 	}
 }

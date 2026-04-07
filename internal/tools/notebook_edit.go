@@ -12,8 +12,8 @@ import (
 // NotebookEditTool edits a Jupyter notebook cell by index.
 type NotebookEditTool struct{}
 
-func (t *NotebookEditTool) Name() string        { return "notebook_edit" }
-func (t *NotebookEditTool) Description() string { return "Edit a Jupyter notebook cell by index" }
+func (t *NotebookEditTool) Name() string           { return "notebook_edit" }
+func (t *NotebookEditTool) Description() string    { return "Edit a Jupyter notebook cell by index" }
 func (t *NotebookEditTool) Category() ToolCategory { return CategoryWrite }
 
 func (t *NotebookEditTool) InputSchema() map[string]interface{} {
@@ -120,6 +120,18 @@ func (t *NotebookEditTool) Execute(ctx context.Context, args map[string]interfac
 
 	cells[cellIdx-1] = cell
 
+	remainingEmptyCodeCells := make([]int, 0)
+	for i, c := range cells {
+		var currentType string
+		_ = json.Unmarshal(c["cell_type"], &currentType)
+		if currentType != "code" {
+			continue
+		}
+		if strings.TrimSpace(notebookCellSource(c["source"])) == "" {
+			remainingEmptyCodeCells = append(remainingEmptyCodeCells, i+1)
+		}
+	}
+
 	// Marshal cells back
 	newCellsJSON, err := json.Marshal(cells)
 	if err != nil {
@@ -143,5 +155,11 @@ func (t *NotebookEditTool) Execute(ctx context.Context, args map[string]interfac
 		return &ToolResult{Error: fmt.Sprintf("failed to write notebook: %v", err)}, nil
 	}
 
-	return &ToolResult{Output: fmt.Sprintf("updated cell %d in %s", cellIdx, path)}, nil
+	message := fmt.Sprintf("updated cell %d in %s", cellIdx, path)
+	if len(remainingEmptyCodeCells) == 0 {
+		message += "\nAll code cells now have content."
+	} else {
+		message += fmt.Sprintf("\nRemaining empty code cells: %d (%v)", len(remainingEmptyCodeCells), remainingEmptyCodeCells)
+	}
+	return &ToolResult{Output: message}, nil
 }

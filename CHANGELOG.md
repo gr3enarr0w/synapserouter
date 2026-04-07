@@ -9,6 +9,7 @@
 - **Search Fusion Optimization**: Capped at 3 backends for regular search, 7 for deep research; smart routing by query type
 - **Search Backend Circuit Breakers**: Rate-limited backends automatically paused and retried later
 - **Backend Quality Metrics**: New `synroute search stats` command shows backend performance metrics
+- **Code Mode Safety + Notebook Progress**: Unified permission handling, enforced read-only code mode, fixed footer/input rendering, notebook read pagination, and notebook progress summaries for empty code cells
 
 ## v1.06 — Durable Execution + Provider Routing (2026-04-XX)
 

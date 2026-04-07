@@ -23,7 +23,7 @@ type ToolEntry struct {
 // CodeRenderer provides a pipeline-aware terminal UI for code mode.
 // It implements TerminalRenderer and subscribes to EventBus for real-time updates.
 type CodeRenderer struct {
-	mu sync.Mutex
+	mu  sync.Mutex
 	out io.Writer
 
 	// Terminal dimensions
@@ -68,6 +68,12 @@ type CodeRenderer struct {
 	thinkingActive bool
 	thinkingStop   chan struct{}
 	thinkingWg     sync.WaitGroup
+
+	// Footer state for fixed bottom status + input
+	footerStatus string
+	footerNote   string
+	inputLine    string
+	inputActive  bool
 }
 
 // NewCodeRenderer creates a renderer for code mode.
@@ -192,7 +198,8 @@ func (cr *CodeRenderer) Error(msg string) {
 func (cr *CodeRenderer) Prompt() {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
-	fmt.Fprint(cr.out, cr.color("\033[32m", "synroute>")+" ")
+	cr.inputActive = true
+	cr.renderFooterLocked(true)
 }
 
 // --- Screen layout ---
@@ -254,18 +261,101 @@ func (cr *CodeRenderer) Init() {
 	fmt.Fprintln(cr.out)
 }
 
-// Resize is a no-op without scroll regions.
 func (cr *CodeRenderer) Resize(width, height int) {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 	cr.width = width
 	cr.height = height
+	cr.renderFooterLocked(cr.inputActive)
 }
 
 // writeContent writes a line of output. Uses \r\n for raw terminal mode
 // so the cursor returns to column 0 (raw mode doesn't translate \n to \r\n).
 func (cr *CodeRenderer) writeContent(line string) {
+	if cr.out == nil {
+		return
+	}
+	if cr.usesFooterLocked() {
+		contentRow := maxInt(1, cr.height-2)
+		fmt.Fprintf(cr.out, "\033[%d;1H\033[2K%s\r\n", contentRow, line)
+		cr.renderFooterLocked(cr.inputActive)
+		return
+	}
 	fmt.Fprint(cr.out, line+"\r\n")
+}
+
+func (cr *CodeRenderer) SetInputLine(line string) {
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+	cr.inputLine = line
+	cr.inputActive = true
+	cr.renderFooterLocked(true)
+}
+
+func (cr *CodeRenderer) SetInputActive(active bool) {
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+	cr.inputActive = active
+	cr.renderFooterLocked(active)
+}
+
+func (cr *CodeRenderer) SetFooterNote(note string) {
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+	cr.footerNote = note
+	cr.renderFooterLocked(cr.inputActive)
+}
+
+func (cr *CodeRenderer) usesFooterLocked() bool {
+	return cr.out != nil && cr.height >= 3
+}
+
+func (cr *CodeRenderer) renderFooterLocked(focusInput bool) {
+	if !cr.usesFooterLocked() {
+		return
+	}
+	statusRow := maxInt(1, cr.height-1)
+	inputRow := maxInt(1, cr.height)
+	contentRow := maxInt(1, cr.height-2)
+	status := cr.footerStatus
+	if cr.footerNote != "" {
+		status = cr.footerNote
+	}
+	input := cr.promptPrefixLocked() + cr.inputLine
+	fmt.Fprintf(cr.out, "\033[%d;1H\033[2K%s", statusRow, status)
+	fmt.Fprintf(cr.out, "\033[%d;1H\033[2K%s", inputRow, input)
+	if focusInput {
+		fmt.Fprintf(cr.out, "\033[%d;%dH", inputRow, visibleWidth(cr.promptPrefixLocked())+visibleWidth(cr.inputLine)+1)
+	} else {
+		fmt.Fprintf(cr.out, "\033[%d;1H", contentRow)
+	}
+}
+
+func (cr *CodeRenderer) promptPrefixLocked() string {
+	return cr.color("\033[32m", "synroute>") + " "
+}
+
+func visibleWidth(s string) int {
+	plain := s
+	for {
+		start := strings.Index(plain, "\033[")
+		if start == -1 {
+			break
+		}
+		end := strings.IndexByte(plain[start:], 'm')
+		if end == -1 {
+			break
+		}
+		plain = plain[:start] + plain[start+end+1:]
+	}
+	return len(plain)
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // --- Event handling ---
@@ -294,7 +384,6 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		}
 		cr.writeContent("")
 
-
 	case EventPhaseStart:
 		cr.phase = str(e.Data, "phase_name")
 		cr.phaseIdx = intVal(e.Data, "phase_index")
@@ -302,7 +391,6 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		cr.writeContent(cr.color("\033[1;33m", fmt.Sprintf("  -- phase %d/%d: %s --", cr.phaseIdx+1, cr.phaseCount, cr.phase)))
 		cr.writeContent("")
 		cr.setWindowTitle(fmt.Sprintf("Phase %d/%d: %s - synroute", cr.phaseIdx+1, cr.phaseCount, cr.phase))
-
 
 	case EventPhaseComplete:
 		passed, _ := e.Data["passed"].(bool)
@@ -342,6 +430,7 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		}
 
 	case EventToolStart:
+		cr.footerNote = ""
 		if cr.verbosity >= VerbosityNormal {
 			name := str(e.Data, "tool_name")
 			summary := str(e.Data, "args_summary")
@@ -349,13 +438,13 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		}
 
 	case EventPermissionRequest:
-		if cr.verbosity >= VerbosityNormal {
-			name := str(e.Data, "tool_name")
-			category := str(e.Data, "category")
-			cr.writeContent(cr.color("\033[33m", fmt.Sprintf("  [permission request] %s (category: %s)", name, category)))
-		}
+		name := str(e.Data, "tool_name")
+		category := str(e.Data, "category")
+		cr.footerNote = cr.color("\033[33m", fmt.Sprintf("  permission: %s (%s)", name, category))
+		cr.renderFooterLocked(cr.inputActive)
 
 	case EventToolComplete:
+		cr.footerNote = ""
 		name := str(e.Data, "tool_name")
 		duration := str(e.Data, "duration")
 		isErr, _ := e.Data["is_error"].(bool)
@@ -426,7 +515,6 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		}
 		cr.totalTiers = total
 
-
 	case EventSubAgentSpawn:
 		role := str(e.Data, "role")
 		cr.writeContent(cr.color("\033[35m", fmt.Sprintf("  spawn %s -> %s", role, e.Provider)))
@@ -452,6 +540,7 @@ func (cr *CodeRenderer) handleEvent(e AgentEvent) {
 		}
 
 	case EventError:
+		cr.footerNote = ""
 		source := str(e.Data, "source")
 		msg := str(e.Data, "message")
 		cr.writeContent(cr.color("\033[31m", fmt.Sprintf("  error [%s] %s", source, msg)))
@@ -646,7 +735,8 @@ func (cr *CodeRenderer) StartThinking() {
 				elapsed := time.Since(startTime).Seconds()
 				spinner := spinners[i%len(spinners)]
 				i++
-				fmt.Fprintf(cr.out, "\r\033[2K  \033[36m%c\033[0m Thinking... (%.1fs)", spinner, elapsed)
+				cr.footerNote = fmt.Sprintf("  %s Thinking... (%.1fs)", cr.color("\033[36m", string(spinner)), elapsed)
+				cr.renderFooterLocked(cr.inputActive)
 				cr.mu.Unlock()
 			}
 		}
@@ -667,7 +757,8 @@ func (cr *CodeRenderer) StopThinking() {
 	cr.mu.Unlock()
 	cr.thinkingWg.Wait()
 	cr.mu.Lock()
-	fmt.Fprintf(cr.out, "\r\033[2K") // Clear the spinner line
+	cr.footerNote = ""
+	cr.renderFooterLocked(cr.inputActive)
 }
 
 // RenderStatusBar prints a bottom status line with workspace, git branch, model, and tier.
@@ -696,12 +787,17 @@ func (cr *CodeRenderer) RenderStatusBar() {
 		// Enhanced visual format with better spacing and icons
 		status = fmt.Sprintf("  📁 %s  •  🌿 %s  •  🤖 %s  •  ⚡ %s  •  🪙 %d", workspace, branch, cr.model, cr.provider, cr.tokensUsed)
 	}
-
-	cr.writeContent("")
-	cr.writeContent(cr.color("\033[2m", status))
+	cr.footerStatus = cr.color("\033[2m", status)
+	cr.renderFooterLocked(cr.inputActive)
 }
 
-// Cleanup is a no-op — no scroll regions to restore.
 func (cr *CodeRenderer) Cleanup() {
-	// Intentionally empty: readline handles terminal restore.
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+	if !cr.usesFooterLocked() {
+		return
+	}
+	statusRow := maxInt(1, cr.height-1)
+	inputRow := maxInt(1, cr.height)
+	fmt.Fprintf(cr.out, "\033[%d;1H\033[2K\033[%d;1H\033[2K", statusRow, inputRow)
 }

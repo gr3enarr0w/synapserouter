@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+const (
+	autoMemoryStart = "<!-- synroute:auto:start -->"
+	autoMemoryEnd   = "<!-- synroute:auto:end -->"
+)
+
 // ProjectContinuity holds cross-session state for a project directory.
 type ProjectContinuity struct {
 	ProjectDir     string    `json:"project_dir"`
@@ -227,4 +232,169 @@ func InjectContinuityContext(c *ProjectContinuity) string {
 		b.WriteString(fmt.Sprintf("Last request: %s\n", c.ContextSummary))
 	}
 	return b.String()
+}
+
+// LoadDurableMemoryContext reads global and project MEMORY.md files and formats
+// them for system prompt injection.
+func LoadDurableMemoryContext(projectDir string) string {
+	sections := make([]string, 0, 2)
+	if global := readMemoryFile(globalMemoryPath()); global != "" {
+		sections = append(sections, "## User Memory\n"+global)
+	}
+	if project := readMemoryFile(projectMemoryPath(projectDir)); project != "" {
+		sections = append(sections, "## Project Memory\n"+project)
+	}
+	if len(sections) == 0 {
+		return ""
+	}
+	return "\n\n# Durable Memory\n" + strings.Join(sections, "\n\n")
+}
+
+// SaveDurableMemory updates generated durable memory sections without touching
+// any manual notes outside the auto-managed block.
+func SaveDurableMemory(projectDir string, continuity *ProjectContinuity, userMessages []string) error {
+	if projectDir == "" || projectDir == "/" || projectDir == "/tmp" {
+		return nil
+	}
+	if continuity != nil {
+		if err := writeManagedMemory(projectMemoryPath(projectDir), buildProjectMemoryBlock(continuity)); err != nil {
+			return err
+		}
+	}
+	preferences := extractPreferenceBullets(userMessages)
+	if len(preferences) > 0 {
+		if err := writeManagedMemory(globalMemoryPath(), buildUserMemoryBlock(preferences)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func globalMemoryPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return filepath.Join(".synroute", "MEMORY.md")
+	}
+	return filepath.Join(home, ".synroute", "MEMORY.md")
+}
+
+func projectMemoryPath(projectDir string) string {
+	return filepath.Join(projectDir, "MEMORY.md")
+}
+
+func readMemoryFile(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return ""
+	}
+	return text
+}
+
+func writeManagedMemory(path, block string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	existingBytes, _ := os.ReadFile(path)
+	existing := string(existingBytes)
+	managed := autoMemoryStart + "\n" + strings.TrimSpace(block) + "\n" + autoMemoryEnd
+
+	var updated string
+	start := strings.Index(existing, autoMemoryStart)
+	end := strings.Index(existing, autoMemoryEnd)
+	if start >= 0 && end > start {
+		end += len(autoMemoryEnd)
+		updated = strings.TrimSpace(existing[:start])
+		if updated != "" {
+			updated += "\n\n"
+		}
+		updated += managed
+		trailing := strings.TrimSpace(existing[end:])
+		if trailing != "" {
+			updated += "\n\n" + trailing
+		}
+	} else if strings.TrimSpace(existing) == "" {
+		updated = "# MEMORY.md\n\n" + managed + "\n"
+	} else {
+		updated = strings.TrimSpace(existing) + "\n\n" + managed + "\n"
+	}
+
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(updated), 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+func buildProjectMemoryBlock(c *ProjectContinuity) string {
+	var b strings.Builder
+	b.WriteString("## Project Context\n")
+	if c.SessionID != "" {
+		b.WriteString(fmt.Sprintf("- Last session: %s\n", c.SessionID))
+	}
+	if c.Phase != "" {
+		b.WriteString(fmt.Sprintf("- Current phase: %s\n", c.Phase))
+	}
+	if c.Language != "" {
+		b.WriteString(fmt.Sprintf("- Primary language: %s\n", c.Language))
+	}
+	if c.BuildStatus != "" {
+		b.WriteString(fmt.Sprintf("- Last build status: %s\n", c.BuildStatus))
+	}
+	if c.TestStatus != "" {
+		b.WriteString(fmt.Sprintf("- Last test status: %s\n", c.TestStatus))
+	}
+	if c.ContextSummary != "" {
+		b.WriteString(fmt.Sprintf("- Last request summary: %s\n", sanitizeMemoryLine(c.ContextSummary)))
+	}
+	if len(c.FileManifest) > 0 {
+		b.WriteString("\n## Recently Modified Files\n")
+		for _, f := range c.FileManifest {
+			b.WriteString(fmt.Sprintf("- %s\n", sanitizeMemoryLine(f)))
+		}
+	}
+	return b.String()
+}
+
+func buildUserMemoryBlock(preferences []string) string {
+	var b strings.Builder
+	b.WriteString("## User Preferences\n")
+	for _, pref := range preferences {
+		b.WriteString(fmt.Sprintf("- %s\n", sanitizeMemoryLine(pref)))
+	}
+	return b.String()
+}
+
+func sanitizeMemoryLine(s string) string {
+	s = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(s, "\n", " "), "\r", " "))
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func extractPreferenceBullets(userMessages []string) []string {
+	seen := make(map[string]struct{})
+	bullets := make([]string, 0, 8)
+	for _, msg := range userMessages {
+		for _, line := range strings.Split(msg, "\n") {
+			line = sanitizeMemoryLine(line)
+			lower := strings.ToLower(line)
+			if line == "" {
+				continue
+			}
+			if !(strings.Contains(lower, "prefer") || strings.Contains(lower, "always") || strings.Contains(lower, "never") || strings.Contains(lower, "remember") || strings.Contains(lower, "do not") || strings.Contains(lower, "don't") || strings.Contains(lower, "please use")) {
+				continue
+			}
+			if _, ok := seen[lower]; ok {
+				continue
+			}
+			seen[lower] = struct{}{}
+			bullets = append(bullets, line)
+			if len(bullets) == 8 {
+				return bullets
+			}
+		}
+	}
+	return bullets
 }

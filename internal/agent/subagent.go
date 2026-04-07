@@ -8,20 +8,21 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gr3enarr0w/synapserouter/internal/providers"
 	"github.com/gr3enarr0w/synapserouter/internal/tools"
 	"github.com/gr3enarr0w/synapserouter/internal/worktree"
 )
 
 // SpawnConfig configures a child agent.
 type SpawnConfig struct {
-	Role        string       // agent role (e.g., "tester", "researcher")
-	Model       string       // model override (empty = inherit parent)
-	Provider    string       // target specific provider by name (empty = default routing)
-	Tier        ModelTier    // preferred model tier (cheap, mid, frontier) — sets initial provider level
-	Tools       *tools.Registry // tool registry (nil = inherit parent)
-	Budget      *AgentBudget // resource limits for child
-	WorkDir     string       // working directory (empty = inherit parent)
-	System      string       // system prompt override
+	Role     string          // agent role (e.g., "tester", "researcher")
+	Model    string          // model override (empty = inherit parent)
+	Provider string          // target specific provider by name (empty = default routing)
+	Tier     ModelTier       // preferred model tier (cheap, mid, frontier) — sets initial provider level
+	Tools    *tools.Registry // tool registry (nil = inherit parent)
+	Budget   *AgentBudget    // resource limits for child
+	WorkDir  string          // working directory (empty = inherit parent)
+	System   string          // system prompt override
 }
 
 // ChildRef tracks a spawned child agent.
@@ -81,22 +82,22 @@ func (a *Agent) SpawnChild(cfg SpawnConfig) *Agent {
 	parentChain := append([]string{a.sessionID}, a.config.ParentSessionIDs...)
 
 	childConfig := Config{
-		Model:            model,
-		SystemPrompt:     sysPrompt,
-		MaxTurns:         maxTurns,
-		WorkDir:          workDir,
-		TargetProvider:   cfg.Provider,
-		EscalationChain:  escalationChain,
+		Model:           model,
+		SystemPrompt:    sysPrompt,
+		MaxTurns:        maxTurns,
+		WorkDir:         workDir,
+		TargetProvider:  cfg.Provider,
+		EscalationChain: escalationChain,
 		// NOTE: AutoOrchestrate intentionally NOT inherited. Sub-agents should
 		// just execute their task (write code, review, etc.), not run their own
 		// 6-phase pipeline. The PARENT orchestrates phases; children execute.
-		Skills:           a.config.Skills,           // inherit parent's skill registry for dynamic matching
+		Skills:           a.config.Skills, // inherit parent's skill registry for dynamic matching
 		EventBus:         a.config.EventBus,
-		SpecFilePath:     a.config.SpecFilePath,      // inherit so sub-agents can't overwrite spec
-		ProjectLanguage:  a.config.ProjectLanguage,  // inherit so sub-agents use correct language context
-		ToolStore:        a.config.ToolStore,         // inherit so sub-agents store tool outputs in same DB
-		VectorMemory:     a.config.VectorMemory,      // inherit for recall tool access
-		ParentSessionIDs: parentChain,                // pass full ancestor chain for cross-session recall
+		SpecFilePath:     a.config.SpecFilePath,    // inherit so sub-agents can't overwrite spec
+		ProjectLanguage:  a.config.ProjectLanguage, // inherit so sub-agents use correct language context
+		ToolStore:        a.config.ToolStore,       // inherit so sub-agents store tool outputs in same DB
+		VectorMemory:     a.config.VectorMemory,    // inherit for recall tool access
+		ParentSessionIDs: parentChain,              // pass full ancestor chain for cross-session recall
 	}
 
 	child := New(a.executor, registry, a.renderer, childConfig)
@@ -186,6 +187,14 @@ func (a *Agent) Children() []*ChildRef {
 	refs := make([]*ChildRef, len(a.children))
 	copy(refs, a.children)
 	return refs
+}
+
+// Messages returns a copy of the current conversation for persistence/reporting.
+func (a *Agent) Messages() []providers.Message {
+	msgs := a.conversation.Messages()
+	copyMsgs := make([]providers.Message, len(msgs))
+	copy(copyMsgs, msgs)
+	return copyMsgs
 }
 
 // ParentID returns the parent agent's session ID, if this is a child.

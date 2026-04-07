@@ -149,6 +149,50 @@ func TestFileReadTool(t *testing.T) {
 			t.Errorf("expected content with relative path, got %q", result.Output)
 		}
 	})
+
+	t.Run("blocks path outside workdir", func(t *testing.T) {
+		result, err := tool.Execute(ctx, map[string]interface{}{"path": "/etc/passwd"}, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Error == "" {
+			t.Fatal("expected containment error")
+		}
+	})
+
+	t.Run("notebook honors offset and limit", func(t *testing.T) {
+		notebookPath := filepath.Join(dir, "test.ipynb")
+		notebook := `{
+		  "cells": [
+		    {"cell_type": "markdown", "source": ["# Title\n", "intro\n"]},
+		    {"cell_type": "code", "source": ["print('hello')\n"], "outputs": []}
+		  ]
+		}`
+		if err := os.WriteFile(notebookPath, []byte(notebook), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := tool.Execute(ctx, map[string]interface{}{
+			"path":   notebookPath,
+			"offset": float64(3),
+			"limit":  float64(5),
+		}, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(result.Output, "Notebook summary") {
+			t.Fatalf("expected paged notebook output without summary line, got %q", result.Output)
+		}
+		if strings.Contains(result.Output, "Cell 1") {
+			t.Fatalf("expected offset to skip earlier notebook header lines, got %q", result.Output)
+		}
+		if !strings.Contains(result.Output, "intro") {
+			t.Fatalf("expected paged notebook lines, got %q", result.Output)
+		}
+		if !strings.Contains(result.Output, "Cell 2") {
+			t.Fatalf("expected limited output to continue into later notebook lines, got %q", result.Output)
+		}
+	})
 }
 
 func TestFileWriteTool(t *testing.T) {
@@ -189,6 +233,46 @@ func TestFileWriteTool(t *testing.T) {
 			t.Errorf("expected 'deep content', got %q", string(data))
 		}
 	})
+}
+
+func TestNotebookEditTool(t *testing.T) {
+	tool := &NotebookEditTool{}
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "assignment.ipynb")
+	notebook := `{
+	  "cells": [
+	    {"cell_type": "code", "source": []},
+	    {"cell_type": "code", "source": []},
+	    {"cell_type": "markdown", "source": ["## Notes\n"]}
+	  ]
+	}`
+	if err := os.WriteFile(path, []byte(notebook), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"path":   path,
+		"cell":   float64(1),
+		"source": "print('done')\n",
+	}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Error != "" {
+		t.Fatalf("unexpected notebook_edit error: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "Remaining empty code cells: 1 ([2])") {
+		t.Fatalf("expected progress summary, got %q", result.Output)
+	}
+
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(updated), "print('done')") {
+		t.Fatalf("expected updated notebook content, got %s", string(updated))
+	}
 }
 
 func TestFileEditTool(t *testing.T) {

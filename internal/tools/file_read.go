@@ -13,8 +13,8 @@ import (
 // FileReadTool reads file contents with optional line offset/limit.
 type FileReadTool struct{}
 
-func (t *FileReadTool) Name() string        { return "file_read" }
-func (t *FileReadTool) Description() string { return "Read a file's contents with optional line range" }
+func (t *FileReadTool) Name() string           { return "file_read" }
+func (t *FileReadTool) Description() string    { return "Read a file's contents with optional line range" }
 func (t *FileReadTool) Category() ToolCategory { return CategoryReadOnly }
 
 func (t *FileReadTool) InputSchema() map[string]interface{} {
@@ -41,11 +41,9 @@ func (t *FileReadTool) InputSchema() map[string]interface{} {
 func (t *FileReadTool) Execute(ctx context.Context, args map[string]interface{}, workDir string) (*ToolResult, error) {
 	const defaultLineLimit = 2000
 
-	path := resolveToolPath(stringArg(args, "path"), workDir)
-
-	// Jupyter notebook: parse JSON and render cells readably (#313)
-	if strings.HasSuffix(strings.ToLower(filepath.Base(path)), ".ipynb") {
-		return t.readNotebook(path)
+	path, err := resolveToolPathChecked(stringArg(args, "path"), workDir)
+	if err != nil {
+		return &ToolResult{Error: err.Error()}, nil
 	}
 	offset := intArg(args, "offset", 1)
 	limit := intArg(args, "limit", 0)
@@ -56,6 +54,11 @@ func (t *FileReadTool) Execute(ctx context.Context, args map[string]interface{},
 	}
 	if limit <= 0 {
 		limit = defaultLineLimit
+	}
+
+	// Jupyter notebook: parse JSON and render cells readably (#313)
+	if strings.HasSuffix(strings.ToLower(filepath.Base(path)), ".ipynb") {
+		return t.readNotebook(path, offset, limit, userSetLimit)
 	}
 
 	f, err := os.Open(path)
@@ -106,7 +109,7 @@ func (t *FileReadTool) Execute(ctx context.Context, args map[string]interface{},
 }
 
 // readNotebook parses a .ipynb file and renders cells in a readable format.
-func (t *FileReadTool) readNotebook(path string) (*ToolResult, error) {
+func (t *FileReadTool) readNotebook(path string, offset, limit int, userSetLimit bool) (*ToolResult, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return &ToolResult{Error: err.Error()}, nil
@@ -116,7 +119,7 @@ func (t *FileReadTool) readNotebook(path string) (*ToolResult, error) {
 		Cells []struct {
 			CellType string          `json:"cell_type"`
 			Source   json.RawMessage `json:"source"`
-			Outputs json.RawMessage `json:"outputs,omitempty"`
+			Outputs  json.RawMessage `json:"outputs,omitempty"`
 		} `json:"cells"`
 	}
 	if err := json.Unmarshal(data, &nb); err != nil {
@@ -124,10 +127,17 @@ func (t *FileReadTool) readNotebook(path string) (*ToolResult, error) {
 	}
 
 	var b strings.Builder
+	emptyCodeCells := make([]int, 0)
 	for i, cell := range nb.Cells {
 		source := notebookCellSource(cell.Source)
+		if cell.CellType == "code" && strings.TrimSpace(source) == "" {
+			emptyCodeCells = append(emptyCodeCells, i+1)
+		}
 		hasOutput := len(cell.Outputs) > 2 // "[]" = empty
 		label := fmt.Sprintf("--- Cell %d [%s]", i+1, cell.CellType)
+		if strings.TrimSpace(source) == "" {
+			label += " (empty)"
+		}
 		if hasOutput {
 			label += " (has output)"
 		}
@@ -138,7 +148,12 @@ func (t *FileReadTool) readNotebook(path string) (*ToolResult, error) {
 	if len(nb.Cells) == 0 {
 		return &ToolResult{Output: "(empty notebook — no cells)"}, nil
 	}
-	return &ToolResult{Output: b.String()}, nil
+	if len(emptyCodeCells) == 0 {
+		fmt.Fprintf(&b, "Notebook summary: %d cells. All code cells currently have content.\n\n", len(nb.Cells))
+	} else {
+		fmt.Fprintf(&b, "Notebook summary: %d cells. Empty code cells: %d (%v).\n\n", len(nb.Cells), len(emptyCodeCells), emptyCodeCells)
+	}
+	return &ToolResult{Output: renderLineWindow(b.String(), offset, limit, userSetLimit)}, nil
 }
 
 // notebookCellSource extracts the source text from an ipynb cell.
@@ -155,4 +170,32 @@ func notebookCellSource(raw json.RawMessage) string {
 		return s
 	}
 	return string(raw)
+}
+
+func renderLineWindow(text string, offset, limit int, userSetLimit bool) string {
+	lines := strings.Split(text, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	total := len(lines)
+	if total == 0 {
+		return "(empty file)"
+	}
+	if offset > total {
+		return fmt.Sprintf("(no lines in range, file has %d lines)", total)
+	}
+	start := offset - 1
+	end := start + limit
+	if end > total {
+		end = total
+	}
+
+	var b strings.Builder
+	for i := start; i < end; i++ {
+		fmt.Fprintf(&b, "%6d\t%s\n", i+1, lines[i])
+	}
+	if !userSetLimit && total > limit {
+		b.WriteString(fmt.Sprintf("\n(showing first %d of %d lines, use offset/limit for more)\n", end-start, total))
+	}
+	return b.String()
 }

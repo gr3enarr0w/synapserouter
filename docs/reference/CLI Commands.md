@@ -20,7 +20,7 @@ All examples below assume `synroute` is on your PATH. If not, replace `synroute`
 
 ## synroute (code mode)
 
-The default command starts the code mode TUI -- a full terminal interface with status bar, scroll regions, and keyboard shortcuts.
+The default command starts the code mode TUI -- a terminal interface with a fixed bottom footer for status and input, plus keyboard shortcuts.
 
 ```bash
 synroute              # Start code mode TUI (default)

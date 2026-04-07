@@ -158,6 +158,23 @@ func TestPTY_NoPermissionPrompt(t *testing.T) {
 	cmd.Process.Kill()
 }
 
+func TestPTY_QueuedInputShowsQueuedMessage(t *testing.T) {
+	ptmx, cmd := startREPL(t, "NO_COLOR=1")
+	defer ptmx.Close()
+	defer cmd.Process.Kill()
+
+	readUntil(ptmx, "synroute>", 15*time.Second)
+
+	ptmx.Write([]byte("hello\nwhat is go\n"))
+	output, _ := readUntil(ptmx, "queued next message:", 30*time.Second)
+	if !strings.Contains(output, "queued next message: what is go") {
+		t.Fatalf("expected queued message indicator, got: %s", output)
+	}
+
+	ptmx.Write([]byte("/exit\n"))
+	cmd.Process.Kill()
+}
+
 func TestPTY_ColorsEmitted(t *testing.T) {
 	// Without NO_COLOR — should have ANSI codes
 	ptmx, cmd := startREPL(t)

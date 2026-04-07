@@ -8,16 +8,17 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
 
 // MCPClient connects to external MCP servers and manages tool discovery
 type MCPClient struct {
-	mu          sync.RWMutex
-	servers     map[string]*ServerConnection
-	tools       map[string]*Tool
-	httpClient  *http.Client
+	mu         sync.RWMutex
+	servers    map[string]*ServerConnection
+	tools      map[string]*Tool
+	httpClient *http.Client
 }
 
 // ServerConnection represents a connection to an MCP server
@@ -28,6 +29,8 @@ type ServerConnection struct {
 	Connected bool
 	Tools     []*Tool
 	LastPing  time.Time
+	SessionID string
+	Protocol  string
 }
 
 // Tool represents a discovered MCP tool
@@ -46,9 +49,9 @@ type ToolCall struct {
 
 // ToolResult represents a tool invocation result
 type ToolResult struct {
-	Success bool                   `json:"success"`
-	Output  interface{}            `json:"output"`
-	Error   string                 `json:"error,omitempty"`
+	Success  bool                   `json:"success"`
+	Output   interface{}            `json:"output"`
+	Error    string                 `json:"error,omitempty"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -92,15 +95,9 @@ func (c *MCPClient) Connect(ctx context.Context, serverName string) error {
 		return fmt.Errorf("server %s not registered", serverName)
 	}
 
-	// Ping server
-	if err := c.pingServer(ctx, conn); err != nil {
-		return fmt.Errorf("failed to ping server: %w", err)
-	}
-
-	// Discover tools
-	tools, err := c.discoverTools(ctx, conn)
+	tools, protocol, err := c.connectAndDiscover(ctx, conn)
 	if err != nil {
-		return fmt.Errorf("failed to discover tools: %w", err)
+		return err
 	}
 
 	c.mu.Lock()
@@ -109,6 +106,7 @@ func (c *MCPClient) Connect(ctx context.Context, serverName string) error {
 	conn.Connected = true
 	conn.Tools = tools
 	conn.LastPing = time.Now()
+	conn.Protocol = protocol
 
 	// Register tools globally
 	for _, tool := range tools {
@@ -122,65 +120,239 @@ func (c *MCPClient) Connect(ctx context.Context, serverName string) error {
 	return nil
 }
 
-// pingServer checks if server is reachable
-func (c *MCPClient) pingServer(ctx context.Context, conn *ServerConnection) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", conn.URL+"/health", nil)
+func (c *MCPClient) connectAndDiscover(ctx context.Context, conn *ServerConnection) ([]*Tool, string, error) {
+	if conn.Protocol != "" {
+		tools, err := c.discoverToolsWithProtocol(ctx, conn, conn.Protocol)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to discover tools: %w", err)
+		}
+		return tools, conn.Protocol, nil
+	}
+
+	if err := c.pingServerJSONRPC(ctx, conn); err == nil {
+		tools, discoverErr := c.discoverToolsJSONRPC(ctx, conn)
+		if discoverErr == nil {
+			return tools, "jsonrpc", nil
+		}
+	}
+
+	if err := c.pingServerREST(ctx, conn); err != nil {
+		return nil, "", fmt.Errorf("failed to ping server: %w", err)
+	}
+	tools, err := c.discoverToolsREST(ctx, conn)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to discover tools: %w", err)
+	}
+	return tools, "rest", nil
+}
+
+func (c *MCPClient) discoverToolsWithProtocol(ctx context.Context, conn *ServerConnection, protocol string) ([]*Tool, error) {
+	switch protocol {
+	case "jsonrpc":
+		if err := c.pingServerJSONRPC(ctx, conn); err != nil {
+			return nil, err
+		}
+		return c.discoverToolsJSONRPC(ctx, conn)
+	case "rest":
+		if err := c.pingServerREST(ctx, conn); err != nil {
+			return nil, err
+		}
+		return c.discoverToolsREST(ctx, conn)
+	default:
+		return nil, fmt.Errorf("unknown MCP protocol %q", protocol)
+	}
+}
+
+// jsonrpcRequest represents a JSON-RPC 2.0 request
+type jsonrpcRequest struct {
+	JSONRPC string      `json:"jsonrpc"`
+	ID      interface{} `json:"id"`
+	Method  string      `json:"method"`
+	Params  interface{} `json:"params,omitempty"`
+}
+
+// jsonrpcResponse represents a JSON-RPC 2.0 response
+type jsonrpcResponse struct {
+	JSONRPC string      `json:"jsonrpc"`
+	ID      interface{} `json:"id"`
+	Result  interface{} `json:"result,omitempty"`
+	Error   *struct {
+		Code    int         `json:"code"`
+		Message string      `json:"message"`
+		Data    interface{} `json:"data,omitempty"`
+	} `json:"error,omitempty"`
+}
+
+// sendJSONRPC sends a JSON-RPC request to the MCP server and returns the response
+func (c *MCPClient) sendJSONRPC(ctx context.Context, conn *ServerConnection, method string, params interface{}) (*jsonrpcResponse, error) {
+	reqBody := jsonrpcRequest{
+		JSONRPC: "2.0",
+		ID:      time.Now().UnixNano(),
+		Method:  method,
+		Params:  params,
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal JSON-RPC request: %w", err)
+	}
+
+	// API key is passed as query parameter for MCP servers like Tavily
+	targetURL := conn.URL
+	if conn.APIKey != "" {
+		sep := "?"
+		if strings.Contains(conn.URL, "?") {
+			sep = "&"
+		}
+		targetURL = conn.URL + sep + "tavilyApiKey=" + conn.APIKey
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	if conn.SessionID != "" {
+		req.Header.Set("mcp-session-id", conn.SessionID)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("MCP server returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Capture session ID from response header
+	if sessionID := resp.Header.Get("mcp-session-id"); sessionID != "" {
+		conn.SessionID = sessionID
+	}
+
+	// Parse SSE format: "event: message\ndata: {...}\n\n"
+	// Each SSE event has "data:" lines containing JSON
+	bodyStr := string(body)
+	var jsonData string
+	for _, line := range strings.Split(bodyStr, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "data:") {
+			dataLine := strings.TrimPrefix(line, "data:")
+			jsonData = strings.TrimSpace(dataLine)
+		}
+	}
+
+	// If no SSE format, try parsing as plain JSON
+	var jsonrpcResp jsonrpcResponse
+	if jsonData != "" {
+		if err := json.Unmarshal([]byte(jsonData), &jsonrpcResp); err != nil {
+			return nil, fmt.Errorf("parse JSON-RPC response from SSE: %w", err)
+		}
+	} else {
+		if err := json.Unmarshal(body, &jsonrpcResp); err != nil {
+			return nil, fmt.Errorf("parse JSON-RPC response: %w", err)
+		}
+	}
+
+	if jsonrpcResp.Error != nil {
+		return nil, fmt.Errorf("JSON-RPC error %d: %s", jsonrpcResp.Error.Code, jsonrpcResp.Error.Message)
+	}
+
+	return &jsonrpcResp, nil
+}
+
+// pingServerJSONRPC checks if server is reachable via MCP initialize handshake.
+func (c *MCPClient) pingServerJSONRPC(ctx context.Context, conn *ServerConnection) error {
+	_, err := c.sendJSONRPC(ctx, conn, "initialize", map[string]interface{}{
+		"protocolVersion": "2024-11-05",
+		"capabilities":    map[string]interface{}{},
+		"clientInfo": map[string]interface{}{
+			"name":    "synroute",
+			"version": "1.0.0",
+		},
+	})
+	return err
+}
+
+// discoverToolsJSONRPC fetches available tools from server via JSON-RPC tools/list.
+func (c *MCPClient) discoverToolsJSONRPC(ctx context.Context, conn *ServerConnection) ([]*Tool, error) {
+	resp, err := c.sendJSONRPC(ctx, conn, "tools/list", map[string]interface{}{})
+	if err != nil {
+		return nil, err
+	}
+
+	resultMap, ok := resp.Result.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid tools/list response format")
+	}
+
+	toolsRaw, ok := resultMap["tools"]
+	if !ok {
+		return nil, fmt.Errorf("no tools in response")
+	}
+
+	toolsBytes, err := json.Marshal(toolsRaw)
+	if err != nil {
+		return nil, fmt.Errorf("marshal tools: %w", err)
+	}
+
+	var tools []*Tool
+	if err := json.Unmarshal(toolsBytes, &tools); err != nil {
+		return nil, fmt.Errorf("unmarshal tools: %w", err)
+	}
+
+	return tools, nil
+}
+
+func (c *MCPClient) pingServerREST(ctx context.Context, conn *ServerConnection) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, conn.URL+"/health", nil)
 	if err != nil {
 		return err
 	}
-
-	if conn.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+conn.APIKey)
-	}
-
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("ping failed with status %d: %s", resp.StatusCode, string(body))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("MCP server returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
-
 	return nil
 }
 
-// discoverTools fetches available tools from server
-func (c *MCPClient) discoverTools(ctx context.Context, conn *ServerConnection) ([]*Tool, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", conn.URL+"/tools/list", nil)
+func (c *MCPClient) discoverToolsREST(ctx context.Context, conn *ServerConnection) ([]*Tool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, conn.URL+"/tools/list", nil)
 	if err != nil {
 		return nil, err
 	}
-
-	if conn.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+conn.APIKey)
-	}
-
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("tool discovery failed with status %d: %s", resp.StatusCode, string(body))
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("MCP server returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
-
 	var result struct {
 		Tools []*Tool `json:"tools"`
 	}
-
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode tools/list response: %w", err)
 	}
-
 	return result.Tools, nil
 }
 
-// CallTool invokes a tool on the appropriate MCP server
+// CallTool invokes a tool on the appropriate MCP server via JSON-RPC
 func (c *MCPClient) CallTool(ctx context.Context, call ToolCall) (*ToolResult, error) {
 	c.mu.RLock()
 	tool, exists := c.tools[call.ToolName]
@@ -198,48 +370,92 @@ func (c *MCPClient) CallTool(ctx context.Context, call ToolCall) (*ToolResult, e
 		return nil, fmt.Errorf("server %s not connected", tool.ServerName)
 	}
 
-	// Prepare request
-	reqBody, err := json.Marshal(map[string]interface{}{
-		"tool": tool.Name,
+	if conn.Protocol == "rest" {
+		return c.callToolREST(ctx, conn, tool, call)
+	}
+
+	// Send JSON-RPC tools/call request
+	resp, err := c.sendJSONRPC(ctx, conn, "tools/call", map[string]interface{}{
+		"name":      tool.Name,
 		"arguments": call.Arguments,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", conn.URL+"/tools/call", bytes.NewBuffer(reqBody))
+	resultMap, ok := resp.Result.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid tools/call response format")
+	}
+
+	// Parse MCP tool result format: {content: [{type: "text", text: "..."}], isError: bool}
+	contentRaw, ok := resultMap["content"]
+	if !ok {
+		return nil, fmt.Errorf("no content in tools/call response")
+	}
+
+	contentArr, ok := contentRaw.([]interface{})
+	if !ok || len(contentArr) == 0 {
+		return nil, fmt.Errorf("invalid content array in tools/call response")
+	}
+
+	var textContent string
+	for _, item := range contentArr {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if typ, _ := itemMap["type"].(string); typ == "text" {
+			textContent, _ = itemMap["text"].(string)
+			break
+		}
+	}
+
+	isError, _ := resultMap["isError"].(bool)
+
+	result := &ToolResult{
+		Success: !isError,
+		Output:  textContent,
+	}
+
+	if isError {
+		result.Error = textContent
+		log.Printf("[MCP] Tool call failed: %s - %s", call.ToolName, textContent)
+		return result, fmt.Errorf("MCP tool %s failed: %s", call.ToolName, textContent)
+	}
+
+	return result, nil
+}
+
+func (c *MCPClient) callToolREST(ctx context.Context, conn *ServerConnection, tool *Tool, call ToolCall) (*ToolResult, error) {
+	bodyBytes, err := json.Marshal(map[string]interface{}{
+		"tool":      tool.Name,
+		"arguments": call.Arguments,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal tools/call request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, conn.URL+"/tools/call", bytes.NewBuffer(bodyBytes))
 	if err != nil {
 		return nil, err
 	}
-
 	req.Header.Set("Content-Type", "application/json")
-	if conn.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+conn.APIKey)
-	}
-
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	// Check HTTP status — 4xx/5xx indicate server-level errors
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("MCP server returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
-
 	var result ToolResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode MCP response: %w", err)
+		return nil, fmt.Errorf("decode tools/call response: %w", err)
 	}
-
-	// Propagate tool execution errors — the LLM needs to see these to self-correct
 	if !result.Success && result.Error != "" {
-		log.Printf("[MCP] Tool call failed: %s - %s", call.ToolName, result.Error)
 		return &result, fmt.Errorf("MCP tool %s failed: %s", call.ToolName, result.Error)
 	}
-
 	return &result, nil
 }
 
@@ -345,7 +561,7 @@ func (c *MCPClient) HealthCheck(ctx context.Context) map[string]bool {
 	health := make(map[string]bool)
 
 	for _, conn := range servers {
-		err := c.pingServer(ctx, conn)
+		_, _, err := c.connectAndDiscover(ctx, conn)
 		health[conn.Name] = (err == nil)
 
 		if err == nil {

@@ -81,7 +81,7 @@ Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-impl
 - **Tool Registry** (`internal/tools/`): 10 built-in tools (bash, file_read, file_write, file_edit, grep, glob, git, web_search, web_fetch, notebook_edit) + 2 agent tools (delegate, handoff)
 - **Web Search** (`internal/tools/web_search.go`, `web_search_backends.go`): 19 backends with RRF fusion. See "Search Backends" section below
 - **Web Fetch** (`internal/tools/web_fetch.go`): Fetch and extract content from URLs, SSRF-safe via `safeclient.go`
-- **Notebook Edit** (`internal/tools/notebook_edit.go`): Edit Jupyter notebooks by cell index; `file_read` renders `.ipynb` cells
+- **Notebook Edit** (`internal/tools/notebook_edit.go`): Edit Jupyter notebooks by cell index; `file_read` renders `.ipynb` cells, supports line pagination for notebooks, and notebook edits report remaining empty code cells
 - **File Attachments** (`internal/agent/attachment.go`): `@file` and `@dir/` references in user input with path traversal protection
 - **Tool Categories**: `read_only` (always allowed), `write` (needs approval), `dangerous` (extra scrutiny)
 - **Text-Based Tool Call Parser** (`internal/agent/text_tool_parser.go`): Parses 5 tool call formats from Ollama models that don't support native function calling
@@ -113,7 +113,7 @@ Built-in skills: `go-patterns`, `python-patterns`, `security-review`, `code-impl
 - **Worktree Isolation** (`internal/worktree/`): `synroute chat --worktree` creates managed git worktree
   - TTL-based expiry (default 24h), size caps (10GB total, 2GB per tree), background cleanup (every 5m)
 - **Permission Model**: `interactive` (y/n/a prompting via `/dev/tty`), `auto_approve` (allow all), `read_only` (deny writes)
-  - Interactive permission prompting works in chat mode; currently disabled in code mode due to raw terminal conflicts
+  - Tool execution now goes through a single shared permission path; code mode enforces `read_only` when configured and renders a fixed bottom footer for status/input
 - **MCP Server** (`internal/mcpserver/`): `synroute mcp-serve` or `SYNROUTE_MCP_SERVER=true` on main server
   - Endpoints: `/mcp/initialize`, `/mcp/tools/list`, `/mcp/tools/call`
 - **Git Safety**: `git push --force`, `git branch -D`, `git checkout --force` blocked by git tool — use bash with explicit approval

@@ -99,10 +99,14 @@ func (r *Registry) ExecuteWithPrompt(ctx context.Context, name string, args map[
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
 	if pc != nil {
+		category := tool.Category()
+		if dyn, ok := tool.(DynamicCategoryTool); ok {
+			category = dyn.CategoryForArgs(args)
+		}
 		perm := pc.Check(tool, args)
 		if !perm.Allowed {
 			if perm.Prompt && promptFn != nil {
-				if !promptFn(name, tool.Category(), args) {
+				if !promptFn(name, category, args) {
 					return &ToolResult{Error: "user denied permission"}, nil
 				}
 				// User approved — proceed

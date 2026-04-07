@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"io/fs"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -39,16 +39,16 @@ type ProviderAwareExecutor interface {
 
 // Agent implements the core agent loop: message -> LLM -> tool calls -> LLM -> response.
 type Agent struct {
-	executor     ChatExecutor
-	registry     *tools.Registry
-	permissions       *tools.PermissionChecker
+	executor         ChatExecutor
+	registry         *tools.Registry
+	permissions      *tools.PermissionChecker
 	permissionPrompt tools.PermissionPromptFunc
 	rejectionHistory map[string]int // tracks 'toolname:error' -> count
-	intentRouter *IntentRouter
-	conversation *Conversation
-	renderer     TerminalRenderer
-	config       Config
-	sessionID    string
+	intentRouter     *IntentRouter
+	conversation     *Conversation
+	renderer         TerminalRenderer
+	config           Config
+	sessionID        string
 
 	// runCtx is set at the start of Run() and used by sub-agent phases and MCP
 	// tool calls to inherit the parent's cancellation signal. The Agent loop is
@@ -58,10 +58,6 @@ type Agent struct {
 	// methods are called from deep within the agent loop where threading ctx
 	// through all callers would require significant refactoring.
 	runCtx context.Context
-
-	// approvedCategories tracks which tool categories have been approved by the user
-	// for the current session. Used for interactive permission prompts.
-	approvedCategories map[string]bool
 
 	// Sub-agent hierarchy
 	mu       sync.Mutex
@@ -85,35 +81,35 @@ type Agent struct {
 	levelRotationIdx int // tracks provider rotation within current escalation level
 
 	// Pipeline state
-	originalRequest    string // first user message
-	toolCallCount      int    // total tool calls this session
-	wroteCodeFiles     bool   // true if file_write or file_edit was used on code files
-	completionVerifyDone bool // true after completion verification ran (prevents retry loops)
-	pipeline           *Pipeline
-	pipelinePhase      int    // current phase index
-	phaseToolCalls     int    // tool calls in current phase
-	pipelineCycles     int    // how many times we've failed back to implement (cap at 3)
-	acceptanceCriteria string // generated in plan phase
-	cachedSystemPrompt string // built once, reused
-	cachedSkillContext string // computed once from originalRequest, injected into all sub-agents
-	skillContextOnce   sync.Once
-	noToolTurns        int // consecutive turns without tool calls (stall detection)
-	textContinuations  int  // how many times we've continued past text-only turns (cap at 2)
-	testsPassedClean   bool // true after a test command exits 0 — suppresses continuations (#340)
-	lastResponseStreamed bool // true if the most recent LLM response was delivered via streaming tokens
-	reviewTracker      *ReviewCycleTracker // detects stable review cycles (no progress)
-	phaseRetries       int // consecutive quality gate rejections in current phase
-	phaseTurns         int // turns spent in current phase (hard cap at maxPhaseTurns)
-	lastGateScore      int // verification gate passed count from previous retry (plateau detection)
-	plateauCount       int // consecutive retries with no score improvement
-	cachedPromptLevel     int      // provider level when system prompt was cached (-1 = uncached)
-	toolFingerprints      []string // sliding window of recent tool call fingerprints (loop detection)
-	toolOutputFingerprints map[string]int // toolName+outputHash -> repeat count (loop detection)
-	loopWarningCount      int      // consecutive loop warnings without resolution (escalation trigger)
-	exhaustionRedirects   int      // how many times we've hit chain-exhausted redirect (cap at 3)
-	filesModified         map[string]bool // tracks files modified in current session
-	turnsSinceFileMod     int      // turns since last file modification (warn at 10)
-	confidentialMode      bool     // when true, blocks external API calls (web_search, web_fetch)
+	originalRequest        string // first user message
+	toolCallCount          int    // total tool calls this session
+	wroteCodeFiles         bool   // true if file_write or file_edit was used on code files
+	completionVerifyDone   bool   // true after completion verification ran (prevents retry loops)
+	pipeline               *Pipeline
+	pipelinePhase          int    // current phase index
+	phaseToolCalls         int    // tool calls in current phase
+	pipelineCycles         int    // how many times we've failed back to implement (cap at 3)
+	acceptanceCriteria     string // generated in plan phase
+	cachedSystemPrompt     string // built once, reused
+	cachedSkillContext     string // computed once from originalRequest, injected into all sub-agents
+	skillContextOnce       sync.Once
+	noToolTurns            int                 // consecutive turns without tool calls (stall detection)
+	textContinuations      int                 // how many times we've continued past text-only turns (cap at 2)
+	testsPassedClean       bool                // true after a test command exits 0 — suppresses continuations (#340)
+	lastResponseStreamed   bool                // true if the most recent LLM response was delivered via streaming tokens
+	reviewTracker          *ReviewCycleTracker // detects stable review cycles (no progress)
+	phaseRetries           int                 // consecutive quality gate rejections in current phase
+	phaseTurns             int                 // turns spent in current phase (hard cap at maxPhaseTurns)
+	lastGateScore          int                 // verification gate passed count from previous retry (plateau detection)
+	plateauCount           int                 // consecutive retries with no score improvement
+	cachedPromptLevel      int                 // provider level when system prompt was cached (-1 = uncached)
+	toolFingerprints       []string            // sliding window of recent tool call fingerprints (loop detection)
+	toolOutputFingerprints map[string]int      // toolName+outputHash -> repeat count (loop detection)
+	loopWarningCount       int                 // consecutive loop warnings without resolution (escalation trigger)
+	exhaustionRedirects    int                 // how many times we've hit chain-exhausted redirect (cap at 3)
+	filesModified          map[string]bool     // tracks files modified in current session
+	turnsSinceFileMod      int                 // turns since last file modification (warn at 10)
+	confidentialMode       bool                // when true, blocks external API calls (web_search, web_fetch)
 
 	// Durable execution — checkpoint state
 	toolCallLog []string // IDs of completed tool calls for resume
@@ -122,8 +118,8 @@ type Agent struct {
 	hasCompacted bool // set true after compactConversation; triggers auto-context injection
 
 	// PASTE speculative execution
-	speculator  *SpeculativeCache  // pre-executes predicted read-only tools while LLM thinks
-	toolHistory []toolCallRecord   // recent tool calls for pattern prediction (last 10)
+	speculator  *SpeculativeCache // pre-executes predicted read-only tools while LLM thinks
+	toolHistory []toolCallRecord  // recent tool calls for pattern prediction (last 10)
 
 	// Hallucination detection
 	factTracker              *FactTracker // in-memory ground-truth accumulator
@@ -153,9 +149,9 @@ type Agent struct {
 	bus *EventBus
 
 	// Worktree management for isolated code modifications
-	worktreeID     string
+	worktreeID      string
 	worktreeManager *worktree.Manager
-	lockPath       string
+	lockPath        string
 }
 
 // New creates an agent with the given executor, tool registry, and config.
@@ -164,24 +160,23 @@ func New(executor ChatExecutor, registry *tools.Registry, renderer TerminalRende
 	if sessionID == "" {
 		sessionID = fmt.Sprintf("agent-%d", time.Now().UnixNano())
 	}
-	
+
 	a := &Agent{
-		executor:              executor,
-		registry:              registry,
+		executor:               executor,
+		registry:               registry,
 		toolOutputFingerprints: make(map[string]int),
-		filesModified:         make(map[string]bool),
-		permissions:       tools.NewPermissionChecker(tools.ModeAutoApprove),
-		conversation:      NewConversation(),
-		renderer:          renderer,
-		config:            config,
-		sessionID:         sessionID,
-		bus:               config.EventBus,
-		cachedPromptLevel: -1, // force rebuild on first call
-		reviewTracker:     &ReviewCycleTracker{},
-		intentRouter:      NewIntentRouter(),
-		confidentialMode:  config.Confidential,
-		rejectionHistory:  make(map[string]int),
-		approvedCategories: make(map[string]bool),
+		filesModified:          make(map[string]bool),
+		permissions:            tools.NewPermissionChecker(tools.ModeAutoApprove),
+		conversation:           NewConversation(),
+		renderer:               renderer,
+		config:                 config,
+		sessionID:              sessionID,
+		bus:                    config.EventBus,
+		cachedPromptLevel:      -1, // force rebuild on first call
+		reviewTracker:          &ReviewCycleTracker{},
+		intentRouter:           NewIntentRouter(),
+		confidentialMode:       config.Confidential,
+		rejectionHistory:       make(map[string]int),
 	}
 	if isSpeculationEnabled() {
 		a.speculator = NewSpeculativeCache()
@@ -196,37 +191,18 @@ func (a *Agent) SetPermissions(pc *tools.PermissionChecker) {
 
 // SetPermissionPrompt sets the callback for interactive permission prompting.
 func (a *Agent) SetPermissionPrompt(fn tools.PermissionPromptFunc) {
-	a.permissionPrompt = fn
-}
-
-// getToolCategory returns the category for a tool name
-func getToolCategory(toolName string) string {
-	switch toolName {
-	case "file_write", "file_edit", "notebook_edit":
-		return "file_write"
-	case "bash":
-		return "shell"
-	case "git":
-		return "git"
-	case "file_read", "grep", "glob":
-		return "read_only"
-	default:
-		return "other"
+	if fn == nil {
+		a.permissionPrompt = nil
+		return
 	}
-}
-
-// isReadOnlyTool returns true if the tool is read-only and doesn't need permission
-func isReadOnlyTool(toolName string, args map[string]interface{}) bool {
-	if toolName == "git" {
-		// Check git subcommand
-		if subcommand, ok := args["subcommand"].(string); ok {
-			return subcommand == "status" || subcommand == "diff" || subcommand == "log" ||
-				subcommand == "show" || subcommand == "rev-parse" || subcommand == "remote" ||
-				subcommand == "blame"
-		}
-		return false
+	a.permissionPrompt = func(toolName string, category tools.ToolCategory, args map[string]interface{}) bool {
+		a.emit(EventPermissionRequest, "", map[string]any{
+			"tool_name": toolName,
+			"category":  string(category),
+			"args":      args,
+		})
+		return fn(toolName, category, args)
 	}
-	return toolName == "file_read" || toolName == "grep" || toolName == "glob"
 }
 
 // SetPool sets the agent pool for concurrency management.
@@ -493,7 +469,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 
 			log.Printf("[Agent] plan-first: %s — injecting planning instruction (vhs=%v)", reason, isTerminalChange)
 			a.conversation.Add(providers.Message{
-				Role: "user",
+				Role:    "user",
 				Content: "IMPORTANT: Before writing any code, use the plan tool to create a brief plan with acceptance criteria. Then implement the plan step by step. Do NOT skip planning." + vhsInstruction,
 			})
 		}
@@ -590,7 +566,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 				}
 				// Inject the plan result + next phase prompt into conversation
 				a.conversation.Add(providers.Message{
-					Role:    "user",
+					Role: "user",
 					Content: fmt.Sprintf("The planning phase is complete. Here is the %s and acceptance criteria:\n\n%s\n\nNow proceed to implement. %s",
 						label, planResult, a.pipeline.PhasePrompt(a.pipelinePhase, a.acceptanceCriteria, a.originalRequest)),
 				})
@@ -608,7 +584,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 					log.Printf("[Agent] pipeline: injecting phase %d/%d prompt: %s",
 						a.pipelinePhase+1, len(a.pipeline.Phases), currentPhase.Name)
 					a.conversation.Add(providers.Message{
-						Role:    "user",
+						Role: "user",
 						Content: fmt.Sprintf("You are working in phases. Current phase: %s\n\n%s\n\nComplete this phase using tools, then say %s_COMPLETE before moving on.",
 							currentPhase.Name, phasePrompt, strings.ToUpper(strings.ReplaceAll(currentPhase.Name, "-", "_"))),
 					})
@@ -672,9 +648,9 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, error) {
 
 	// Emit task completion event
 	a.emit(EventTaskComplete, "", map[string]any{
-		"files_created":  filesCreated,
-		"files_modified": filesModified,
-		"commands_total": bashCount,
+		"files_created":   filesCreated,
+		"files_modified":  filesModified,
+		"commands_total":  bashCount,
 		"commands_passed": bashPassed,
 		"commands_failed": bashFailed,
 	})
@@ -942,22 +918,22 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			// Case 1: Classified as chat but LLM actually used tools → should have been generate/fix
 			if classifiedIntent == IntentChat && hasToolCalls {
 				correctIntent := IntentGenerate
-				if strings.Contains(strings.ToLower(a.originalRequest), "fix") || 
-				   strings.Contains(strings.ToLower(a.originalRequest), "error") ||
-				   strings.Contains(strings.ToLower(a.originalRequest), "fail") {
+				if strings.Contains(strings.ToLower(a.originalRequest), "fix") ||
+					strings.Contains(strings.ToLower(a.originalRequest), "error") ||
+					strings.Contains(strings.ToLower(a.originalRequest), "fail") {
 					correctIntent = IntentFix
 				}
-				log.Printf("[IntentFeedback] correction: %q was %s but used tools → %s", 
+				log.Printf("[IntentFeedback] correction: %q was %s but used tools → %s",
 					a.originalRequest[:min(len(a.originalRequest), 50)], classifiedIntent, correctIntent)
 				if err := saveIntentCorrection(a.originalRequest, string(correctIntent)); err != nil {
 					log.Printf("[IntentFeedback] warning: failed to save correction: %v", err)
 				}
 			}
-			
+
 			// Case 2: Classified as generate/fix but LLM responded with only text → likely chat
 			if (classifiedIntent == IntentGenerate || classifiedIntent == IntentFix ||
-			    classifiedIntent == IntentModify) && !hasToolCalls {
-				log.Printf("[IntentFeedback] correction: %q was %s but no tools used → chat", 
+				classifiedIntent == IntentModify) && !hasToolCalls {
+				log.Printf("[IntentFeedback] correction: %q was %s but no tools used → chat",
 					a.originalRequest[:min(len(a.originalRequest), 50)], classifiedIntent)
 				if err := saveIntentCorrection(a.originalRequest, string(IntentChat)); err != nil {
 					log.Printf("[IntentFeedback] warning: failed to save correction: %v", err)
@@ -1225,50 +1201,6 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 			"args_summary": argsSummary,
 		})
 
-		// Permission check: require approval for non-read-only tools
-		category := getToolCategory(name)
-		needsPermission := !isReadOnlyTool(name, args)
-		if needsPermission {
-			_, alreadyApproved := a.approvedCategories[category]
-			if !alreadyApproved {
-				// Check if in --message mode (non-interactive, auto-approve with notice)
-				isMessageMode := a.config.NonInteractive
-				if isMessageMode {
-					log.Printf("[Agent] permission: auto-approved %s (category: %s) in --message mode", name, category)
-					a.approvedCategories[category] = true
-				} else {
-					// Interactive mode: emit permission request event
-					// Full interactive prompt wiring in follow-up
-					log.Printf("[Agent] permission: request for %s (category: %s) - interactive mode", name, category)
-					a.emit(EventPermissionRequest, "", map[string]any{
-						"tool_name": name,
-						"category":  category,
-						"args":      args,
-					})
-					tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
-					if err != nil {
-						log.Printf("[Agent] cannot open /dev/tty for permission prompt — auto-approving")
-						a.approvedCategories[category] = true
-					} else {
-						fmt.Fprintf(tty, "\r\n  \033[33m[permission]\033[0m %s wants to %s — allow? (y/n/a) ", name, category)
-						buf := make([]byte, 1)
-						tty.Read(buf)
-						tty.Close()
-						switch buf[0] {
-						case 'y', 'Y':
-							// approve this call only
-						case 'a', 'A':
-							a.approvedCategories[category] = true
-						default:
-							resultContent = "user denied permission for " + name
-							isError = true
-							continue
-						}
-					}
-				}
-			}
-		}
-
 		// File read dedup: return short notice if the EXACT same read was done before.
 		// Cache key includes path + offset + limit so reading different sections of
 		// the same file is allowed (needed for large files like ASCII art sources).
@@ -1329,7 +1261,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 		if execErr != nil {
 			resultContent = fmt.Sprintf("error: %v\n%s", execErr, toolErrorHint(name))
 			isError = true
-			
+
 			// Track repeated rejections
 			rejectionKey := fmt.Sprintf("%s:%v", name, execErr.Error())
 			a.rejectionHistory[rejectionKey]++
@@ -1341,7 +1273,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []map[string]int
 				})
 				delete(a.rejectionHistory, rejectionKey) // reset after escalation
 			}
-			
+
 			if a.renderer != nil {
 				a.renderer.ToolResult(name, resultContent, true)
 			}
@@ -1612,6 +1544,11 @@ func (a *Agent) buildMessages() []providers.Message {
 			sysPrompt += "\n\n# Project Instructions\n" + projectInstr
 		}
 
+		// Inject durable cross-session memory from global/project MEMORY.md files.
+		if memoryCtx := LoadDurableMemoryContext(a.config.WorkDir); memoryCtx != "" {
+			sysPrompt += memoryCtx
+		}
+
 		// Inject Go module path for import guidance
 		if modulePath := LoadModulePath(a.config.WorkDir); modulePath != "" {
 			sysPrompt += fmt.Sprintf("\n\n# Go Module Information\nThis Go project uses module %s. All imports must use this exact module path.", modulePath)
@@ -1626,7 +1563,6 @@ func (a *Agent) buildMessages() []providers.Message {
 			log.Printf("[Agent] skill injection: none (skills=%d, originalRequest=%d chars)",
 				len(a.config.Skills), len(a.originalRequest))
 		}
-
 
 		// Inject extracted spec constraints prominently — these override skill patterns
 		if a.specConstraints != nil {
@@ -1872,7 +1808,8 @@ func (a *Agent) invokeMCPToolsForSkills(chain []orchestration.Skill, query strin
 
 // maxPhaseTurns returns the dynamic hard cap on LLM calls per pipeline phase.
 // Auto-detects from spec complexity when Config.MaxPhaseTurns is 0:
-//   >20KB spec = 40 turns, 5-20KB = 25 turns, <5KB = 15 turns.
+//
+//	>20KB spec = 40 turns, 5-20KB = 25 turns, <5KB = 15 turns.
 func (a *Agent) maxPhaseTurns() int {
 	if a.config.MaxPhaseTurns > 0 {
 		return a.config.MaxPhaseTurns
@@ -1899,7 +1836,7 @@ const maxPipelineCycles = 3
 func generateToolBlock(reg *tools.Registry) string {
 	var sb strings.Builder
 	sb.WriteString("AVAILABLE TOOLS (use exact names):\n")
-	
+
 	defs := reg.OpenAIToolDefinitions()
 	for _, def := range defs {
 		fn, ok := def["function"].(map[string]interface{})
@@ -1908,12 +1845,12 @@ func generateToolBlock(reg *tools.Registry) string {
 		}
 		name, _ := fn["name"].(string)
 		desc, _ := fn["description"].(string)
-		
+
 		// Extract parameter names from schema
 		params, _ := fn["parameters"].(map[string]interface{})
 		props, _ := params["properties"].(map[string]interface{})
 		required, _ := params["required"].([]interface{})
-		
+
 		var args []string
 		for paramName, paramDef := range props {
 			_, ok := paramDef.(map[string]interface{})
@@ -1934,10 +1871,10 @@ func generateToolBlock(reg *tools.Registry) string {
 			}
 			args = append(args, argStr)
 		}
-		
+
 		sb.WriteString(fmt.Sprintf("- %s: %s. Args: %s.\n", name, desc, strings.Join(args, ", ")))
 	}
-	
+
 	sb.WriteString(`
 TOOL ROUTING:
 - When the user says "search", "look up", "find online", or asks about current events: use web_search.
@@ -1945,8 +1882,7 @@ TOOL ROUTING:
 - When the user asks about files in the project: use file_read, grep, or glob.
 - web_search returns titles + URLs + snippets. Use web_fetch to read full page content.
 
-DO NOT call: str_replace_editor, read_file, write_file, execute_command, list_files,
-search_files, browser, computer, text_editor, or any tool not listed above.
+Only call tools listed above. If a tool name is not in AVAILABLE TOOLS, do not invent it.
 
 EXECUTION RULES:
 - Use bash ONLY for: mkdir, pip/npm install, quick smoke tests (< 10 seconds).
@@ -1986,9 +1922,9 @@ func defaultSystemPrompt(workDir string, providerLevel int, projectLanguage stri
 			}
 		}
 		if hasNotebook && !hasPython {
-			formatContext = "\nThis is a Jupyter notebook project. Use notebook_edit for .ipynb files. Do not create standalone .py helper files.\n"
+			formatContext = "\nThis is a Jupyter notebook project. Use notebook_edit for .ipynb files. Do not create standalone .py helper files. Work cell-by-cell until every required code cell contains substantive notebook code, not just imports or comments.\n"
 		} else if hasNotebook && hasPython {
-			formatContext = "\nThis project contains Jupyter notebooks. Prefer notebook_edit for .ipynb files.\n"
+			formatContext = "\nThis project contains Jupyter notebooks. Prefer notebook_edit for .ipynb files. Work cell-by-cell and finish all required notebook cells before stopping.\n"
 		}
 	}
 
@@ -2329,14 +2265,14 @@ func (a *Agent) advancePipeline(content string) bool {
 
 		// Advance to next phase
 		a.pipelinePhase++
-		a.phaseToolCalls = 0      // reset for new phase
-		a.phaseTurns = 0          // reset per-phase turn counter
-		a.phaseRetries = 0        // reset retry counter
-		a.lastGateScore = 0       // reset plateau tracking
+		a.phaseToolCalls = 0 // reset for new phase
+		a.phaseTurns = 0     // reset per-phase turn counter
+		a.phaseRetries = 0   // reset retry counter
+		a.lastGateScore = 0  // reset plateau tracking
 		a.plateauCount = 0
-		a.toolFingerprints = nil  // reset loop detection
+		a.toolFingerprints = nil // reset loop detection
 		a.loopWarningCount = 0
-		a.reviewTracker.Reset()   // reset review stability detection for new phase
+		a.reviewTracker.Reset() // reset review stability detection for new phase
 
 		// Compact conversation between phases: store old messages to DB,
 		// keep only recent context + a phase summary. Prevents context overflow
@@ -2541,7 +2477,7 @@ func (a *Agent) advancePipeline(content string) bool {
 				log.Printf("[Agent] pipeline: max review cycles reached (%d), accepting result", a.pipelineCycles)
 				a.pipelineCycles = 0
 				a.conversation.Add(providers.Message{
-					Role: "user",
+					Role:    "user",
 					Content: fmt.Sprintf("Review found issues but max cycles reached. Delivering current state:\n%s", reviewResult),
 				})
 				return a.advancePipeline("PHASE_PASSED")
@@ -2558,7 +2494,7 @@ func (a *Agent) advancePipeline(content string) bool {
 			log.Printf("[Agent] pipeline: review cycle %d/%d — fixing on %s (provider idx %d, escalated=%v)",
 				a.pipelineCycles, maxPipelineCycles, providerName, a.providerIdx, escalated)
 			a.conversation.Add(providers.Message{
-				Role: "user",
+				Role:    "user",
 				Content: fmt.Sprintf("The %s review found issues (cycle %d/%d). Fix ALL these issues using tools, then say IMPLEMENT_COMPLETE:\n---\n%s", nextPhase.Name, a.pipelineCycles, maxPipelineCycles, reviewResult),
 			})
 			// Go back to self-check — after the fix, self-check re-runs, then code-review with next reviewer
@@ -2663,7 +2599,7 @@ func (a *Agent) advancePipeline(content string) bool {
 		a.phaseTurns = 0 // reset turn cap for retry
 
 		a.conversation.Add(providers.Message{
-			Role: "user",
+			Role:    "user",
 			Content: fmt.Sprintf("The %s phase found issues (cycle %d/%d). Fix them now using tools, then say IMPLEMENT_COMPLETE.", currentPhase.Name, a.pipelineCycles, maxPipelineCycles),
 		})
 		return true
@@ -3167,12 +3103,12 @@ Say VERIFIED_CORRECT if all criteria met, or NEEDS_FIX with every issue listed.`
 
 	// Emit merge event
 	a.emit(EventKReviewMerge, "", map[string]any{
-		"phase":            phase.Name,
-		"k":                k,
-		"pass_count":       passCount,
-		"high_confidence":  len(merged.HighConfidence),
-		"disagreements":    len(merged.Disagreements),
-		"total_findings":   len(allFindings),
+		"phase":           phase.Name,
+		"k":               k,
+		"pass_count":      passCount,
+		"high_confidence": len(merged.HighConfidence),
+		"disagreements":   len(merged.Disagreements),
+		"total_findings":  len(allFindings),
 	})
 
 	formatted := FormatMergedReview(merged)
@@ -3287,11 +3223,11 @@ func (a *Agent) SetMinProviderLevel(level int) {
 		tier = string(a.config.EscalationChain[a.providerIdx].Tier)
 	}
 	a.emit(EventEscalation, "", map[string]any{
-		"from_level":  fromLevel,
-		"to_level":    a.providerIdx,
+		"from_level":   fromLevel,
+		"to_level":     a.providerIdx,
 		"total_levels": len(a.config.EscalationChain),
-		"tier":        tier,
-		"providers":   fmt.Sprintf("%v", providers),
+		"tier":         tier,
+		"providers":    fmt.Sprintf("%v", providers),
 	})
 }
 

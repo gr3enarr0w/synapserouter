@@ -16,25 +16,70 @@ import (
 	"golang.org/x/term"
 
 	"github.com/gr3enarr0w/synapserouter/internal/security"
+	"github.com/gr3enarr0w/synapserouter/internal/tools"
 )
 
 // CodeREPL implements the code mode interactive loop with readline-based input
 // for history, tab completion, and proper terminal handling.
 type CodeREPL struct {
-	agent         *Agent
-	renderer      *CodeRenderer
-	out           io.Writer
-	pendingMessage string // queued message typed during agent execution
+	agent           *Agent
+	renderer        *CodeRenderer
+	out             io.Writer
+	pendingMessages []string
+	permissionReqCh chan permissionRequest
+}
+
+type permissionRequest struct {
+	toolName string
+	category tools.ToolCategory
+	args     map[string]interface{}
+	response chan bool
+}
+
+type runResult struct {
+	response string
+	err      error
 }
 
 // NewCodeREPL creates a code mode REPL. The Terminal parameter is accepted
 // for API compatibility but no longer used — readline handles terminal mode.
 func NewCodeREPL(agent *Agent, renderer *CodeRenderer, _ *Terminal) *CodeREPL {
 	return &CodeREPL{
-		agent:    agent,
-		renderer: renderer,
-		out:      os.Stdout,
+		agent:           agent,
+		renderer:        renderer,
+		out:             os.Stdout,
+		permissionReqCh: make(chan permissionRequest),
 	}
+}
+
+func (cr *CodeREPL) PermissionPrompt() tools.PermissionPromptFunc {
+	return func(toolName string, category tools.ToolCategory, args map[string]interface{}) bool {
+		req := permissionRequest{
+			toolName: toolName,
+			category: category,
+			args:     args,
+			response: make(chan bool, 1),
+		}
+		cr.permissionReqCh <- req
+		return <-req.response
+	}
+}
+
+func (cr *CodeREPL) enqueuePendingMessage(input string) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return
+	}
+	cr.pendingMessages = append(cr.pendingMessages, input)
+}
+
+func (cr *CodeREPL) dequeuePendingMessage() string {
+	if len(cr.pendingMessages) == 0 {
+		return ""
+	}
+	input := cr.pendingMessages[0]
+	cr.pendingMessages = cr.pendingMessages[1:]
+	return input
 }
 
 // Run starts the code mode REPL. Blocks until exit.
@@ -115,6 +160,12 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		}
 	}
 
+	var inputCh <-chan byte
+	var inputClosedCh <-chan struct{}
+	if isTerminal {
+		inputCh, inputClosedCh = cr.startInputReader()
+	}
+
 	// Start signal handler goroutine for Ctrl-C
 	go func() {
 		for range sigCh {
@@ -157,8 +208,6 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		}
 	}()
 
-	noColor := os.Getenv("NO_COLOR") != ""
-
 	for {
 		// Check if double Ctrl-C exit was triggered
 		select {
@@ -167,23 +216,18 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		default:
 		}
 
-		// Print prompt (in raw mode we must use \r\n for newlines)
-		if noColor {
-			fmt.Fprint(cr.out, "synroute> ")
-		} else {
-			fmt.Fprint(cr.out, "\033[32msynroute>\033[0m ")
-		}
+		cr.renderer.SetInputActive(true)
+		cr.renderer.SetInputLine("")
 
 		// Check for pending message typed during agent execution
 		var input string
 		var eof bool
-		if cr.pendingMessage != "" {
-			input = cr.pendingMessage
-			cr.pendingMessage = ""
+		if queued := cr.dequeuePendingMessage(); queued != "" {
+			input = queued
 		} else {
-			input, eof = cr.readLine(ctx, stdinFd, isTerminal, exitCh, &reqMu, &agentRunning, cancelFn, &ctrlCCount, &lastCtrlC)
+			input, eof = cr.readLine(ctx, stdinFd, isTerminal, exitCh, inputCh, inputClosedCh, &reqMu, &agentRunning, cancelFn, &ctrlCCount, &lastCtrlC)
 			if eof {
-				cr.rawWrite("\r\nbye\r\n")
+				cr.rawWrite("bye\r\n")
 				return nil
 			}
 		}
@@ -191,11 +235,9 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		log.Printf("[REPL] got input: %q", input)
 
 		if input == "" {
-			cr.rawWrite("\r\n")
 			continue
 		}
-
-		cr.rawWrite("\r\n")
+		cr.renderer.SetInputLine("")
 
 		// Handle REPL slash commands
 		if strings.HasPrefix(input, "/") {
@@ -215,10 +257,7 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 			continue
 		}
 
-		// Temporarily restore terminal for agent execution (tools use cooked mode)
-		if restoreTerminal != nil {
-			restoreTerminal()
-		}
+		cr.renderer.SetInputActive(false)
 
 		// Create fresh context for the request
 		reqCtx := newReqCtx()
@@ -233,16 +272,18 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		cr.renderer.writeContent("")
 		cr.renderer.mu.Unlock()
 
-		response, err := cr.agent.Run(reqCtx, input)
-		markDone()
+		resultCh := make(chan runResult, 1)
+		go func() {
+			response, err := cr.agent.Run(reqCtx, input)
+			markDone()
+			resultCh <- runResult{response: response, err: err}
+		}()
+
+		response, err := cr.waitForAgent(reqCtx, exitCh, inputCh, inputClosedCh, &reqMu, cancelFn, &ctrlCCount, &lastCtrlC, resultCh)
 		if err != nil {
 			if reqCtx.Err() != nil {
-				// Re-enter raw mode before next prompt
-				if isTerminal {
-					if oldState, err := term.MakeRaw(stdinFd); err == nil {
-						restoreTerminal = func() { _ = term.Restore(stdinFd, oldState) }
-					}
-				}
+				cr.renderer.SetInputActive(true)
+				cr.renderer.SetInputLine("")
 				continue
 			}
 			cr.renderer.Error(err.Error())
@@ -270,12 +311,141 @@ func (cr *CodeREPL) Run(ctx context.Context) error {
 		}
 
 		// Render status bar after agent completes
+		cr.renderer.SetInputActive(true)
+		cr.renderer.SetInputLine("")
 		cr.renderer.RenderStatusBar()
 
-		// Re-enter raw mode for next prompt
-		if isTerminal {
-			if oldState, err := term.MakeRaw(stdinFd); err == nil {
-				restoreTerminal = func() { _ = term.Restore(stdinFd, oldState) }
+	}
+}
+
+func (cr *CodeREPL) startInputReader() (<-chan byte, <-chan struct{}) {
+	inputCh := make(chan byte, 256)
+	closedCh := make(chan struct{})
+	go func() {
+		defer close(closedCh)
+		buf := make([]byte, 1)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if err != nil || n == 0 {
+				return
+			}
+			inputCh <- buf[0]
+		}
+	}()
+	return inputCh, closedCh
+}
+
+func (cr *CodeREPL) waitForAgent(ctx context.Context, exitCh chan struct{}, inputCh <-chan byte, inputClosedCh <-chan struct{}, reqMu *sync.Mutex, cancelFn context.CancelFunc, ctrlCCount *int, lastCtrlC *time.Time, resultCh <-chan runResult) (string, error) {
+	var queueBuf []byte
+	cr.renderer.SetInputActive(true)
+	cr.renderer.SetFooterNote(cr.renderer.color("\033[2m", "  agent running - type and press Enter to queue next message"))
+	cr.renderer.SetInputLine("")
+
+	for {
+		select {
+		case <-exitCh:
+			return "", io.EOF
+		case <-inputClosedCh:
+			return "", io.EOF
+		case result := <-resultCh:
+			cr.renderer.SetFooterNote("")
+			cr.renderer.SetInputLine("")
+			return result.response, result.err
+		case req := <-cr.permissionReqCh:
+			req.response <- cr.handlePermissionRequest(inputCh, inputClosedCh, exitCh, req)
+		case b := <-inputCh:
+			switch {
+			case b == 0x03:
+				reqMu.Lock()
+				if cancelFn != nil {
+					cancelFn()
+				}
+				reqMu.Unlock()
+				queueBuf = queueBuf[:0]
+				cr.renderer.SetInputLine("")
+			case b == 0x7F || b == 0x08:
+				if len(queueBuf) > 0 {
+					queueBuf = queueBuf[:len(queueBuf)-1]
+					cr.renderer.SetInputLine(string(queueBuf))
+				}
+			case b == 0x15:
+				queueBuf = queueBuf[:0]
+				cr.renderer.SetInputLine("")
+			case b == 0x0D || b == 0x0A:
+				queued := strings.TrimSpace(string(queueBuf))
+				if queued != "" {
+					cr.enqueuePendingMessage(queued)
+					cr.renderer.mu.Lock()
+					cr.renderer.writeContent(cr.renderer.color("\033[36m", "  queued next message: "+queued))
+					cr.renderer.mu.Unlock()
+				}
+				queueBuf = queueBuf[:0]
+				cr.renderer.SetInputLine("")
+			case b >= 0x20 && b < 0x7F:
+				queueBuf = append(queueBuf, b)
+				cr.renderer.SetInputLine(string(queueBuf))
+			}
+		case <-ctx.Done():
+			// Wait for result channel to surface the final error/response.
+		}
+	}
+}
+
+func (cr *CodeREPL) handlePermissionRequest(inputCh <-chan byte, inputClosedCh <-chan struct{}, exitCh chan struct{}, req permissionRequest) bool {
+	var lineBuf []byte
+	label := "write"
+	if req.category == tools.CategoryDangerous {
+		label = "dangerous"
+	}
+	summary := formatPermissionSummary(req.toolName, req.args)
+
+	cr.renderer.mu.Lock()
+	cr.renderer.writeContent("")
+	cr.renderer.writeContent(cr.renderer.color("\033[1;33m", fmt.Sprintf("  [permission] %s tool: %s", label, req.toolName)))
+	if summary != "" {
+		for _, line := range strings.Split(summary, "\n") {
+			cr.renderer.writeContent(cr.renderer.color("\033[2m", "  "+line))
+		}
+	}
+	cr.renderer.mu.Unlock()
+	cr.renderer.SetFooterNote(cr.renderer.color("\033[33m", "  Allow? [y/n/a]"))
+	cr.renderer.SetInputLine("")
+
+	for {
+		select {
+		case <-exitCh:
+			cr.renderer.SetFooterNote("")
+			return false
+		case <-inputClosedCh:
+			cr.renderer.SetFooterNote("")
+			return false
+		case b := <-inputCh:
+			switch {
+			case b == 0x03:
+				cr.renderer.SetFooterNote("")
+				cr.renderer.SetInputLine("")
+				return false
+			case b == 0x7F || b == 0x08:
+				if len(lineBuf) > 0 {
+					lineBuf = lineBuf[:len(lineBuf)-1]
+					cr.renderer.SetInputLine(string(lineBuf))
+				}
+			case b == 0x0D || b == 0x0A:
+				cr.renderer.SetFooterNote("")
+				cr.renderer.SetInputLine("")
+				input := strings.TrimSpace(string(lineBuf))
+				if input == "" {
+					return parsePermissionByte('\n', new(bool))
+				}
+				approveAll := false
+				if approved, ok := parsePermissionString(input, &approveAll); ok {
+					return approved
+				}
+				lineBuf = lineBuf[:0]
+				cr.renderer.SetFooterNote(cr.renderer.color("\033[33m", "  Allow? [y/n/a]"))
+			case b >= 0x20 && b < 0x7F:
+				lineBuf = append(lineBuf, b)
+				cr.renderer.SetInputLine(string(lineBuf))
 			}
 		}
 	}
@@ -289,7 +459,7 @@ func (cr *CodeREPL) rawWrite(s string) {
 // readLine reads a line of input character-by-character in raw terminal mode.
 // Handles keyboard shortcuts (Ctrl-L/P/T/E) inline, returns the completed line on Enter.
 // Returns (line, eof). If eof is true, the user pressed Ctrl-D or the terminal closed.
-func (cr *CodeREPL) readLine(ctx context.Context, fd int, isRaw bool, exitCh chan struct{}, reqMu *sync.Mutex, agentRunning *bool, cancelFn context.CancelFunc, ctrlCCount *int, lastCtrlC *time.Time) (string, bool) {
+func (cr *CodeREPL) readLine(ctx context.Context, fd int, isRaw bool, exitCh chan struct{}, inputCh <-chan byte, inputClosedCh <-chan struct{}, reqMu *sync.Mutex, agentRunning *bool, cancelFn context.CancelFunc, ctrlCCount *int, lastCtrlC *time.Time) (string, bool) {
 	if !isRaw {
 		// Fallback: cooked mode (piped input) — read a line from stdin
 		// Use goroutine to allow context cancellation
@@ -320,7 +490,7 @@ func (cr *CodeREPL) readLine(ctx context.Context, fd int, isRaw bool, exitCh cha
 
 	// Raw mode: read byte by byte
 	var lineBuf []byte
-	buf := make([]byte, 1)
+	cr.renderer.SetInputLine("")
 
 	for {
 		// Check exit channel and context cancellation
@@ -332,15 +502,16 @@ func (cr *CodeREPL) readLine(ctx context.Context, fd int, isRaw bool, exitCh cha
 		default:
 		}
 
-		n, err := os.Stdin.Read(buf)
-		if err != nil || n == 0 {
+		var b byte
+		select {
+		case <-inputClosedCh:
 			return "", true
+		case b = <-inputCh:
 		}
-
-		b := buf[0]
 
 		switch {
 		case b == 0x0D || b == 0x0A: // Enter (CR or LF)
+			cr.renderer.SetInputLine("")
 			return strings.TrimSpace(string(lineBuf)), false
 
 		case b == 0x04: // Ctrl-D (EOF)
@@ -351,10 +522,8 @@ func (cr *CodeREPL) readLine(ctx context.Context, fd int, isRaw bool, exitCh cha
 
 		case b == 0x03: // Ctrl-C
 			if len(lineBuf) > 0 {
-				// Text on line: clear it
-				cr.rawWrite("\r\033[K")
 				lineBuf = lineBuf[:0]
-				cr.rawWrite(cr.renderer.color("\033[36m", "synroute> "))
+				cr.renderer.SetInputLine("")
 				continue
 			}
 			// Empty line: track double-tap for exit
@@ -367,67 +536,40 @@ func (cr *CodeREPL) readLine(ctx context.Context, fd int, isRaw bool, exitCh cha
 			*lastCtrlC = now
 
 			if *ctrlCCount >= 2 {
-				cr.rawWrite("\r\n")
 				cr.rawWrite("bye\r\n")
 				return "", true // exit signal
 			}
 			// First Ctrl-C: show hint
-			cr.rawWrite("\r\n")
-			cr.rawWrite(cr.renderer.color("\033[2m", "  (press Ctrl-C again to exit)"))
-			cr.rawWrite("\r\n")
-			cr.rawWrite(cr.renderer.color("\033[36m", "synroute> "))
+			cr.renderer.mu.Lock()
+			cr.renderer.writeContent(cr.renderer.color("\033[2m", "  (press Ctrl-C again to exit)"))
+			cr.renderer.mu.Unlock()
+			cr.renderer.SetInputLine("")
 			continue
 
 		case b == 0x7F || b == 0x08: // Backspace (DEL or BS)
 			if len(lineBuf) > 0 {
 				lineBuf = lineBuf[:len(lineBuf)-1]
-				cr.rawWrite("\b \b") // erase last char visually
+				cr.renderer.SetInputLine(string(lineBuf))
 			}
 
 		case b == 0x0C: // Ctrl-L — cycle verbosity
 			v := (cr.renderer.verbosity + 1) % 3
 			cr.renderer.SetVerbosity(v)
 			labels := []string{"compact", "normal", "verbose"}
-			cr.rawWrite("\r\n")
 			cr.renderer.mu.Lock()
 			cr.renderer.writeContent(cr.renderer.color("\033[33m", "  verbosity: "+labels[v]))
 			cr.renderer.mu.Unlock()
-			// Reprint prompt with current input
-			cr.rawWrite("\r\n")
-			noColor := os.Getenv("NO_COLOR") != ""
-			if noColor {
-				cr.rawWrite("synroute> ")
-			} else {
-				cr.rawWrite("\033[32msynroute>\033[0m ")
-			}
-			cr.rawWrite(string(lineBuf))
+			cr.renderer.SetInputLine(string(lineBuf))
 
 		case b == 0x10: // Ctrl-P — pipeline status
-			cr.rawWrite("\r\n")
 			cr.renderer.ShowPipeline()
-			cr.rawWrite("\r\n")
-			noColor := os.Getenv("NO_COLOR") != ""
-			if noColor {
-				cr.rawWrite("synroute> ")
-			} else {
-				cr.rawWrite("\033[32msynroute>\033[0m ")
-			}
-			cr.rawWrite(string(lineBuf))
+			cr.renderer.SetInputLine(string(lineBuf))
 
 		case b == 0x14: // Ctrl-T — recent tools
-			cr.rawWrite("\r\n")
 			cr.renderer.ShowRecentTools()
-			cr.rawWrite("\r\n")
-			noColor := os.Getenv("NO_COLOR") != ""
-			if noColor {
-				cr.rawWrite("synroute> ")
-			} else {
-				cr.rawWrite("\033[32msynroute>\033[0m ")
-			}
-			cr.rawWrite(string(lineBuf))
+			cr.renderer.SetInputLine(string(lineBuf))
 
 		case b == 0x05: // Ctrl-E — force escalation
-			cr.rawWrite("\r\n")
 			if cr.agent.ForceEscalate() {
 				cr.renderer.mu.Lock()
 				cr.renderer.writeContent(cr.renderer.color("\033[33m", "  escalated to next tier"))
@@ -437,37 +579,15 @@ func (cr *CodeREPL) readLine(ctx context.Context, fd int, isRaw bool, exitCh cha
 				cr.renderer.writeContent(cr.renderer.color("\033[2m", "  already at highest tier"))
 				cr.renderer.mu.Unlock()
 			}
-			cr.rawWrite("\r\n")
-			noColor := os.Getenv("NO_COLOR") != ""
-			if noColor {
-				cr.rawWrite("synroute> ")
-			} else {
-				cr.rawWrite("\033[32msynroute>\033[0m ")
-			}
-			cr.rawWrite(string(lineBuf))
+			cr.renderer.SetInputLine(string(lineBuf))
 
 		case b == 0x1F: // Ctrl-/ — help
-			cr.rawWrite("\r\n")
 			cr.renderer.ShowHelp()
-			cr.rawWrite("\r\n")
-			noColor := os.Getenv("NO_COLOR") != ""
-			if noColor {
-				cr.rawWrite("synroute> ")
-			} else {
-				cr.rawWrite("\033[32msynroute>\033[0m ")
-			}
-			cr.rawWrite(string(lineBuf))
+			cr.renderer.SetInputLine(string(lineBuf))
 
 		case b == 0x15: // Ctrl-U — clear line
-			// Erase the visible line
-			cr.rawWrite("\r\033[K")
-			noColor := os.Getenv("NO_COLOR") != ""
-			if noColor {
-				cr.rawWrite("synroute> ")
-			} else {
-				cr.rawWrite("\033[32msynroute>\033[0m ")
-			}
 			lineBuf = lineBuf[:0]
+			cr.renderer.SetInputLine("")
 
 		case b == 0x1B: // ESC — start of escape sequence, consume and ignore
 			// Read the rest of the escape sequence (e.g. arrow keys: ESC [ A)
@@ -476,7 +596,7 @@ func (cr *CodeREPL) readLine(ctx context.Context, fd int, isRaw bool, exitCh cha
 
 		case b >= 0x20 && b < 0x7F: // Printable ASCII
 			lineBuf = append(lineBuf, b)
-			cr.rawWrite(string([]byte{b})) // echo the char
+			cr.renderer.SetInputLine(string(lineBuf))
 
 		default:
 			// Ignore other control characters

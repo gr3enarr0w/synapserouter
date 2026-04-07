@@ -331,6 +331,11 @@ func (m *Manager) CreateTask(ctx context.Context, req TaskRequest) (*Task, error
 		CreatedAt: time.Now(),
 		Steps:     BuildPlan(goal, req.Roles, req.MaxSteps),
 	}
+	if req.Execute {
+		now := time.Now()
+		task.Status = TaskStatusRunning
+		task.StartedAt = &now
+	}
 	m.tasks[task.ID] = task
 	m.persistTask(task)
 
@@ -369,6 +374,11 @@ func (m *Manager) RefineTask(ctx context.Context, taskID string, req RefineReque
 		Feedback:     feedback,
 		CreatedAt:    time.Now(),
 		Steps:        BuildRefinementPlan(parent.Goal, feedback, *parent, len(parent.Steps)),
+	}
+	if req.Execute {
+		now := time.Now()
+		task.Status = TaskStatusRunning
+		task.StartedAt = &now
 	}
 	m.tasks[task.ID] = task
 	m.persistTask(task)
@@ -3034,8 +3044,6 @@ func (m *Manager) markTaskRunning(taskID string) (*Task, error) {
 		return task, nil
 	}
 	if task.Status == TaskStatusPaused {
-		task.Status = TaskStatusRunning
-		m.persistTask(task)
 		return task, nil
 	}
 	now := time.Now()
@@ -3058,8 +3066,13 @@ func (m *Manager) completeTask(taskID, output string) {
 	defer m.mu.Unlock()
 
 	task := m.tasks[taskID]
+	if task == nil {
+		return
+	}
 	now := time.Now()
-	task.Status = TaskStatusCompleted
+	if task.Status != TaskStatusPaused {
+		task.Status = TaskStatusCompleted
+	}
 	task.CompletedAt = &now
 	task.FinalOutput = output
 	m.persistTask(task)
@@ -3071,8 +3084,13 @@ func (m *Manager) failTask(taskID string, err error) {
 	defer m.mu.Unlock()
 
 	task := m.tasks[taskID]
+	if task == nil {
+		return
+	}
 	now := time.Now()
-	task.Status = TaskStatusFailed
+	if task.Status != TaskStatusPaused {
+		task.Status = TaskStatusFailed
+	}
 	task.CompletedAt = &now
 	task.Error = err.Error()
 	m.persistTask(task)

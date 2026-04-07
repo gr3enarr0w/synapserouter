@@ -209,3 +209,80 @@ func TestWriteSynrouteMD(t *testing.T) {
 		t.Error("missing file manifest")
 	}
 }
+
+func TestSaveDurableMemoryWritesProjectAndGlobalMemory(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	continuity := &ProjectContinuity{
+		ProjectDir:     dir,
+		SessionID:      "sess-memory",
+		Phase:          "implement",
+		Language:       "go",
+		ContextSummary: "Prefer small, reviewable changes",
+		FileManifest:   []string{"main.go", "README.md"},
+	}
+
+	err := SaveDurableMemory(dir, continuity, []string{
+		"Prefer small, reviewable changes",
+		"Remember that I prefer table-driven tests",
+		"This line should not be stored",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	projectData, err := os.ReadFile(filepath.Join(dir, "MEMORY.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectContent := string(projectData)
+	if !strings.Contains(projectContent, "## Project Context") {
+		t.Fatalf("expected project memory block, got %s", projectContent)
+	}
+	if !strings.Contains(projectContent, "main.go") {
+		t.Fatalf("expected modified files in project memory, got %s", projectContent)
+	}
+
+	globalData, err := os.ReadFile(filepath.Join(home, ".synroute", "MEMORY.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	globalContent := string(globalData)
+	if !strings.Contains(globalContent, "Remember that I prefer table-driven tests") {
+		t.Fatalf("expected extracted preference in global memory, got %s", globalContent)
+	}
+	if strings.Contains(globalContent, "This line should not be stored") {
+		t.Fatalf("unexpected non-preference line in global memory: %s", globalContent)
+	}
+	if !strings.Contains(globalContent, autoMemoryStart) {
+		t.Fatalf("expected managed markers in global memory, got %s", globalContent)
+	}
+	if loaded := LoadDurableMemoryContext(dir); !strings.Contains(loaded, "Project Memory") || !strings.Contains(loaded, "User Memory") {
+		t.Fatalf("expected combined durable memory context, got %s", loaded)
+	}
+}
+
+func TestWriteManagedMemoryPreservesManualNotes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "MEMORY.md")
+	manual := "# MEMORY.md\n\nManual note outside generated block.\n"
+	if err := os.WriteFile(path, []byte(manual), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeManagedMemory(path, "## User Preferences\n- Prefer concise answers\n"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(updated)
+	if !strings.Contains(content, "Manual note outside generated block.") {
+		t.Fatalf("expected manual notes to be preserved, got %s", content)
+	}
+	if !strings.Contains(content, "Prefer concise answers") {
+		t.Fatalf("expected generated block to be written, got %s", content)
+	}
+}
